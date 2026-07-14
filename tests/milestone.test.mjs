@@ -1,0 +1,28 @@
+import assert from "node:assert/strict";
+import { generateRing } from "../public/js/ring-generator.js";
+import { validateAll } from "../public/js/brush-validation.js";
+import { roundToGrid } from "../public/js/grid.js";
+import { applySelection, ringVertexIds, selectByShape } from "../public/js/selection.js";
+import { History } from "../public/js/history.js";
+import { moveVertices } from "../public/js/geometry-model.js";
+
+const ring = generateRing({ radius: 256, width: 64, height: 128, segments: 8, grid: 16 });
+assert.equal(validateAll(ring).length, 0, "generated ring must contain valid convex solids");
+assert.equal(roundToGrid(1.1, 0.125), 1.125, "grid rounding must use the shared Hammer rule");
+assert.equal(selectByShape([{ x: 0, y: 0 }, { x: 1, y: 1 }, { x: 2, y: 0 }], { x: 0, y: 0, r: 1 }, "circle").length, 1, "circle selection must use circular distance");
+const inner = ringVertexIds(ring, "inner");
+const outer = ringVertexIds(ring, "outer");
+assert.equal(inner.length, 32);
+assert.equal(outer.length, 32);
+assert.equal(new Set(inner).size, inner.length);
+assert.equal(applySelection(new Set(), inner.slice(0, 2), "replace").size, 2);
+assert.equal(applySelection(new Set(inner), inner.slice(0, 2), "remove").size, 30);
+const history = new History();
+history.push({ value: 1 });
+history.push({ value: 2 });
+assert.deepEqual(history.undo(), { value: 1 });
+assert.deepEqual(history.redo(), { value: 2 });
+const imported = { id: "imported", vertices: [{ x: 0.25, y: 0, z: 0 }] };
+moveVertices([imported], new Set(["imported:v:0"]), { x: 1, y: 0, z: 0 }, 1, false);
+assert.equal(imported.vertices[0].x, 1.25, "drag snapping must preserve imported vertex offsets");
+console.log("milestone tests passed");

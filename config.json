@@ -1,0 +1,8 @@
+{
+  "port": 8787,
+  "projectDirectory": "projects",
+  "importDirectory": "projects",
+  "exportDirectory": "D:/SteamLibrary/steamapps/common/GarrysMod/bin/win64/Prefabs",
+  "backupDirectory": "backups",
+  "autosaveIntervalSeconds": 30
+}

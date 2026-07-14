@@ -1,0 +1,21 @@
+# Dependencies and runtime output
+node_modules/
+logs/
+backups/
+projects/
+exports/
+
+# Local environment and editor files
+AGENTS.md
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
