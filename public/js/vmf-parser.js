@@ -58,6 +58,7 @@ export function parseVMF(text) {
     const parsedFaces = sideData.map(side => ({ face: faceVertices(side.plane, vertices), axes: side.u && side.v ? { u: side.u.vector, v: side.v.vector, uShift: side.u.shift, vShift: side.v.shift, uScale: side.u.scale, vScale: side.v.scale } : undefined })).filter(item => item.face.length >= 3);
     const faces = parsedFaces.map(item => item.face);
     const material = (solid.match(/"material"\s+"([^"]+)"/) || [])[1] || "tools/toolsnodraw";
-    return { id: `imported-${nextId++}`, material, vertices, faces, textureAxes: parsedFaces.map(item => item.axes) };
+    const hammerGroupId = (solid.match(/"groupid"\s+"([^"]+)"/) || [])[1];
+    return { id: `imported-${nextId++}`, material, vertices, faces, textureAxes: parsedFaces.map(item => item.axes), groupId: hammerGroupId ? `vmf-group-${hammerGroupId}` : undefined };
   }).filter(brush => brush.vertices.length >= 4 && brush.faces.length >= 4);
 }
