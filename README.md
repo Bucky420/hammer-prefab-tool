@@ -2,6 +2,8 @@
 
 A local browser tool for making and editing Source Engine brush prefabs for Hammer and Garry's Mod.
 
+![Hammer Prefab Tool showing a generated ring with texture axes](docs/hammer-prefab-tool-preview.jpg)
+
 This is an early, experimental project. It is not a Hammer replacement or a finished map editor. Expect unfinished features and bugs.
 
 ## Current features
