@@ -31,10 +31,11 @@ export function generateRing({ radius = 256, width = 64, height = 128, segments 
     const midpoint = (start + end) * Math.PI / 360;
     const tangent = [axis(-Math.sin(midpoint)), axis(Math.cos(midpoint)), 0];
     const radial = [axis(Math.cos(midpoint)), axis(Math.sin(midpoint)), 0];
+    const inward = [axis(-Math.cos(midpoint)), axis(-Math.sin(midpoint)), 0];
     // The top and inner wall share U along the curve, keeping texture flow continuous.
     const textureAxes = textureMode === "radial" ? [
       { u: tangent, v: radial },
-      { u: tangent, v: radial },
+      { u: tangent, v: inward },
       { u: tangent, v: [0, 0, 1] },
       { u: radial, v: [0, 0, 1] },
       { u: tangent, v: [0, 0, 1] },

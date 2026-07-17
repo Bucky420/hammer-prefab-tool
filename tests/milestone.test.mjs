@@ -7,9 +7,17 @@ import { History } from "../public/js/history.js";
 import { box, moveBrushes, moveVertices } from "../public/js/geometry-model.js";
 import { parseVMF } from "../public/js/vmf-parser.js";
 import { writeVMF } from "../public/js/vmf-writer.js";
+import { alignAllFacesToCenter, alignAllFacesToOuter } from "../public/js/texture-alignment.js";
 
 const ring = generateRing({ radius: 256, width: 64, height: 128, segments: 8, grid: 16 });
 assert.equal(validateAll(ring).length, 0, "generated ring must contain valid convex solids");
+for (const brush of ring) { const center = brush.faces[1].reduce((sum, index) => ({ x: sum.x + brush.vertices[index].x / brush.faces[1].length, y: sum.y + brush.vertices[index].y / brush.faces[1].length }), { x: 0, y: 0 }), v = brush.textureAxes[1].v; assert.ok(center.x * v[0] + center.y * v[1] < 0, "generated top-face V axes must point inward"); }
+const reversedRing = JSON.parse(JSON.stringify(ring));
+reversedRing.forEach(brush => { brush.faces = brush.faces.map(face => [...face].reverse()); });
+alignAllFacesToCenter(reversedRing);
+for (const brush of reversedRing) { const center = brush.faces[1].reduce((sum, index) => ({ x: sum.x + brush.vertices[index].x / brush.faces[1].length, y: sum.y + brush.vertices[index].y / brush.faces[1].length }), { x: 0, y: 0 }), v = brush.textureAxes[1].v; assert.ok(center.x * v[0] + center.y * v[1] < 0, "center alignment must point top-face V inward regardless of face winding"); }
+alignAllFacesToOuter(reversedRing);
+for (const brush of reversedRing) { const center = brush.faces[1].reduce((sum, index) => ({ x: sum.x + brush.vertices[index].x / brush.faces[1].length, y: sum.y + brush.vertices[index].y / brush.faces[1].length }), { x: 0, y: 0 }), v = brush.textureAxes[1].v; assert.ok(center.x * v[0] + center.y * v[1] > 0, "outer alignment must point top-face V outward regardless of face winding"); }
 assert.equal(roundToGrid(1.1, 0.125), 1.125, "grid rounding must use the shared Hammer rule");
 assert.equal(selectByShape([{ x: 0, y: 0 }, { x: 1, y: 1 }, { x: 2, y: 0 }], { x: 0, y: 0, r: 1 }, "circle").length, 1, "circle selection must use circular distance");
 const inner = ringVertexIds(ring, "inner");
