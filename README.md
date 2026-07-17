@@ -1,30 +1,34 @@
 # Hammer Prefab Tool
 
-A local browser tool for making and editing Source Engine brush prefabs for Hammer and Garry's Mod.
+Hammer Prefab Tool is a local browser editor for refining Source Engine brush prefabs before using them in Hammer or Hammer++.
 
-![Hammer Prefab Tool showing a generated ring with texture axes](docs/hammer-prefab-tool-preview-v2.jpg)
+Import ordinary VMF brush geometry, adjust it with Hammer-style grid and selection controls, validate the result, and export a clean VMF. The tool also includes block, ring, and arch generators for creating geometry to refine.
 
-This is an early, experimental project. It is not a Hammer replacement or a finished map editor. Expect unfinished features and bugs.
+![Hammer Prefab Tool showing a generated ring and its texture axes](docs/hammer-prefab-tool-preview-v2.jpg)
 
-## Current features
+> [!IMPORTANT]
+> This is an early, experimental project. It complements Hammer; it does not replace Hammer or provide a complete map-editing workflow.
 
-- Generate block, ring, and arch brush geometry
-- Edit geometry in top, front, and side orthographic views
-- Select and move brushes or vertices
-- Hammer-style grid snapping and keyboard nudging
-- Select inner and outer ring vertices
-- Import and export VMF brush geometry
-- Validate generated solids before export
-- Save projects and create autosave/backups
-- Undo and redo
+## Features
+
+- Import and export ordinary convex VMF brushes
+- Preserve Hammer groups and loaded texture axes
+- Generate blocks, rings, and arches
+- Edit in Hammer-compatible top, front, and side orthographic views
+- Select and move individual brushes, Hammer groups, or vertices
+- Use Hammer-style grids, snapping, keyboard nudging, and selection modifiers
+- Select inner or outer ring vertices and change ring radii
+- Inspect texture U/V axes and align textures toward the center or outer edge
+- Validate generated and transformed solids before export
+- Undo and redo geometry and selection changes
 
 ## Requirements
 
 - Windows 10 or newer
 - [Node.js](https://nodejs.org/) 20.19 or newer
-- Hammer or Hammer++ to use exported VMF files
+- Hammer or Hammer++ for complete maps, materials, entities, compiling, and testing
 
-## Running it
+## Quick Start
 
 Clone the repository and install its dependencies:
 
@@ -37,55 +41,53 @@ npm install
 Start the production server:
 
 ```bat
-start.bat
-```
-
-Then open [http://localhost:8787](http://localhost:8787).
-
-You can also run:
-
-```bat
 npm start
 ```
 
-For development with hot reload:
+You can use `start.bat` instead on Windows. Open [http://localhost:8787](http://localhost:8787) if the browser does not open automatically.
+
+For development with Vite hot reload, run:
 
 ```bat
-dev.bat
+npm run dev
 ```
 
-Do not run `start.bat` and `dev.bat` at the same time.
+You can use `dev.bat` instead on Windows. Do not run production and development modes at the same time.
 
-## Basic workflow
+## Basic Workflow
 
-1. Open the tool.
-2. Choose **Brush** mode.
-3. Select Block, Ring, or Arch.
-4. Set the shape options and generate it.
-5. Edit the result in the viewport.
-6. Export it as a VMF.
-7. Open or import the VMF in Hammer.
+1. Open a VMF from the **File** menu, or choose **Brush** mode to generate a block, ring, or arch.
+2. Switch between `TOP / XY`, `FRONT / YZ`, and `SIDE / XZ` by clicking the view label.
+3. Select and move brushes, groups, or vertices in the viewport.
+4. Use the **Tools** menu to snap vertices, set ring radii, inspect alignment, or validate geometry.
+5. Export the result as a VMF and open or import it in Hammer.
 
-Hammer is still needed for complete maps, entities, materials, lighting, compiling, and testing.
+## Selection Controls
+
+- Drag empty space to create a selection box.
+- Hold `Shift` to add to the selection.
+- Hold `Alt` to remove from the selection.
+- Hold `Ctrl` to toggle selection.
+- Press `Delete` to remove selected geometry.
+- Press `Ctrl+Z` or `Ctrl+Y` to undo or redo, including selection changes.
+- Use the Object/Group toolbar toggle to switch selection scope.
 
 ## Configuration
 
-The tool uses `config.json` for its port and file locations. Change `exportDirectory` if you want VMF files written somewhere else.
+The server reads `config.json` for its port and allowed project, import, export, and backup directories. Paths are restricted to those configured roots.
 
-Paths are restricted to the configured project, import, export, and backup folders.
+The default application URL is `http://localhost:8787`.
 
-## Important limitations
+## Limitations
 
-The editor is still being built. Face, edge, path, advanced transform, road, stair, tunnel, bevel, carving, and other planned tools are not finished.
+The editor currently focuses on ordinary convex brush geometry. Face and edge editing, entities and I/O, displacements, full material workflows, paths, advanced transforms, roads, stairs, tunnels, beveling, carving, compiling, and lighting remain Hammer responsibilities or future work.
 
-Only use controls that are currently present and working. Exported geometry should still be checked in Hammer before using it in a real map.
+Always validate exported geometry and test it in Hammer before using it in a production map.
 
 ## Contributing
 
-Bug reports, test results, and focused pull requests are welcome.
-
-Please avoid treating planned features as complete, and keep exported geometry as valid convex Source brushes.
+Bug reports, test results, and focused pull requests are welcome. Keep exported geometry as valid convex Source brushes, and do not present planned controls as completed features.
 
 ## License
 
-No license has been added yet. Until one is provided, the repository is all rights reserved by default.
+No license has been added. The repository is all rights reserved by default.
