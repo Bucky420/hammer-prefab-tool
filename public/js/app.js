@@ -357,14 +357,17 @@ if (materialLabel)
     '<span>Side material</span><select data-face-side-material><option value="dev/dev_measuregeneric01">Orange</option><option value="dev/dev_measuregeneric01b">Gray</option></select><span>Top material</span><select data-face-top-material><option value="dev/dev_measuregeneric01b">Gray</option><option value="dev/dev_measuregeneric01">Orange</option></select>';
 const extrusionModeLabel = document.createElement("label");
 extrusionModeLabel.innerHTML =
-  '<span>Extrusion direction</span><select data-extrusion-mode><option value="parallel">Parallel</option><option value="normal">Face normal</option></select>';
+  '<span><input type="checkbox" data-extrusion-parallel> Parallel face-plane offset</span>';
 facePanel
   .querySelector("[data-face-mode]")
   .closest("label")
   .after(extrusionModeLabel);
-extrusionModeLabel.querySelector("select").value = state.faceExtrusionMode;
-extrusionModeLabel.querySelector("select").onchange = (event) => {
-  state.faceExtrusionMode = event.currentTarget.value;
+const parallelExtrusionToggle = extrusionModeLabel.querySelector(
+  "[data-extrusion-parallel]",
+);
+parallelExtrusionToggle.checked = state.faceExtrusionMode === "parallel";
+parallelExtrusionToggle.onchange = (event) => {
+  state.faceExtrusionMode = event.currentTarget.checked ? "parallel" : "normal";
 };
 railDock.append(dockDivider, brushPanel, facePanel);
 const railWidthGrip = document.createElement("div");
