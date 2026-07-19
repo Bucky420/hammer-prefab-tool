@@ -66,13 +66,13 @@ function faceDirection(brush, face) {
     : null;
 }
 
-function planeForFace(brush, face) {
+export function planeForFace(brush, face) {
   const normal = faceDirection(brush, face);
   if (!normal) return null;
   return { normal, distance: dot(normal, brush.vertices[face[0]]) };
 }
 
-function adjacentFaceForEdge(brush, selectedIndex, a, b) {
+export function adjacentFaceForEdge(brush, selectedIndex, a, b) {
   return brush.faces.findIndex(
     (face, index) =>
       index !== selectedIndex && face.includes(a) && face.includes(b),
@@ -104,7 +104,12 @@ function intersectPlanes(first, second, third) {
   };
 }
 
-export function solveCapFromPlane(brush, faceIndex, targetPlane) {
+export function solveCapFromPlane(
+  brush,
+  faceIndex,
+  targetPlane,
+  sidePlaneOverrides,
+) {
   const face = brush.faces[faceIndex];
   if (!face || !targetPlane) return null;
   const cap = face.map((vertexIndex, index) => {
@@ -118,11 +123,14 @@ export function solveCapFromPlane(brush, faceIndex, targetPlane) {
       ),
       nextFaceIndex = adjacentFaceForEdge(brush, faceIndex, vertexIndex, next);
     if (previousFaceIndex < 0 || nextFaceIndex < 0) return null;
-    const point = intersectPlanes(
-      targetPlane,
-      planeForFace(brush, brush.faces[previousFaceIndex]),
-      planeForFace(brush, brush.faces[nextFaceIndex]),
-    );
+    const previousEdge = (index + face.length - 1) % face.length,
+      previousPlane =
+        sidePlaneOverrides?.get(previousEdge) ??
+        planeForFace(brush, brush.faces[previousFaceIndex]),
+      nextPlane =
+        sidePlaneOverrides?.get(index) ??
+        planeForFace(brush, brush.faces[nextFaceIndex]);
+    const point = intersectPlanes(targetPlane, previousPlane, nextPlane);
     if (!point) return null;
     return Number.isFinite(point.x) &&
       Number.isFinite(point.y) &&
@@ -136,20 +144,32 @@ export function solveCapFromPlane(brush, faceIndex, targetPlane) {
 function offsetFacePlaneCap(brush, faceIndex, distance, snapTarget = null) {
   const sourcePlane = planeForFace(brush, brush.faces[faceIndex]);
   if (!sourcePlane) return null;
-  const targetPlane = snapTarget?.plane
-    ? {
-        normal: snapTarget.plane.normal,
-        distance:
-          snapTarget.plane.distance +
-          (distance - snapTarget.distance) *
-            dot(snapTarget.plane.normal, sourcePlane.normal),
-        maxDistance: snapTarget.maxDistance,
-      }
-    : {
-        normal: sourcePlane.normal,
-        distance: sourcePlane.distance + distance,
-      };
-  return solveCapFromPlane(brush, faceIndex, targetPlane);
+  let sidePlaneOverrides = undefined;
+  const targetPlane =
+    snapTarget?.sourceEdgeIndex != null
+      ? {
+          normal: sourcePlane.normal,
+          distance: sourcePlane.distance + distance,
+        }
+      : snapTarget?.plane
+        ? {
+            normal: snapTarget.plane.normal,
+            distance:
+              snapTarget.plane.distance +
+              (distance - snapTarget.distance) *
+                dot(snapTarget.plane.normal, sourcePlane.normal),
+            maxDistance: snapTarget.maxDistance,
+          }
+        : {
+            normal: sourcePlane.normal,
+            distance: sourcePlane.distance + distance,
+          };
+  if (snapTarget?.sourceEdgeIndex != null && snapTarget?.plane) {
+    sidePlaneOverrides = new Map([
+      [snapTarget.sourceEdgeIndex, snapTarget.plane],
+    ]);
+  }
+  return solveCapFromPlane(brush, faceIndex, targetPlane, sidePlaneOverrides);
 }
 
 function extrudedPoint(point, direction, distance) {

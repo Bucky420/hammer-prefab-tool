@@ -11,6 +11,8 @@ import {
   extrudeSelectedFaces,
   limitExtrusionDistance,
   solveCapFromPlane,
+  adjacentFaceForEdge,
+  planeForFace,
 } from "./face-extrusion.js";
 import { validateBrush } from "./brush-validation.js";
 import { duplicateBrushes } from "./geometry-model.js";
@@ -847,6 +849,40 @@ export class Viewport {
     const snapCandidates = [],
       acquireRadius = 10;
 
+    const sideNorms = face
+      .map((vertexIndex, offset) => {
+        const nextVertex = face[(offset + 1) % face.length];
+        const sideFaceIndex = adjacentFaceForEdge(
+          brush,
+          faceIndex,
+          vertexIndex,
+          nextVertex,
+        );
+        if (sideFaceIndex < 0) return null;
+        const sideNormal = this.faceNormal(brush, brush.faces[sideFaceIndex]);
+        const sideLen = Math.hypot(sideNormal.x, sideNormal.y, sideNormal.z);
+        return sideLen > 0.000001
+          ? {
+              edgeIndex: offset,
+              faceIndex: sideFaceIndex,
+              unit: {
+                x: sideNormal.x / sideLen,
+                y: sideNormal.y / sideLen,
+                z: sideNormal.z / sideLen,
+              },
+            }
+          : null;
+      })
+      .filter(Boolean);
+
+    const capPlane = {
+      normal: sourceUnit,
+      distance:
+        sourceUnit.x * brush.vertices[face[0]].x +
+        sourceUnit.y * brush.vertices[face[0]].y +
+        sourceUnit.z * brush.vertices[face[0]].z,
+    };
+
     for (const targetBrush of this.visibleBrushes()) {
       if (sourceBrushIds.has(targetBrush.id)) continue;
       for (
@@ -867,11 +903,6 @@ export class Viewport {
           y: targetNormal.y / targetLen,
           z: targetNormal.z / targetLen,
         };
-        const normalDot =
-          sourceUnit.x * targetUnit.x +
-          sourceUnit.y * targetUnit.y +
-          sourceUnit.z * targetUnit.z;
-        if (normalDot > -0.9) continue;
 
         const targetPlane = {
           normal: targetUnit,
@@ -888,108 +919,141 @@ export class Viewport {
           ),
         }));
 
-        let finiteSeparation = Infinity;
-
-        for (let si = 0; si < sourceBoundary.length; si++)
-          for (let ti = 0; ti < targetBoundary.length; ti++) {
-            const dist = segmentDistance(
-              sourceBoundary[si].start,
-              sourceBoundary[si].end,
-              targetBoundary[ti].start,
-              targetBoundary[ti].end,
-            );
-            if (dist < finiteSeparation) finiteSeparation = dist;
-          }
-
         const mouseDistance = Math.min(
           ...targetBoundary.map((seg) =>
             pointSegmentDistance(current, seg.start, seg.end),
           ),
         );
 
-        const solvedCap = solveCapFromPlane(brush, faceIndex, targetPlane);
-        if (
-          !solvedCap ||
-          solvedCap.some((point) => !point || !Number.isFinite(point.x))
-        )
-          continue;
+        for (const side of sideNorms) {
+          const sideDot =
+            side.unit.x * targetUnit.x +
+            side.unit.y * targetUnit.y +
+            side.unit.z * targetUnit.z;
+          const capDot =
+            sourceUnit.x * targetUnit.x +
+            sourceUnit.y * targetUnit.y +
+            sourceUnit.z * targetUnit.z;
+          const isSideAlign = sideDot <= -0.9;
+          const isCapAlign = capDot <= -0.9;
+          if (!isSideAlign && !isCapAlign) continue;
 
-        const candidateBrush = {
-          id: "snap-preview",
-          material: brush.material,
-          vertices: [
-            ...face.map((index) => brush.vertices[index]),
-            ...solvedCap,
-          ],
-          faces: [
-            [...Array(face.length).keys()],
-            [...Array(face.length).keys()].map((index) => face.length + index),
-            ...Array.from({ length: face.length }, (_, index) => [
-              index,
-              (index + 1) % face.length,
-              face.length + ((index + 1) % face.length),
-              face.length + index,
-            ]),
-          ].map((candidateFace) =>
-            orientOutward(candidateFace, [
+          const useSideOverride = isSideAlign;
+          const sideOverride = useSideOverride
+            ? new Map([[side.edgeIndex, targetPlane]])
+            : undefined;
+          const solvedPlane = useSideOverride ? capPlane : targetPlane;
+
+          let finiteSeparation = Infinity;
+          for (let si = 0; si < sourceBoundary.length; si++)
+            for (let ti = 0; ti < targetBoundary.length; ti++) {
+              const dist = segmentDistance(
+                sourceBoundary[si].start,
+                sourceBoundary[si].end,
+                targetBoundary[ti].start,
+                targetBoundary[ti].end,
+              );
+              if (dist < finiteSeparation) finiteSeparation = dist;
+            }
+
+          const solvedCap = solveCapFromPlane(
+            brush,
+            faceIndex,
+            solvedPlane,
+            sideOverride,
+          );
+          if (
+            !solvedCap ||
+            solvedCap.some((point) => !point || !Number.isFinite(point.x))
+          )
+            continue;
+
+          const candidateBrush = {
+            id: "snap-preview",
+            material: brush.material,
+            vertices: [
               ...face.map((index) => brush.vertices[index]),
               ...solvedCap,
-            ]),
-          ),
-        };
-        if (validateBrush(candidateBrush).length) continue;
+            ],
+            faces: [
+              [...Array(face.length).keys()],
+              [...Array(face.length).keys()].map(
+                (index) => face.length + index,
+              ),
+              ...Array.from({ length: face.length }, (_, index) => [
+                index,
+                (index + 1) % face.length,
+                face.length + ((index + 1) % face.length),
+                face.length + index,
+              ]),
+            ].map((candidateFace) =>
+              orientOutward(candidateFace, [
+                ...face.map((index) => brush.vertices[index]),
+                ...solvedCap,
+              ]),
+            ),
+          };
+          if (validateBrush(candidateBrush).length) continue;
 
-        const sourceCenter = face.reduce(
-          (sum, index) => ({
-            x: sum.x + brush.vertices[index].x / face.length,
-            y: sum.y + brush.vertices[index].y / face.length,
-            z: sum.z + brush.vertices[index].z / face.length,
-          }),
-          { x: 0, y: 0, z: 0 },
-        );
-        const extrusionDistance = Math.max(
-          0,
-          sourceUnit.x *
-            (targetBrush.vertices[targetFace[0]].x - sourceCenter.x) +
-            sourceUnit.y *
-              (targetBrush.vertices[targetFace[0]].y - sourceCenter.y) +
-            sourceUnit.z *
-              (targetBrush.vertices[targetFace[0]].z - sourceCenter.z),
-        );
+          const sourceCenter = face.reduce(
+            (sum, index) => ({
+              x: sum.x + brush.vertices[index].x / face.length,
+              y: sum.y + brush.vertices[index].y / face.length,
+              z: sum.z + brush.vertices[index].z / face.length,
+            }),
+            { x: 0, y: 0, z: 0 },
+          );
+          const extrusionDistance = useSideOverride
+            ? rawDistance
+            : Math.max(
+                0,
+                sourceUnit.x *
+                  (targetBrush.vertices[targetFace[0]].x - sourceCenter.x) +
+                  sourceUnit.y *
+                    (targetBrush.vertices[targetFace[0]].y - sourceCenter.y) +
+                  sourceUnit.z *
+                    (targetBrush.vertices[targetFace[0]].z - sourceCenter.z),
+              ) || rawDistance;
 
-        const faceKey = `${targetBrush.id}:f:${targetFaceIndex}`;
-        const synthEdge = {
-          start: targetBrush.vertices[targetFace[0]],
-          end: targetBrush.vertices[
-            (targetFace.length - 1) % targetFace.length
-          ],
-          startScreen: targetBoundary[0].start,
-          endScreen: targetBoundary[0].end,
-        };
+          const faceKey = `${targetBrush.id}:f:${targetFaceIndex}`;
+          const synthEdge = {
+            start: targetBrush.vertices[targetFace[0]],
+            end: targetBrush.vertices[
+              (targetFace.length - 1) % targetFace.length
+            ],
+            startScreen: targetBoundary[0].start,
+            endScreen: targetBoundary[0].end,
+          };
 
-        snapCandidates.push({
-          distance: extrusionDistance || rawDistance,
-          edge: synthEdge,
-          edgeKey: faceKey,
-          edges: targetBoundary.map((seg, i) => ({
-            start: targetBrush.vertices[targetFace[i]],
-            end: targetBrush.vertices[targetFace[(i + 1) % targetFace.length]],
-            startScreen: seg.start,
-            endScreen: seg.end,
-          })),
-          mouseDistance,
-          snapTarget: {
-            type: "opposing-face",
-            sourceBrushId: brush.id,
-            sourceFaceIndex: faceIndex,
-            targetBrushId: targetBrush.id,
-            targetFaceIndex,
-            targetPlane,
-            normalDot,
-            finiteSeparation,
-            distance: extrusionDistance || rawDistance,
-          },
-        });
+          snapCandidates.push({
+            distance: extrusionDistance,
+            edge: synthEdge,
+            edgeKey: faceKey,
+            edges: targetBoundary.map((seg, i) => ({
+              start: targetBrush.vertices[targetFace[i]],
+              end: targetBrush.vertices[
+                targetFace[(i + 1) % targetFace.length]
+              ],
+              startScreen: seg.start,
+              endScreen: seg.end,
+            })),
+            mouseDistance,
+            snapTarget: {
+              type: "opposing-face",
+              sourceBrushId: brush.id,
+              sourceFaceIndex: faceIndex,
+              targetBrushId: targetBrush.id,
+              targetFaceIndex,
+              plane: targetPlane,
+              targetPlane,
+              sourceEdgeIndex: useSideOverride ? side.edgeIndex : undefined,
+              normalDot: useSideOverride ? sideDot : capDot,
+              finiteSeparation,
+              distance: extrusionDistance,
+            },
+          });
+          break;
+        }
       }
     }
 
