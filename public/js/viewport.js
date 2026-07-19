@@ -837,6 +837,101 @@ export class Viewport {
       );
     };
 
+    // --- Face-magnet evaluation (Stage 5) ---
+    // Check that two faces oppose each other across a small gap.
+    // Requires: opposite normals, parallel tangents, target in front, tangent overlap.
+    const evaluateFaceMagnet = (
+      movingStart,
+      movingEnd,
+      movingNormal2D,
+      targetBrush,
+      targetFaceIndex,
+      targetStart,
+      targetEnd,
+      tS,
+      tE,
+      depthAxis,
+    ) => {
+      const targetFace = targetBrush.faces[targetFaceIndex];
+      if (!targetFace) return null;
+
+      // Target face normal (3D outward)
+      const targetNormal3D = this.faceNormal(targetBrush, targetFace);
+      const targetNormalLen = Math.hypot(
+        targetNormal3D.x,
+        targetNormal3D.y,
+        targetNormal3D.z,
+      );
+      if (targetNormalLen < 0.000001) return null;
+
+      // Reject horizontal (top/bottom) faces in active view
+      if (Math.abs(targetNormal3D[depthAxis]) > 0.1) return null;
+
+      const targetNormal2D = {
+        x: targetNormal3D.x / targetNormalLen,
+        y: targetNormal3D.y / targetNormalLen,
+      };
+
+      // Normals must oppose (dot near -1)
+      const normalDot =
+        movingNormal2D.x * targetNormal2D.x +
+        movingNormal2D.y * targetNormal2D.y;
+      if (normalDot > -Math.cos((20 * Math.PI) / 180)) return null;
+
+      // Tangents must be parallel
+      const movingTan = {
+        x: movingEnd.x - movingStart.x,
+        y: movingEnd.y - movingStart.y,
+      };
+      const targetTan = {
+        x: targetEnd.x - targetStart.x,
+        y: targetEnd.y - targetStart.y,
+      };
+      const mtLen = Math.hypot(movingTan.x, movingTan.y);
+      const ttLen = Math.hypot(targetTan.x, targetTan.y);
+      if (mtLen < 0.000001 || ttLen < 0.000001) return null;
+      const mTu = { x: movingTan.x / mtLen, y: movingTan.y / mtLen };
+      const tTu = { x: targetTan.x / ttLen, y: targetTan.y / ttLen };
+      const tangentDot = Math.abs(mTu.x * tTu.x + mTu.y * tTu.y);
+      if (tangentDot < Math.cos((20 * Math.PI) / 180)) return null;
+
+      // Target must be on the face's magnetic side (not behind)
+      const movingMid = {
+        x: (movingStart.x + movingEnd.x) / 2,
+        y: (movingStart.y + movingEnd.y) / 2,
+      };
+      const targetMid = { x: (tS.x + tE.x) / 2, y: (tS.y + tE.y) / 2 };
+      const signedGap =
+        (targetMid.x - movingMid.x) * movingNormal2D.x +
+        (targetMid.y - movingMid.y) * movingNormal2D.y;
+      if (signedGap < -0.5) return null;
+
+      // Tangent overlap
+      const intervalOnAxis = (a, b, axis) => {
+        const p = a.x * axis.x + a.y * axis.y;
+        const q = b.x * axis.x + b.y * axis.y;
+        return [Math.min(p, q), Math.max(p, q)];
+      };
+      const mInt = intervalOnAxis(movingStart, movingEnd, mTu);
+      const tInt = intervalOnAxis(tS, tE, mTu);
+      const overlap = Math.min(mInt[1], tInt[1]) - Math.max(mInt[0], tInt[0]);
+      if (overlap < -10) return null;
+
+      // Score: gap weighted heavily, minus overlap bonus, plus angle penalty
+      const angleError = Math.acos(Math.min(1, tangentDot)) * (180 / Math.PI);
+      const score = signedGap * 10 + angleError * 2 - Math.max(0, overlap);
+
+      return {
+        normalDot,
+        tangentDot,
+        signedGap,
+        overlap,
+        score,
+        targetNormal2D,
+        targetNormal3D,
+      };
+    };
+
     const segmentDistance = (aStart, aEnd, bStart, bEnd) => {
       if (segmentsIntersect(aStart, aEnd, bStart, bEnd)) return 0;
       return Math.min(
@@ -1057,11 +1152,24 @@ export class Viewport {
       return p1 < p2 ? `${p1}|${p2}` : `${p2}|${p1}`;
     };
 
+    const makeMovingEdge = (id, start, end) => {
+      const tx = end.x - start.x,
+        ty = end.y - start.y,
+        len = Math.hypot(tx, ty);
+      if (len < 0.000001) return null;
+      const n = { x: -ty / len, y: tx / len };
+      if (n.x * extNormal.x + n.y * extNormal.y < 0) {
+        n.x *= -1;
+        n.y *= -1;
+      }
+      return { id, start, end, normal2D: n };
+    };
+
     const movingEdges = [
-      { id: "sideA", start: baseAScreen, end: freeCapAScreen },
-      { id: "cap", start: freeCapAScreen, end: freeCapBScreen },
-      { id: "sideB", start: freeCapBScreen, end: baseBScreen },
-    ];
+      makeMovingEdge("sideA", baseAScreen, freeCapAScreen),
+      makeMovingEdge("cap", freeCapAScreen, freeCapBScreen),
+      makeMovingEdge("sideB", freeCapBScreen, baseBScreen),
+    ].filter(Boolean);
 
     // Extracted geometry setup helper (for progressive locking, Stage 2)
     const buildExtrusionFrame = () => ({
@@ -1187,6 +1295,8 @@ export class Viewport {
       radius,
     ) => {
       const byEdge = { sideA: [], cap: [], sideB: [] };
+      const depthAxis =
+        axX === "x" && axY === "y" ? "z" : axY === "y" ? "x" : "y";
       for (const targetBrush of this.visibleBrushes()) {
         if (brushIds.has(targetBrush.id)) continue;
         for (let fi = 0; fi < targetBrush.faces.length; fi++) {
@@ -1200,9 +1310,23 @@ export class Viewport {
               tE = this.screen(endW);
             for (const moving of movingEdgeList) {
               if (!moving.start || !moving.end) continue;
-              const dist = segmentDistance(moving.start, moving.end, tS, tE);
-              if (dist > radius) continue;
-              const pKey = projectedEdgeKey(tS, tE);
+              if (!moving.normal2D) continue;
+
+              // Apply face-magnet filter before segment distance
+              const magnet = evaluateFaceMagnet(
+                moving.start,
+                moving.end,
+                moving.normal2D,
+                targetBrush,
+                fi,
+                startW,
+                endW,
+                tS,
+                tE,
+                depthAxis,
+              );
+              if (!magnet) continue;
+
               const d2D = {
                 x: endW[axX] - startW[axX],
                 y: endW[axY] - startW[axY],
@@ -1219,6 +1343,7 @@ export class Viewport {
                 x: startW[axX] + (endW[axX] - startW[axX]) * interpT,
                 y: startW[axY] + (endW[axY] - startW[axY]) * interpT,
               };
+              const pKey = projectedEdgeKey(tS, tE);
               byEdge[moving.id].push({
                 movingEdge: moving.id,
                 point: wPt,
@@ -1230,7 +1355,7 @@ export class Viewport {
                 endWorld: { ...endW },
                 startScreen: tS,
                 endScreen: tE,
-                segmentDistance: dist,
+                segmentDistance: magnet.score,
                 projectedKey: pKey,
               });
             }
