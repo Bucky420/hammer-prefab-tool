@@ -1054,9 +1054,17 @@ export class Viewport {
     candidateEdgesA.sort((a, b) => a.mouseDistance - b.mouseDistance);
     candidateEdgesB.sort((a, b) => a.mouseDistance - b.mouseDistance);
 
+    // Dedupe by edgeKey and cap at 4 per side
+    const uniqueA = [
+      ...new Map(candidateEdgesA.map((edge) => [edge.edgeKey, edge])).values(),
+    ].slice(0, 4);
+    const uniqueB = [
+      ...new Map(candidateEdgesB.map((edge) => [edge.edgeKey, edge])).values(),
+    ].slice(0, 4);
+
     // Combine independent A/B snap targets
-    const aList = candidateEdgesA.length ? candidateEdgesA : [undefined];
-    const bList = candidateEdgesB.length ? candidateEdgesB : [undefined];
+    const aList = uniqueA.length ? uniqueA : [undefined];
+    const bList = uniqueB.length ? uniqueB : [undefined];
     for (const ea of aList)
       for (const eb of bList) {
         if (!ea && !eb) continue;
@@ -1146,15 +1154,30 @@ export class Viewport {
         const solvedCap = (() => {
           const hasConforming = conforming.length > 0;
           if (hasConforming) {
+            // Clone the source brush to avoid mutating live state
+            const clonedBrush = {
+              ...brush,
+              vertices: brush.vertices.map((v) => ({ ...v })),
+            };
             const r = solveConvexConformingExtrusion({
-              brushes: this.state.brushes,
-              sourceBrushId: brush.id,
+              brushes: [clonedBrush],
+              sourceBrushId: clonedBrush.id,
               faceIndex,
               distance: rawDistance,
               activeAxes,
               constraints: conforming,
             });
-            if (r?.generatedCap) return r.generatedCap;
+            if (r?.generatedCap) {
+              // Apply source vertex moves to the clone for validation
+              for (const move of r.sourceVertexMoves || []) {
+                const v = clonedBrush.vertices[move.vertexIndex];
+                if (v) {
+                  v[activeAxes[0]] = move.position[activeAxes[0]];
+                  v[activeAxes[1]] = move.position[activeAxes[1]];
+                }
+              }
+              return r.generatedCap;
+            }
           }
           return solveVertexSnappedExtrusion(
             brush,

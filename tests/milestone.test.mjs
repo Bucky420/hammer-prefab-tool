@@ -29,6 +29,7 @@ import {
   extrudeSelectedFaces,
   limitExtrusionDistance,
   solveCapFromPlane,
+  solveConvexConformingExtrusion,
 } from "../public/js/face-extrusion.js";
 import { fillSelectedLoop } from "../public/js/face-fill.js";
 import {
@@ -1174,4 +1175,60 @@ assert.equal(
   2,
   "per-face nodraw must survive VMF export and import",
 );
+
+// Conforming solver purity regression: candidate evaluation must never mutate live brushes
+{
+  const source = box({ x: 0, y: 0, z: 0 }, { x: 64, y: 64, z: 64 });
+  const target = box({ x: 120, y: 0, z: 0 }, { x: 184, y: 64, z: 64 });
+  const originalVertices = source.vertices.map((v) => ({ ...v }));
+  const testViewport = Object.create(Viewport.prototype);
+  testViewport.state = { brushes: [source, target], grid: 16 };
+  testViewport.drag = { selection: new Set([source.id + ":f:3"]) };
+  testViewport.kind = "top";
+  testViewport.scale = 1;
+  testViewport.screen = (v) => ({ x: v.x, y: v.y });
+  testViewport.world = (p) => ({ x: p.x, y: p.y, z: 0 });
+  for (let i = 0; i < 100; i++) {
+    testViewport.faceExtrusionDistance(
+      source.id + ":f:3",
+      { x: 64, y: 32 },
+      { x: 126 + i * 0.1, y: 32 },
+    );
+  }
+  assert.deepEqual(
+    source.vertices,
+    originalVertices,
+    "candidate evaluation must never mutate live source brush vertices",
+  );
+}
+
+// Degenerate adjacent plane rejection regression
+{
+  const source = box({ x: 0, y: 0, z: 0 }, { x: 64, y: 64, z: 64 });
+  const snap = source.vertices.map((v) => ({ ...v }));
+  const result = solveConvexConformingExtrusion({
+    brushes: [source],
+    sourceBrushId: source.id,
+    faceIndex: 3,
+    distance: 32,
+    activeAxes: ["x", "y", "z"],
+    constraints: [
+      {
+        movingEdge: "sideA",
+        direction: { x: 0, y: 0 },
+      },
+    ],
+  });
+  assert.equal(
+    result,
+    null,
+    "degenerate zero-length side direction must return null",
+  );
+  assert.deepEqual(
+    source.vertices,
+    snap,
+    "degenerate solver must not mutate source brush",
+  );
+}
+
 console.log("milestone tests passed");

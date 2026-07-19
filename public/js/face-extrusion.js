@@ -80,6 +80,7 @@ export function adjacentFaceForEdge(brush, selectedIndex, a, b) {
 }
 
 function intersectPlanes(first, second, third) {
+  if (!first?.normal || !second?.normal || !third?.normal) return null;
   const crossSecondThird = cross(second.normal, third.normal),
     crossThirdFirst = cross(third.normal, first.normal),
     crossFirstSecond = cross(first.normal, second.normal),
@@ -746,7 +747,7 @@ export function solveConvexConformingExtrusion(options) {
   }
 
   // Propagate base column movement to source brush
-  const movedColumns = [];
+  const sourceVertexMoves = [];
   for (const [orig, moved] of [
     [baseA, newBaseA],
     [baseB, newBaseB],
@@ -754,13 +755,10 @@ export function solveConvexConformingExtrusion(options) {
     if (Math.hypot(orig.x - moved.x, orig.y - moved.y) < 0.01) continue;
     const cols = collectWeldedVertexColumns([sourceBrush], orig, activeAxes);
     for (const col of cols) {
-      for (const i of col.indices) {
-        sourceBrush.vertices[i][axisX] = moved.x;
-        sourceBrush.vertices[i][axisY] = moved.y;
-      }
-      movedColumns.push({
+      sourceVertexMoves.push({
         brushId: sourceBrush.id,
-        indices: col.indices,
+        vertexIndices: [...col.indices],
+        position: { [axisX]: moved.x, [axisY]: moved.y },
         dx: moved.x - orig.x,
         dy: moved.y - orig.y,
       });
@@ -770,7 +768,6 @@ export function solveConvexConformingExtrusion(options) {
   // Adjacent-edge direction propagation:
   // When a snapped side changes direction, rotate the adjacent source face
   // edge so the red edge becomes parallel to the cyan snapped side.
-  const sourceVertexMoves = [];
   for (const [endpoint, group, sideDir, origSideDir, snapKey] of [
     [baseA, groupA, sideADir, adjSideDir(groupA), "sideA"],
     [baseB, groupB, sideBDir, adjSideDir(groupB), "sideB"],
@@ -820,8 +817,11 @@ export function solveConvexConformingExtrusion(options) {
         };
 
         for (const v of farVertices) {
-          sourceBrush.vertices[v][axisX] = movedFar.x;
-          sourceBrush.vertices[v][axisY] = movedFar.y;
+          sourceVertexMoves.push({
+            brushId: sourceBrush.id,
+            vertexIndex: v,
+            position: { [axisX]: movedFar.x, [axisY]: movedFar.y },
+          });
         }
         sourceVertexMoves.push({
           brushId: sourceBrush.id,
@@ -838,9 +838,6 @@ export function solveConvexConformingExtrusion(options) {
 
   return {
     generatedCap: cap,
-    modifiedBrushes:
-      movedColumns.length || sourceVertexMoves.length ? [sourceBrush] : [],
-    movedColumns,
     sourceVertexMoves,
     corners: { newBaseA, newBaseB, newCapA, newCapB },
     applied,
