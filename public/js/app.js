@@ -303,13 +303,14 @@ function updateSelectionScopeToggle() {
 }
 selectionScopeToggle.onclick = () => {
   const faceMode = state.mode === "face";
-  if (faceMode) {
-    state.faceSelectionScope =
-      state.faceSelectionScope === "group" ? "object" : "group";
-    state.faceSelection.clear();
-  } else {
-    state.selectionScope =
-      state.selectionScope === "group" ? "object" : "group";
+  const nextScope =
+    (faceMode ? state.faceSelectionScope : state.selectionScope) === "group"
+      ? "object"
+      : "group";
+  state.faceSelectionScope = nextScope;
+  state.selectionScope = nextScope;
+  if (faceMode) state.faceSelection.clear();
+  else {
     state.mode = "selection";
     state.tool = "box";
     railButtons.forEach((item) =>
