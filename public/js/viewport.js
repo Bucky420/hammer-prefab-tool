@@ -1059,6 +1059,79 @@ export class Viewport {
         .slice(0, 4);
     }
 
+    // Extracted candidate discovery helper (for progressive locking, Stage 3)
+    const findCandidatesForMovingEdges = (
+      movingEdgeList,
+      brushIds,
+      axX,
+      axY,
+      radius,
+    ) => {
+      const byEdge = { sideA: [], cap: [], sideB: [] };
+      for (const targetBrush of this.visibleBrushes()) {
+        if (brushIds.has(targetBrush.id)) continue;
+        for (let fi = 0; fi < targetBrush.faces.length; fi++) {
+          const tf = targetBrush.faces[fi];
+          for (let ei = 0; ei < tf.length; ei++) {
+            const vi = tf[ei],
+              otherVi = tf[(ei + 1) % tf.length],
+              startW = targetBrush.vertices[vi],
+              endW = targetBrush.vertices[otherVi],
+              tS = this.screen(startW),
+              tE = this.screen(endW);
+            for (const moving of movingEdgeList) {
+              if (!moving.start || !moving.end) continue;
+              const dist = segmentDistance(moving.start, moving.end, tS, tE);
+              if (dist > radius) continue;
+              const pKey = projectedEdgeKey(tS, tE);
+              const d2D = {
+                x: endW[axX] - startW[axX],
+                y: endW[axY] - startW[axY],
+              };
+              const dL = Math.hypot(d2D.x, d2D.y);
+              if (dL < 0.0001) continue;
+              const eDir = { x: d2D.x / dL, y: d2D.y / dL };
+              const midS = {
+                x: (moving.start.x + moving.end.x) / 2,
+                y: (moving.start.y + moving.end.y) / 2,
+              };
+              const { t: interpT } = closestPointOnSegment(midS, tS, tE);
+              const wPt = {
+                x: startW[axX] + (endW[axX] - startW[axX]) * interpT,
+                y: startW[axY] + (endW[axY] - startW[axY]) * interpT,
+              };
+              byEdge[moving.id].push({
+                movingEdge: moving.id,
+                point: wPt,
+                direction: eDir,
+                originWorld2D: { x: startW[axX], y: startW[axY] },
+                targetBrushId: targetBrush.id,
+                targetFaceIndex: fi,
+                startWorld: { ...startW },
+                endWorld: { ...endW },
+                startScreen: tS,
+                endScreen: tE,
+                segmentDistance: dist,
+                projectedKey: pKey,
+              });
+            }
+          }
+        }
+      }
+      for (const key of ["sideA", "cap", "sideB"]) {
+        const seen = new Set();
+        byEdge[key] = byEdge[key]
+          .sort((a, b) => a.segmentDistance - b.segmentDistance)
+          .filter((c) => {
+            if (seen.has(c.projectedKey)) return false;
+            seen.add(c.projectedKey);
+            return true;
+          })
+          .slice(0, 4);
+      }
+      return byEdge;
+    };
+
     // --- Conforming candidates (direction-line constraints) ---
     const edgeLists = {
       sideA: [undefined, ...candidatesByEdge.sideA],
