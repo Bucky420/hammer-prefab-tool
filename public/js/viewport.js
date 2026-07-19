@@ -930,32 +930,19 @@ export class Viewport {
       y: baseB.y + extNormal.y * rawDistance,
     };
 
-    const candidateEdgesA = [],
-      candidateEdgesB = [];
+    const projectedEdgeKey = (a, b) => {
+      const p1 = `${a.x.toFixed(3)},${a.y.toFixed(3)}`,
+        p2 = `${b.x.toFixed(3)},${b.y.toFixed(3)}`;
+      return p1 < p2 ? `${p1}|${p2}` : `${p2}|${p1}`;
+    };
 
-    // Side rail midpoints for proximity detection
-    const sideAMid2D = {
-      x: (baseA.x + freeCapA2D.x) / 2,
-      y: (baseA.y + freeCapA2D.y) / 2,
-    };
-    const sideBMid2D = {
-      x: (baseB.x + freeCapB2D.x) / 2,
-      y: (baseB.y + freeCapB2D.y) / 2,
-    };
-    const sideAMidScreen = this.screen({
-      x: 0,
-      y: 0,
-      z: 0,
-    });
-    sideAMidScreen[axisX] = sideAMid2D.x;
-    sideAMidScreen[axisY] = sideAMid2D.y;
-    const sideBMidScreen = this.screen({
-      x: 0,
-      y: 0,
-      z: 0,
-    });
-    sideBMidScreen[axisX] = sideBMid2D.x;
-    sideBMidScreen[axisY] = sideBMid2D.y;
+    const movingEdges = [
+      { id: "sideA", start: baseAScreen, end: freeCapAScreen },
+      { id: "cap", start: freeCapAScreen, end: freeCapBScreen },
+      { id: "sideB", start: freeCapBScreen, end: baseBScreen },
+    ];
+
+    const candidatesByEdge = { sideA: [], cap: [], sideB: [] };
 
     for (const targetBrush of this.visibleBrushes()) {
       if (sourceBrushIds.has(targetBrush.id)) continue;
@@ -964,314 +951,203 @@ export class Viewport {
         for (let ei = 0; ei < tf.length; ei++) {
           const vi = tf[ei],
             otherVi = tf[(ei + 1) % tf.length],
-            startWorld = targetBrush.vertices[vi],
-            endWorld = targetBrush.vertices[otherVi],
-            startScr = this.screen(startWorld),
-            endScr = this.screen(endWorld);
-
-          const closestA = closestPointOnSegment(
-            freeCapA2D,
-            { x: startWorld[axisX], y: startWorld[axisY] },
-            { x: endWorld[axisX], y: endWorld[axisY] },
-          );
-          const closestAScr = {
-            x: startScr.x + (endScr.x - startScr.x) * closestA.t,
-            y: startScr.y + (endScr.y - startScr.y) * closestA.t,
-          };
-          const distAScrCap = Math.hypot(
-            closestAScr.x - freeCapAScreen.x,
-            closestAScr.y - freeCapAScreen.y,
-          );
-          const closestARail = closestPointOnSegment(
-            sideAMid2D,
-            { x: startWorld[axisX], y: startWorld[axisY] },
-            { x: endWorld[axisX], y: endWorld[axisY] },
-          );
-          const closestARailScr = {
-            x: startScr.x + (endScr.x - startScr.x) * closestARail.t,
-            y: startScr.y + (endScr.y - startScr.y) * closestARail.t,
-          };
-          const distAScrRail = Math.hypot(
-            closestARailScr.x - sideAMidScreen.x,
-            closestARailScr.y - sideAMidScreen.y,
-          );
-          const distAScr = Math.min(distAScrCap, distAScrRail);
-          if (distAScr <= acquireRadius) {
-            // When free cap lies on the target edge line, snap to nearest vertex instead
-            let snapPointA = closestA.point;
-            if (
-              Math.hypot(
-                snapPointA.x - freeCapA2D.x,
-                snapPointA.y - freeCapA2D.y,
-              ) < 0.5
-            ) {
-              const distStart = Math.hypot(
-                startWorld[axisX] - freeCapA2D.x,
-                startWorld[axisY] - freeCapA2D.y,
-              );
-              const distEnd = Math.hypot(
-                endWorld[axisX] - freeCapA2D.x,
-                endWorld[axisY] - freeCapA2D.y,
-              );
-              snapPointA =
-                distStart <= distEnd
-                  ? { x: startWorld[axisX], y: startWorld[axisY] }
-                  : { x: endWorld[axisX], y: endWorld[axisY] };
-            }
-            candidateEdgesA.push({
-              point: snapPointA,
+            tStart = this.screen(targetBrush.vertices[vi]),
+            tEnd = this.screen(targetBrush.vertices[otherVi]);
+          for (const moving of movingEdges) {
+            const dist = segmentDistance(
+              moving.start,
+              moving.end,
+              tStart,
+              tEnd,
+            );
+            if (dist > acquireRadius) continue;
+            const projectedKey = projectedEdgeKey(tStart, tEnd);
+            const dir2D = {
+              x:
+                targetBrush.vertices[otherVi][axisX] -
+                targetBrush.vertices[vi][axisX],
+              y:
+                targetBrush.vertices[otherVi][axisY] -
+                targetBrush.vertices[vi][axisY],
+            };
+            const dirLen = Math.hypot(dir2D.x, dir2D.y);
+            if (dirLen < 0.0001) continue;
+            const edgeDir = { x: dir2D.x / dirLen, y: dir2D.y / dirLen };
+            const point = closestPointOnSegment(
+              {
+                x: (moving.start.x + moving.end.x) / 2,
+                y: (moving.start.y + moving.end.y) / 2,
+              },
+              tStart,
+              tEnd,
+            ).point;
+            candidatesByEdge[moving.id].push({
+              movingEdge: moving.id,
+              point,
+              direction: edgeDir,
               targetBrushId: targetBrush.id,
               targetFaceIndex: fi,
-              startWorld: { ...startWorld },
-              endWorld: { ...endWorld },
-              startScreen: startScr,
-              endScreen: endScr,
-              mouseDistance: distAScr,
-              edgeKey: [
-                targetBrush.id,
-                Math.min(vi, otherVi),
-                Math.max(vi, otherVi),
-              ].join(":"),
-            });
-          }
-
-          const closestB = closestPointOnSegment(
-            freeCapB2D,
-            { x: startWorld[axisX], y: startWorld[axisY] },
-            { x: endWorld[axisX], y: endWorld[axisY] },
-          );
-          const closestBScr = {
-            x: startScr.x + (endScr.x - startScr.x) * closestB.t,
-            y: startScr.y + (endScr.y - startScr.y) * closestB.t,
-          };
-          const distBScrCap = Math.hypot(
-            closestBScr.x - freeCapBScreen.x,
-            closestBScr.y - freeCapBScreen.y,
-          );
-          const closestBRail = closestPointOnSegment(
-            sideBMid2D,
-            { x: startWorld[axisX], y: startWorld[axisY] },
-            { x: endWorld[axisX], y: endWorld[axisY] },
-          );
-          const closestBRailScr = {
-            x: startScr.x + (endScr.x - startScr.x) * closestBRail.t,
-            y: startScr.y + (endScr.y - startScr.y) * closestBRail.t,
-          };
-          const distBRailScr = Math.hypot(
-            closestBRailScr.x - sideBMidScreen.x,
-            closestBRailScr.y - sideBMidScreen.y,
-          );
-          const distBScr = Math.min(distBScrCap, distBRailScr);
-          if (distBScr <= acquireRadius) {
-            let snapPointB = closestB.point;
-            if (
-              Math.hypot(
-                snapPointB.x - freeCapB2D.x,
-                snapPointB.y - freeCapB2D.y,
-              ) < 0.5
-            ) {
-              const distStart = Math.hypot(
-                startWorld[axisX] - freeCapB2D.x,
-                startWorld[axisY] - freeCapB2D.y,
-              );
-              const distEnd = Math.hypot(
-                endWorld[axisX] - freeCapB2D.x,
-                endWorld[axisY] - freeCapB2D.y,
-              );
-              snapPointB =
-                distStart <= distEnd
-                  ? { x: startWorld[axisX], y: startWorld[axisY] }
-                  : { x: endWorld[axisX], y: endWorld[axisY] };
-            }
-            candidateEdgesB.push({
-              point: snapPointB,
-              targetBrushId: targetBrush.id,
-              targetFaceIndex: fi,
-              startWorld: { ...startWorld },
-              endWorld: { ...endWorld },
-              startScreen: startScr,
-              endScreen: endScr,
-              mouseDistance: distBScr,
-              edgeKey: [
-                targetBrush.id,
-                Math.min(vi, otherVi),
-                Math.max(vi, otherVi),
-              ].join(":"),
+              startWorld: { ...targetBrush.vertices[vi] },
+              endWorld: { ...targetBrush.vertices[otherVi] },
+              startScreen: tStart,
+              endScreen: tEnd,
+              segmentDistance: dist,
+              projectedKey,
             });
           }
         }
       }
     }
 
-    candidateEdgesA.sort((a, b) => a.mouseDistance - b.mouseDistance);
-    candidateEdgesB.sort((a, b) => a.mouseDistance - b.mouseDistance);
+    for (const key of ["sideA", "cap", "sideB"]) {
+      const seen = new Set();
+      candidatesByEdge[key] = candidatesByEdge[key]
+        .sort((a, b) => a.segmentDistance - b.segmentDistance)
+        .filter((c) => {
+          if (seen.has(c.projectedKey)) return false;
+          seen.add(c.projectedKey);
+          return true;
+        })
+        .slice(0, 4);
+    }
 
-    // Dedupe by edgeKey and cap at 4 per side
-    const uniqueA = [
-      ...new Map(candidateEdgesA.map((edge) => [edge.edgeKey, edge])).values(),
-    ].slice(0, 4);
-    const uniqueB = [
-      ...new Map(candidateEdgesB.map((edge) => [edge.edgeKey, edge])).values(),
-    ].slice(0, 4);
+    const edgeLists = {
+      sideA: [undefined, ...candidatesByEdge.sideA],
+      cap: [undefined, ...candidatesByEdge.cap],
+      sideB: [undefined, ...candidatesByEdge.sideB],
+    };
 
-    // Combine independent A/B snap targets
-    const aList = uniqueA.length ? uniqueA : [undefined];
-    const bList = uniqueB.length ? uniqueB : [undefined];
-    for (const ea of aList)
-      for (const eb of bList) {
-        if (!ea && !eb) continue;
+    for (const ea of edgeLists.sideA)
+      for (const ec of edgeLists.cap)
+        for (const eb of edgeLists.sideB) {
+          const active = [ea, ec, eb].filter(Boolean);
+          if (!active.length) continue;
+          const keys = active.map((c) => c.projectedKey);
+          if (new Set(keys).size !== keys.length) continue;
 
-        // Build snap objects with actual projected point positions
-        const snapA = ea
-          ? {
-              point: ea.point,
-              type: "edge-ray",
-              targetBrushId: ea.targetBrushId,
-              targetEdgeKey: ea.edgeKey,
-            }
-          : undefined;
-        const snapB = eb
-          ? {
-              point: eb.point,
-              type: "edge-ray",
-              targetBrushId: eb.targetBrushId,
-              targetEdgeKey: eb.edgeKey,
-            }
-          : undefined;
+          const conforming = active
+            .map((c) => ({
+              movingEdge: c.movingEdge,
+              direction: c.direction,
+              origin: { x: c.startWorld[axisX], y: c.startWorld[axisY] },
+              targetBrushId: c.targetBrushId,
+              targetEdgeKey: c.projectedKey,
+            }))
+            .filter((c) => {
+              // Skip conforming constraints when direction matches free extrusion
+              // (the solver can't change anything, vertex-snapped solver should handle it)
+              const isCap = c.movingEdge === "cap";
+              const refDir = isCap
+                ? { x: srcDir2D.x, y: srcDir2D.y }
+                : { x: extNormal.x, y: extNormal.y };
+              const refLen = Math.hypot(refDir.x, refDir.y);
+              if (refLen < 0.0001) return true;
+              const dot =
+                Math.abs(c.direction.x * refDir.x + c.direction.y * refDir.y) /
+                refLen;
+              return dot < 0.99;
+            });
 
-        // Build conforming constraints from target edge directions
-        const conforming = [];
-        if (ea && ea.startWorld && ea.endWorld) {
-          const dl = Math.hypot(
-            ea.endWorld[axisX] - ea.startWorld[axisX],
-            ea.endWorld[axisY] - ea.startWorld[axisY],
-          );
-          if (dl > 0.0001) {
-            const dir = {
-              x: (ea.endWorld[axisX] - ea.startWorld[axisX]) / dl,
-              y: (ea.endWorld[axisY] - ea.startWorld[axisY]) / dl,
-            };
-            const alignment = Math.abs(
-              dir.x * extNormal.x + dir.y * extNormal.y,
-            );
-            if (alignment < 0.99) {
-              conforming.push({
-                movingEdge: "sideA",
-                direction: dir,
-                origin: { x: ea.startWorld[axisX], y: ea.startWorld[axisY] },
-                targetBrushId: ea.targetBrushId,
-                targetEdgeKey: ea.edgeKey,
-              });
-            }
-          }
-        }
-        if (eb && eb.startWorld && eb.endWorld) {
-          const dl = Math.hypot(
-            eb.endWorld[axisX] - eb.startWorld[axisX],
-            eb.endWorld[axisY] - eb.startWorld[axisY],
-          );
-          if (dl > 0.0001) {
-            const dir = {
-              x: (eb.endWorld[axisX] - eb.startWorld[axisX]) / dl,
-              y: (eb.endWorld[axisY] - eb.startWorld[axisY]) / dl,
-            };
-            const alignment = Math.abs(
-              dir.x * extNormal.x + dir.y * extNormal.y,
-            );
-            if (alignment < 0.99) {
-              conforming.push({
-                movingEdge: "sideB",
-                direction: dir,
-                origin: { x: eb.startWorld[axisX], y: eb.startWorld[axisY] },
-                targetBrushId: eb.targetBrushId,
-                targetEdgeKey: eb.edgeKey,
-              });
-            }
-          }
-        }
-
-        const st = {
-          type: "cross-section-rails",
-          activeAxes,
-          snapA,
-          snapB,
-          conforming: conforming.length ? conforming : undefined,
-          brushes: this.state.brushes,
-          distance: rawDistance,
-          targetBrushIds: [ea?.targetBrushId, eb?.targetBrushId].filter(
-            Boolean,
-          ),
-        };
-
-        const solvedCap = (() => {
-          const hasConforming = conforming.length > 0;
-          if (hasConforming) {
-            // Clone the source brush to avoid mutating live state
+          const solvedCap = (() => {
             const clonedBrush = {
               ...brush,
               vertices: brush.vertices.map((v) => ({ ...v })),
             };
-            const r = solveConvexConformingExtrusion({
-              brushes: [clonedBrush],
-              sourceBrushId: clonedBrush.id,
-              faceIndex,
-              distance: rawDistance,
-              activeAxes,
-              constraints: conforming,
-            });
-            if (r?.generatedCap) {
-              // Apply source vertex moves to the clone for validation
-              for (const move of r.sourceVertexMoves || []) {
-                const v = clonedBrush.vertices[move.vertexIndex];
-                if (v) {
-                  v[activeAxes[0]] = move.position[activeAxes[0]];
-                  v[activeAxes[1]] = move.position[activeAxes[1]];
+            const hasActiveConstraints = conforming.length > 0;
+            if (hasActiveConstraints) {
+              const r = solveConvexConformingExtrusion({
+                brushes: [clonedBrush],
+                sourceBrushId: clonedBrush.id,
+                faceIndex,
+                distance: rawDistance,
+                activeAxes,
+                constraints: conforming,
+              });
+              if (r?.generatedCap) {
+                for (const move of r.sourceVertexMoves || []) {
+                  const v = clonedBrush.vertices[move.vertexIndex];
+                  if (v) {
+                    v[activeAxes[0]] = move.position[activeAxes[0]];
+                    v[activeAxes[1]] = move.position[activeAxes[1]];
+                  }
                 }
+                return r.generatedCap;
               }
-              return r.generatedCap;
             }
-          }
-          return solveVertexSnappedExtrusion(
-            brush,
-            faceIndex,
-            rawDistance,
-            snapA,
-            snapB,
-            activeAxes,
-          );
-        })();
-        if (!solvedCap || solvedCap.some((p) => !p || !Number.isFinite(p.x)))
-          continue;
+            const snapAPt = ea
+              ? {
+                  point: ea.point,
+                  type: "edge-ray",
+                  targetBrushId: ea.targetBrushId,
+                  targetEdgeKey: ea.projectedKey,
+                }
+              : undefined;
+            const snapBPt = eb
+              ? {
+                  point: eb.point,
+                  type: "edge-ray",
+                  targetBrushId: eb.targetBrushId,
+                  targetEdgeKey: eb.projectedKey,
+                }
+              : undefined;
+            return solveVertexSnappedExtrusion(
+              brush,
+              faceIndex,
+              rawDistance,
+              snapAPt,
+              snapBPt,
+              activeAxes,
+            );
+          })();
+          if (!solvedCap || solvedCap.some((p) => !p || !Number.isFinite(p.x)))
+            continue;
 
-        const md = Math.min(
-          ea?.mouseDistance ?? Infinity,
-          eb?.mouseDistance ?? Infinity,
-        );
+          const worstDist = Math.max(...active.map((c) => c.segmentDistance));
+          const totalDist = active.reduce((s, c) => s + c.segmentDistance, 0);
 
-        snapCandidates.push({
-          distance: rawDistance,
-          edge: ea ||
-            eb || { startScreen: { x: 0, y: 0 }, endScreen: { x: 0, y: 0 } },
-          edgeKey: [ea?.edgeKey ?? "", eb?.edgeKey ?? ""].join("|"),
-          edges: [
-            ...[ea].filter(Boolean).map((e) => ({
-              startScreen: e.startScreen,
-              endScreen: e.endScreen,
+          snapCandidates.push({
+            distance: rawDistance,
+            edge: active[0],
+            edgeKey: keys.join("|"),
+            edges: active.map((c) => ({
+              startScreen: c.startScreen,
+              endScreen: c.endScreen,
             })),
-            ...[eb].filter(Boolean).map((e) => ({
-              startScreen: e.startScreen,
-              endScreen: e.endScreen,
-            })),
-          ],
-          mouseDistance: md,
-          snapTarget: st,
-        });
-      }
+            mouseDistance: worstDist,
+            matchCount: active.length,
+            totalDist,
+            snapTarget: {
+              type: "cross-section-rails",
+              activeAxes,
+              snapA: ea
+                ? {
+                    point: ea.point,
+                    type: "edge-ray",
+                    targetBrushId: ea.targetBrushId,
+                    targetEdgeKey: ea.projectedKey,
+                  }
+                : undefined,
+              snapB: eb
+                ? {
+                    point: eb.point,
+                    type: "edge-ray",
+                    targetBrushId: eb.targetBrushId,
+                    targetEdgeKey: eb.projectedKey,
+                  }
+                : undefined,
+              conforming: conforming.length ? conforming : undefined,
+              brushes: this.state.brushes,
+              distance: rawDistance,
+              targetBrushIds: [...new Set(active.map((c) => c.targetBrushId))],
+            },
+          });
+        }
 
     snapCandidates.sort((a, b) => {
+      if (b.matchCount !== a.matchCount) return b.matchCount - a.matchCount;
       if (a.mouseDistance !== b.mouseDistance)
         return a.mouseDistance - b.mouseDistance;
-      return a.distance - b.distance;
+      return a.totalDist - b.totalDist;
     });
 
     const releaseRadius = 14,
@@ -1299,13 +1175,7 @@ export class Viewport {
     if (this.drag) this.drag.extrusionCandidate = candidate;
     if (candidate)
       candidate.edges = snapCandidates
-        .filter(
-          (item) =>
-            item.snapTarget?.targetBrushId ===
-              candidate.snapTarget?.targetBrushId &&
-            item.snapTarget?.targetFaceIndex ===
-              candidate.snapTarget?.targetFaceIndex,
-        )
+        .filter((item) => item.edgeKey === candidate.edgeKey)
         .flatMap((item) => item.edges);
     this.extrusionCandidate = candidate;
     return candidate?.distance ?? rawDistance;

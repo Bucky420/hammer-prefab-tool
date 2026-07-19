@@ -593,12 +593,12 @@ export function solveConvexConformingExtrusion(options) {
 
   // Compute lines: baseLine, capLine, sideA, sideB
   const baseLineOrigin = { x: baseA.x, y: baseA.y };
-  const baseLineDir = { x: srcDir.x, y: srcDir.y };
+  let baseLineDir = { x: srcDir.x, y: srcDir.y };
   const capLineOrigin = {
     x: baseA.x + srcNormal.x * distance,
     y: baseA.y + srcNormal.y * distance,
   };
-  const capLineDir = { x: srcDir.x, y: srcDir.y };
+  let capLineDir = { x: srcDir.x, y: srcDir.y };
   let sideADir = adjSideDir(groupA);
   let sideBDir = adjSideDir(groupB);
   const sideAOrigin = { x: baseA.x, y: baseA.y };
@@ -848,7 +848,7 @@ function offsetFacePlaneCap(brush, faceIndex, distance, snapTarget = null) {
   const face = brush.faces[faceIndex];
 
   // Conforming extrusion with four support lines
-  if (snapTarget?.conforming) {
+  if (snapTarget?.conforming?.length) {
     const result = solveConvexConformingExtrusion({
       brushes: snapTarget.brushes || [brush],
       sourceBrushId: brush.id,
