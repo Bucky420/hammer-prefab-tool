@@ -606,26 +606,61 @@ export function solveConvexConformingExtrusion(options) {
   // Track which constraints were applied
   const applied = { sideA: false, sideB: false, base: false, cap: false };
 
-  if (constraints?.sideA) {
-    sideADir = constraints.sideA.direction;
-    applied.sideA = true;
+  // Normalize constraints to an array of { movingEdge, direction, origin }
+  const constraintList = Array.isArray(constraints)
+    ? constraints
+    : constraints
+      ? [
+          ...(constraints.sideA
+            ? [
+                {
+                  movingEdge: "sideA",
+                  direction: constraints.sideA.direction,
+                  origin: constraints.sideA.origin,
+                },
+              ]
+            : []),
+          ...(constraints.sideB
+            ? [
+                {
+                  movingEdge: "sideB",
+                  direction: constraints.sideB.direction,
+                  origin: constraints.sideB.origin,
+                },
+              ]
+            : []),
+          ...(constraints.capLine
+            ? [{ movingEdge: "cap", direction: constraints.capLine }]
+            : []),
+          ...(constraints.baseLine
+            ? [{ movingEdge: "base", direction: constraints.baseLine }]
+            : []),
+        ]
+      : [];
+
+  for (const c of constraintList) {
+    if (c.movingEdge === "sideA") {
+      sideADir = c.direction;
+      applied.sideA = true;
+    } else if (c.movingEdge === "sideB") {
+      sideBDir = c.direction;
+      applied.sideB = true;
+    } else if (c.movingEdge === "base") {
+      baseLineDir = c.direction;
+      applied.base = true;
+    } else if (c.movingEdge === "cap") {
+      capLineDir = c.direction;
+      capLineOrigin.x = baseA.x + srcNormal.x * distance;
+      capLineOrigin.y = baseA.y + srcNormal.y * distance;
+      applied.cap = true;
+    }
   }
-  if (constraints?.sideB) {
-    sideBDir = constraints.sideB.direction;
-    applied.sideB = true;
-  } else if (applied.sideA) {
-    // One-side snap: copy A's direction to B
+
+  // One-side snap: copy A's direction to B
+  if (applied.sideA && !applied.sideB) {
     sideBDir = { x: sideADir.x, y: sideADir.y };
-  }
-  if (constraints?.baseLine) {
-    baseLineDir = constraints.baseLine;
-    applied.base = true;
-  }
-  if (constraints?.capLine) {
-    capLineDir = constraints.capLine;
-    capLineOrigin.x = baseA.x + srcNormal.x * distance;
-    capLineOrigin.y = baseA.y + srcNormal.y * distance;
-    applied.cap = true;
+  } else if (applied.sideB && !applied.sideA) {
+    sideADir = { x: sideBDir.x, y: sideBDir.y };
   }
 
   // Solve four corners

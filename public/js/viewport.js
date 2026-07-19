@@ -1080,7 +1080,7 @@ export class Viewport {
           : undefined;
 
         // Build conforming constraints from target edge directions
-        const conforming = {};
+        const conforming = [];
         if (ea && ea.startWorld && ea.endWorld) {
           const dl = Math.hypot(
             ea.endWorld[axisX] - ea.startWorld[axisX],
@@ -1091,17 +1091,17 @@ export class Viewport {
               x: (ea.endWorld[axisX] - ea.startWorld[axisX]) / dl,
               y: (ea.endWorld[axisY] - ea.startWorld[axisY]) / dl,
             };
-            // Only use if direction differs from free extrusion perpendicular
-            const freeDir = {
-              x: extNormal.x,
-              y: extNormal.y,
-            };
-            const alignment = Math.abs(dir.x * freeDir.x + dir.y * freeDir.y);
+            const alignment = Math.abs(
+              dir.x * extNormal.x + dir.y * extNormal.y,
+            );
             if (alignment < 0.99) {
-              conforming.sideA = {
+              conforming.push({
+                movingEdge: "sideA",
                 direction: dir,
                 origin: { x: ea.startWorld[axisX], y: ea.startWorld[axisY] },
-              };
+                targetBrushId: ea.targetBrushId,
+                targetEdgeKey: ea.edgeKey,
+              });
             }
           }
         }
@@ -1119,10 +1119,13 @@ export class Viewport {
               dir.x * extNormal.x + dir.y * extNormal.y,
             );
             if (alignment < 0.99) {
-              conforming.sideB = {
+              conforming.push({
+                movingEdge: "sideB",
                 direction: dir,
                 origin: { x: eb.startWorld[axisX], y: eb.startWorld[axisY] },
-              };
+                targetBrushId: eb.targetBrushId,
+                targetEdgeKey: eb.edgeKey,
+              });
             }
           }
         }
@@ -1132,7 +1135,7 @@ export class Viewport {
           activeAxes,
           snapA,
           snapB,
-          conforming: Object.keys(conforming).length ? conforming : undefined,
+          conforming: conforming.length ? conforming : undefined,
           brushes: this.state.brushes,
           distance: rawDistance,
           targetBrushIds: [ea?.targetBrushId, eb?.targetBrushId].filter(
@@ -1141,7 +1144,7 @@ export class Viewport {
         };
 
         const solvedCap = (() => {
-          const hasConforming = Object.keys(conforming).length > 0;
+          const hasConforming = conforming.length > 0;
           if (hasConforming) {
             const r = solveConvexConformingExtrusion({
               brushes: this.state.brushes,
