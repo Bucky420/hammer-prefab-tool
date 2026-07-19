@@ -10,9 +10,7 @@ import { distanceToSegment, pointInPolygon } from "./math.js";
 import {
   extrudeSelectedFaces,
   limitExtrusionDistance,
-  solveConformingExtrusion,
-  adjacentFaceForEdge,
-  planeForFace,
+  solveVertexSnappedExtrusion,
 } from "./face-extrusion.js";
 import { validateBrush } from "./brush-validation.js";
 import { duplicateBrushes } from "./geometry-model.js";
@@ -1006,32 +1004,55 @@ export class Viewport {
         a.mouseDistance - b.mouseDistance,
     );
 
-    // Combine independent A/B edge targets
+    // Combine independent A/B snap targets
     const aList = candidateEdgesA.length ? candidateEdgesA : [undefined];
     const bList = candidateEdgesB.length ? candidateEdgesB : [undefined];
     for (const ea of aList)
       for (const eb of bList) {
         if (!ea && !eb) continue;
+
+        // Build snap objects with actual point positions
+        const snapA = ea
+          ? {
+              point: {
+                x: ea.startWorld[axisX],
+                y: ea.startWorld[axisY],
+              },
+              type: "vertex",
+              targetBrushId: ea.targetBrushId,
+              targetEdgeKey: ea.edgeKey,
+            }
+          : undefined;
+        const snapB = eb
+          ? {
+              point: {
+                x: eb.startWorld[axisX],
+                y: eb.startWorld[axisY],
+              },
+              type: "vertex",
+              targetBrushId: eb.targetBrushId,
+              targetEdgeKey: eb.edgeKey,
+            }
+          : undefined;
+
         const st = {
           type: "cross-section-rails",
           activeAxes,
-          edgeA: ea || undefined,
-          edgeB: eb || undefined,
+          snapA,
+          snapB,
           distance: rawDistance,
           targetBrushIds: [ea?.targetBrushId, eb?.targetBrushId].filter(
             Boolean,
           ),
         };
 
-        const solvedCap = solveConformingExtrusion(
+        const solvedCap = solveVertexSnappedExtrusion(
           brush,
           faceIndex,
           rawDistance,
-          {
-            activeAxes,
-            edgeA: ea || undefined,
-            edgeB: eb || undefined,
-          },
+          snapA,
+          snapB,
+          activeAxes,
         );
         if (!solvedCap || solvedCap.some((p) => !p || !Number.isFinite(p.x)))
           continue;
@@ -1044,10 +1065,7 @@ export class Viewport {
         snapCandidates.push({
           distance: rawDistance,
           edge: ea ||
-            eb || {
-              startScreen: { x: 0, y: 0 },
-              endScreen: { x: 0, y: 0 },
-            },
+            eb || { startScreen: { x: 0, y: 0 }, endScreen: { x: 0, y: 0 } },
           edgeKey: [ea?.edgeKey ?? "", eb?.edgeKey ?? ""].join("|"),
           edges: [
             ...[ea].filter(Boolean).map((e) => ({
