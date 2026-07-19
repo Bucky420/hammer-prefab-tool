@@ -933,6 +933,30 @@ export class Viewport {
     const candidateEdgesA = [],
       candidateEdgesB = [];
 
+    // Side rail midpoints for proximity detection
+    const sideAMid2D = {
+      x: (baseA.x + freeCapA2D.x) / 2,
+      y: (baseA.y + freeCapA2D.y) / 2,
+    };
+    const sideBMid2D = {
+      x: (baseB.x + freeCapB2D.x) / 2,
+      y: (baseB.y + freeCapB2D.y) / 2,
+    };
+    const sideAMidScreen = this.screen({
+      x: 0,
+      y: 0,
+      z: 0,
+    });
+    sideAMidScreen[axisX] = sideAMid2D.x;
+    sideAMidScreen[axisY] = sideAMid2D.y;
+    const sideBMidScreen = this.screen({
+      x: 0,
+      y: 0,
+      z: 0,
+    });
+    sideBMidScreen[axisX] = sideBMid2D.x;
+    sideBMidScreen[axisY] = sideBMid2D.y;
+
     for (const targetBrush of this.visibleBrushes()) {
       if (sourceBrushIds.has(targetBrush.id)) continue;
       for (let fi = 0; fi < targetBrush.faces.length; fi++) {
@@ -954,10 +978,24 @@ export class Viewport {
             x: startScr.x + (endScr.x - startScr.x) * closestA.t,
             y: startScr.y + (endScr.y - startScr.y) * closestA.t,
           };
-          const distAScr = Math.hypot(
+          const distAScrCap = Math.hypot(
             closestAScr.x - freeCapAScreen.x,
             closestAScr.y - freeCapAScreen.y,
           );
+          const closestARail = closestPointOnSegment(
+            sideAMid2D,
+            { x: startWorld[axisX], y: startWorld[axisY] },
+            { x: endWorld[axisX], y: endWorld[axisY] },
+          );
+          const closestARailScr = {
+            x: startScr.x + (endScr.x - startScr.x) * closestARail.t,
+            y: startScr.y + (endScr.y - startScr.y) * closestARail.t,
+          };
+          const distAScrRail = Math.hypot(
+            closestARailScr.x - sideAMidScreen.x,
+            closestARailScr.y - sideAMidScreen.y,
+          );
+          const distAScr = Math.min(distAScrCap, distAScrRail);
           if (distAScr <= acquireRadius) {
             // When free cap lies on the target edge line, snap to nearest vertex instead
             let snapPointA = closestA.point;
@@ -1006,10 +1044,24 @@ export class Viewport {
             x: startScr.x + (endScr.x - startScr.x) * closestB.t,
             y: startScr.y + (endScr.y - startScr.y) * closestB.t,
           };
-          const distBScr = Math.hypot(
+          const distBScrCap = Math.hypot(
             closestBScr.x - freeCapBScreen.x,
             closestBScr.y - freeCapBScreen.y,
           );
+          const closestBRail = closestPointOnSegment(
+            sideBMid2D,
+            { x: startWorld[axisX], y: startWorld[axisY] },
+            { x: endWorld[axisX], y: endWorld[axisY] },
+          );
+          const closestBRailScr = {
+            x: startScr.x + (endScr.x - startScr.x) * closestBRail.t,
+            y: startScr.y + (endScr.y - startScr.y) * closestBRail.t,
+          };
+          const distBRailScr = Math.hypot(
+            closestBRailScr.x - sideBMidScreen.x,
+            closestBRailScr.y - sideBMidScreen.y,
+          );
+          const distBScr = Math.min(distBScrCap, distBRailScr);
           if (distBScr <= acquireRadius) {
             let snapPointB = closestB.point;
             if (
