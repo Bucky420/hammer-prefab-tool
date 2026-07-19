@@ -1021,33 +1021,24 @@ export class Viewport {
             };
             this.extrusionCandidate = candidate;
             if (this.drag) this.drag.extrusionCandidate = candidate;
-            // Convert conforming candidate constraints to progressive locks
-            if (
-              candidate?.snapTarget?.conforming &&
-              this.drag?.extrusionLocks
-            ) {
-              for (const c of candidate.snapTarget.conforming) {
+            // Convert selected conforming constraints to progressive locks
+            const conformingList = candidate?.snapTarget?.conforming;
+            if (conformingList && this.drag?.extrusionLocks) {
+              conformingList.forEach((c, i) => {
                 if (!this.drag.extrusionLocks[c.movingEdge]) {
-                  const edgeData = candidate.edges?.find(
-                    (e) =>
-                      e.startScreen &&
-                      Math.hypot(
-                        e.startScreen.x - c.origin.x,
-                        e.startScreen.y - c.origin.y,
-                      ) < 0.1,
-                  );
+                  const edgeScr = candidate.edges?.[i];
                   this.drag.extrusionLocks[c.movingEdge] = {
                     movingEdge: c.movingEdge,
                     projectedTargetKey: c.targetEdgeKey || "",
                     targetBrushId: c.targetBrushId,
                     directionWorld2D: c.direction,
                     originWorld2D: c.origin,
-                    startScreen: edgeData?.startScreen || { x: 0, y: 0 },
-                    endScreen: edgeData?.endScreen || { x: 0, y: 0 },
+                    startScreen: edgeScr?.startScreen || { x: 0, y: 0 },
+                    endScreen: edgeScr?.endScreen || { x: 0, y: 0 },
                     segmentDistance: 0,
                   };
                 }
-              }
+              });
             }
             return rawDistance;
           }
