@@ -10,6 +10,7 @@ import { distanceToSegment, pointInPolygon } from "./math.js";
 import {
   extrudeSelectedFaces,
   limitExtrusionDistance,
+  solveConvexConformingExtrusion,
   solveVertexSnappedExtrusion,
 } from "./face-extrusion.js";
 import { validateBrush } from "./brush-validation.js";
@@ -1078,25 +1079,89 @@ export class Viewport {
             }
           : undefined;
 
+        // Build conforming constraints from target edge directions
+        const conforming = {};
+        if (ea && ea.startWorld && ea.endWorld) {
+          const dl = Math.hypot(
+            ea.endWorld[axisX] - ea.startWorld[axisX],
+            ea.endWorld[axisY] - ea.startWorld[axisY],
+          );
+          if (dl > 0.0001) {
+            const dir = {
+              x: (ea.endWorld[axisX] - ea.startWorld[axisX]) / dl,
+              y: (ea.endWorld[axisY] - ea.startWorld[axisY]) / dl,
+            };
+            // Only use if direction differs from free extrusion perpendicular
+            const freeDir = {
+              x: extNormal.x,
+              y: extNormal.y,
+            };
+            const alignment = Math.abs(dir.x * freeDir.x + dir.y * freeDir.y);
+            if (alignment < 0.99) {
+              conforming.sideA = {
+                direction: dir,
+                origin: { x: ea.startWorld[axisX], y: ea.startWorld[axisY] },
+              };
+            }
+          }
+        }
+        if (eb && eb.startWorld && eb.endWorld) {
+          const dl = Math.hypot(
+            eb.endWorld[axisX] - eb.startWorld[axisX],
+            eb.endWorld[axisY] - eb.startWorld[axisY],
+          );
+          if (dl > 0.0001) {
+            const dir = {
+              x: (eb.endWorld[axisX] - eb.startWorld[axisX]) / dl,
+              y: (eb.endWorld[axisY] - eb.startWorld[axisY]) / dl,
+            };
+            const alignment = Math.abs(
+              dir.x * extNormal.x + dir.y * extNormal.y,
+            );
+            if (alignment < 0.99) {
+              conforming.sideB = {
+                direction: dir,
+                origin: { x: eb.startWorld[axisX], y: eb.startWorld[axisY] },
+              };
+            }
+          }
+        }
+
         const st = {
           type: "cross-section-rails",
           activeAxes,
           snapA,
           snapB,
+          conforming: Object.keys(conforming).length ? conforming : undefined,
+          brushes: this.state.brushes,
           distance: rawDistance,
           targetBrushIds: [ea?.targetBrushId, eb?.targetBrushId].filter(
             Boolean,
           ),
         };
 
-        const solvedCap = solveVertexSnappedExtrusion(
-          brush,
-          faceIndex,
-          rawDistance,
-          snapA,
-          snapB,
-          activeAxes,
-        );
+        const solvedCap = (() => {
+          const hasConforming = Object.keys(conforming).length > 0;
+          if (hasConforming) {
+            const r = solveConvexConformingExtrusion({
+              brushes: this.state.brushes,
+              sourceBrushId: brush.id,
+              faceIndex,
+              distance: rawDistance,
+              activeAxes,
+              constraints: conforming,
+            });
+            if (r?.generatedCap) return r.generatedCap;
+          }
+          return solveVertexSnappedExtrusion(
+            brush,
+            faceIndex,
+            rawDistance,
+            snapA,
+            snapB,
+            activeAxes,
+          );
+        })();
         if (!solvedCap || solvedCap.some((p) => !p || !Number.isFinite(p.x)))
           continue;
 
