@@ -912,6 +912,19 @@ export class Viewport {
     const sideASegment = { start: baseAScreen, end: freeCapAScreen };
     const sideBSegment = { start: baseBScreen, end: freeCapBScreen };
 
+    const projectPointToRay = (point, origin, end) => {
+      const dx = end.x - origin.x,
+        dy = end.y - origin.y,
+        lengthSquared = dx * dx + dy * dy;
+      if (lengthSquared < 1e-8) return null;
+      const t = Math.max(
+        0,
+        ((point.x - origin.x) * dx + (point.y - origin.y) * dy) / lengthSquared,
+      );
+      return { x: origin.x + dx * t, y: origin.y + dy * t };
+    };
+
+    const baseAcquireRadius = 5;
     const candidateEdgesA = [],
       candidateEdgesB = [];
 
@@ -919,8 +932,19 @@ export class Viewport {
       if (sourceBrushIds.has(targetBrush.id)) continue;
       for (const [vi, vertex] of targetBrush.vertices.entries()) {
         const tv = this.screen(vertex);
-        // Collect target edges incident to this vertex
-        const incidentEdges = [];
+        const distToBaseA = Math.hypot(
+          tv.x - baseAScreen.x,
+          tv.y - baseAScreen.y,
+        );
+        const distToBaseB = Math.hypot(
+          tv.x - baseBScreen.x,
+          tv.y - baseBScreen.y,
+        );
+
+        if (distToBaseA > baseAcquireRadius && distToBaseB > baseAcquireRadius)
+          continue;
+
+        // Collect target edges incident to this vertex, oriented away from it
         for (let fi = 0; fi < targetBrush.faces.length; fi++) {
           const tf = targetBrush.faces[fi];
           const viPos = tf.indexOf(vi);
@@ -938,55 +962,75 @@ export class Viewport {
             dir.x /= drLen;
             dir.y /= drLen;
             const endScr = this.screen(other);
-            const segDistA = segmentDistance(
-              sideASegment.start,
-              sideASegment.end,
-              tv,
-              endScr,
-            );
-            const segDistB = segmentDistance(
-              sideBSegment.start,
-              sideBSegment.end,
-              tv,
-              endScr,
-            );
-            const minSegDist = Math.min(segDistA, segDistB);
-            if (minSegDist > acquireRadius) continue;
 
-            const md = pointSegmentDistance(current, tv, endScr);
-            const freeDistA = Math.hypot(
-              tv.x - freeCapAScreen.x,
-              tv.y - freeCapAScreen.y,
-            );
-            const freeDistB = Math.hypot(
-              tv.x - freeCapBScreen.x,
-              tv.y - freeCapBScreen.y,
-            );
-
-            incidentEdges.push({
+            const edge = {
               direction: dir,
-              mouseDistance: md,
-              segmentDistance: minSegDist,
               targetBrushId: targetBrush.id,
               targetFaceIndex: fi,
               startWorld: { ...vertex },
               endWorld: { ...other },
               startScreen: tv,
               endScreen: endScr,
-              nearA: segDistA <= acquireRadius ? freeDistA : Infinity,
-              nearB: segDistB <= acquireRadius ? freeDistB : Infinity,
               edgeKey: [
                 targetBrush.id,
                 Math.min(vi, otherVi),
                 Math.max(vi, otherVi),
               ].join(":"),
-            });
-          }
-        }
-        for (const edge of incidentEdges) {
-          if (edge.nearA <= acquireRadius || edge.nearB <= acquireRadius) {
-            if (edge.nearA <= acquireRadius) candidateEdgesA.push(edge);
-            if (edge.nearB <= acquireRadius) candidateEdgesB.push(edge);
+            };
+
+            if (distToBaseA <= baseAcquireRadius) {
+              // Project freeCapA onto the target edge ray
+              const origin2D = {
+                  x: vertex[axisX],
+                  y: vertex[axisY],
+                },
+                toward2D = {
+                  x: other[axisX],
+                  y: other[axisY],
+                };
+              const freeCapA2D = {
+                x: baseA.x + extNormal.x * rawDistance,
+                y: baseA.y + extNormal.y * rawDistance,
+              };
+              const projected = projectPointToRay(
+                freeCapA2D,
+                origin2D,
+                toward2D,
+              );
+              if (projected) {
+                candidateEdgesA.push({
+                  ...edge,
+                  point: projected,
+                  mouseDistance: pointSegmentDistance(current, tv, endScr),
+                });
+              }
+            }
+            if (distToBaseB <= baseAcquireRadius) {
+              const origin2D = {
+                  x: vertex[axisX],
+                  y: vertex[axisY],
+                },
+                toward2D = {
+                  x: other[axisX],
+                  y: other[axisY],
+                };
+              const freeCapB2D = {
+                x: baseB.x + extNormal.x * rawDistance,
+                y: baseB.y + extNormal.y * rawDistance,
+              };
+              const projected = projectPointToRay(
+                freeCapB2D,
+                origin2D,
+                toward2D,
+              );
+              if (projected) {
+                candidateEdgesB.push({
+                  ...edge,
+                  point: projected,
+                  mouseDistance: pointSegmentDistance(current, tv, endScr),
+                });
+              }
+            }
           }
         }
       }
@@ -1011,25 +1055,19 @@ export class Viewport {
       for (const eb of bList) {
         if (!ea && !eb) continue;
 
-        // Build snap objects with actual point positions
+        // Build snap objects with actual projected point positions
         const snapA = ea
           ? {
-              point: {
-                x: ea.startWorld[axisX],
-                y: ea.startWorld[axisY],
-              },
-              type: "vertex",
+              point: ea.point,
+              type: "edge-ray",
               targetBrushId: ea.targetBrushId,
               targetEdgeKey: ea.edgeKey,
             }
           : undefined;
         const snapB = eb
           ? {
-              point: {
-                x: eb.startWorld[axisX],
-                y: eb.startWorld[axisY],
-              },
-              type: "vertex",
+              point: eb.point,
+              type: "edge-ray",
               targetBrushId: eb.targetBrushId,
               targetEdgeKey: eb.edgeKey,
             }
