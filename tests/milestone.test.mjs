@@ -1011,6 +1011,37 @@ assert.equal(
   56,
   "an extrusion tip near another brush edge must snap exactly to that edge instead of the nearest grid point",
 );
+const opposingCandidate = snapViewport.extrusionCandidate;
+assert.ok(opposingCandidate, "opposing face must produce a snap candidate");
+assert.equal(
+  opposingCandidate.snapTarget?.type,
+  "opposing-face",
+  "snap target must be opposing-face type",
+);
+assert.ok(
+  opposingCandidate.snapTarget.normalDot <= -0.9,
+  "opposing-face normal dot must be <= -0.9",
+);
+assert.ok(
+  Number.isFinite(opposingCandidate.snapTarget.finiteSeparation),
+  "candidate must carry finite boundary separation",
+);
+assert.ok(
+  opposingCandidate.snapTarget.targetPlane,
+  "candidate must carry the target face plane",
+);
+assert.ok(
+  opposingCandidate.snapTarget.targetBrushId,
+  "candidate must carry the target brush ID",
+);
+assert.ok(
+  typeof opposingCandidate.snapTarget.targetFaceIndex === "number",
+  "candidate must carry the target face index",
+);
+assert.ok(
+  opposingCandidate.edges.every((edge) => edge.startScreen && edge.endScreen),
+  "candidate edges must carry screen-space coordinates for highlighting",
+);
 const zoomViewport = Object.create(Viewport.prototype);
 zoomViewport.canvas = {
   getBoundingClientRect: () => ({ width: 800, height: 600 }),

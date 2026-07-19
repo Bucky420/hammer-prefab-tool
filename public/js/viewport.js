@@ -14,7 +14,6 @@ import {
 } from "./face-extrusion.js";
 import { validateBrush } from "./brush-validation.js";
 import { duplicateBrushes } from "./geometry-model.js";
-import { Line, Point } from "@flatten-js/core";
 const cross = (a, b) => ({
   x: a.y * b.z - a.z * b.y,
   y: a.z * b.x - a.x * b.z,
@@ -51,33 +50,6 @@ const orientOutward = (face, vertices) => {
     ? [...face].reverse()
     : face;
 };
-const infiniteLineIntersection = (
-  firstStart,
-  firstEnd,
-  secondStart,
-  secondEnd,
-) => {
-  if (
-    Math.hypot(firstEnd.x - firstStart.x, firstEnd.y - firstStart.y) <
-      0.000001 ||
-    Math.hypot(secondEnd.x - secondStart.x, secondEnd.y - secondStart.y) <
-      0.000001
-  )
-    return null;
-  const intersections = new Line(
-    new Point(firstStart.x, firstStart.y),
-    new Point(firstEnd.x, firstEnd.y),
-  ).intersect(
-    new Line(
-      new Point(secondStart.x, secondStart.y),
-      new Point(secondEnd.x, secondEnd.y),
-    ),
-  );
-  const point = intersections[0];
-  return point && Number.isFinite(point.x) && Number.isFinite(point.y)
-    ? point
-    : null;
-};
 
 const COLORS = {
   grid: "#4c4c4c",
@@ -112,18 +84,6 @@ function segmentsIntersect(a, b, c, d) {
     t = (ac.x * cd.y - ac.y * cd.x) / denominator,
     u = (ac.x * ab.y - ac.y * ab.x) / denominator;
   return t >= 0 && t <= 1 && u >= 0 && u <= 1;
-}
-function raySegmentDistance(origin, direction, start, end) {
-  const edge = { x: end.x - start.x, y: end.y - start.y },
-    denominator = direction.x * edge.y - direction.y * edge.x;
-  if (Math.abs(denominator) < 0.000001) return null;
-  const offset = { x: start.x - origin.x, y: start.y - origin.y },
-    distance = (offset.x * edge.y - offset.y * edge.x) / denominator,
-    edgeFraction =
-      (offset.x * direction.y - offset.y * direction.x) / denominator;
-  return distance >= 0 && edgeFraction >= 0 && edgeFraction <= 1
-    ? distance
-    : null;
 }
 
 export class Viewport {
@@ -836,323 +796,216 @@ export class Viewport {
         (faceId) => faceId.match(/^(.*):f:\d+$/)?.[1],
       ),
     );
-    const targetEdges = this.exposedEdges().filter(
-        (edge) =>
-          ![...edge.faceIds].some((faceId) =>
-            sourceBrushIds.has(faceId.match(/^(.*):f:\d+$/)?.[1]),
-          ),
-      ),
-      snapCandidates = [],
-      pointSegmentDistance = (point, startPoint, endPoint) => {
-        const dx = endPoint.x - startPoint.x,
-          dy = endPoint.y - startPoint.y,
-          lengthSquared = dx * dx + dy * dy;
-        if (!lengthSquared)
-          return Math.hypot(point.x - startPoint.x, point.y - startPoint.y);
-        const t = Math.max(
-          0,
-          Math.min(
-            1,
-            ((point.x - startPoint.x) * dx + (point.y - startPoint.y) * dy) /
-              lengthSquared,
-          ),
-        );
-        return Math.hypot(
-          point.x - (startPoint.x + t * dx),
-          point.y - (startPoint.y + t * dy),
-        );
-      },
-      makeCandidate = (distance, edge) => {
-        const mouseDistance = pointSegmentDistance(
-            current,
-            edge.startScreen,
-            edge.endScreen,
-          ),
-          midpoint = {
-            x: (edge.start.x + edge.end.x) / 2,
-            y: (edge.start.y + edge.end.y) / 2,
-            z: (edge.start.z + edge.end.z) / 2,
-          },
-          alignedDistance =
-            Math.max(
-              0,
-              (midpoint.x - center.x) * unitDirection.x +
-                (midpoint.y - center.y) * unitDirection.y +
-                (midpoint.z - center.z) * unitDirection.z,
-            ) || distance,
-          depthVector = { x: 0, y: 0, z: 0 },
-          edgeDirection = {
-            x: edge.end.x - edge.start.x,
-            y: edge.end.y - edge.start.y,
-            z: edge.end.z - edge.start.z,
-          },
-          viewDepth = { x: 0, y: 0, z: 0 },
-          targetFaceCandidates = [...edge.faceIds]
-            .map((faceId) => {
-              const match = faceId.match(/^(.*):f:(\d+)$/),
-                brush = match
-                  ? this.state.brushes.find((item) => item.id === match[1])
-                  : null,
-                face = brush?.faces[Number(match?.[2])];
-              return match && brush && face && !sourceBrushIds.has(brush.id)
-                ? { id: faceId, match, brush, face }
-                : null;
-            })
-            .filter(Boolean);
-        viewDepth[this.axes()[2]] = 1;
-        const compatibleTargetFaces = targetFaceCandidates.filter(
-          (candidate) => {
-            const normal = this.faceNormal(candidate.brush, candidate.face);
-            return (
-              Math.abs(
-                normal.x * viewDepth.x +
-                  normal.y * viewDepth.y +
-                  normal.z * viewDepth.z,
-              ) < 0.0001
-            );
-          },
-        );
-        const targetFaceCandidate = compatibleTargetFaces[0];
-        const targetFaceMatch = targetFaceCandidate?.match,
-          targetBrush = targetFaceCandidate?.brush,
-          targetFace = targetFaceCandidate?.face;
-        let targetPlane = null;
-        if (targetBrush && targetFace) {
-          const targetNormal = this.faceNormal(targetBrush, targetFace);
-          targetPlane = {
-            normal: targetNormal,
-            distance:
-              targetNormal.x * targetBrush.vertices[targetFace[0]].x +
-              targetNormal.y * targetBrush.vertices[targetFace[0]].y +
-              targetNormal.z * targetBrush.vertices[targetFace[0]].z,
-          };
-        } else {
-          depthVector[this.axes()[2]] = 1;
-          let normal = cross(edgeDirection, depthVector),
-            length = Math.hypot(normal.x, normal.y, normal.z);
-          if (length < 0.000001)
-            return {
-              distance,
-              edge,
-              edgeKey: "",
-              edges: [edge],
-              mouseDistance,
-            };
-          normal = {
-            x: normal.x / length,
-            y: normal.y / length,
-            z: normal.z / length,
-          };
-          if (
-            normal.x * unitDirection.x +
-              normal.y * unitDirection.y +
-              normal.z * unitDirection.z <
-            0
-          ) {
-            normal.x *= -1;
-            normal.y *= -1;
-            normal.z *= -1;
+    const sourceNormal = this.faceNormal(brush, face);
+    const sourceLen = Math.hypot(
+      sourceNormal.x,
+      sourceNormal.y,
+      sourceNormal.z,
+    );
+    const sourceUnit =
+      sourceLen > 0.000001
+        ? {
+            x: sourceNormal.x / sourceLen,
+            y: sourceNormal.y / sourceLen,
+            z: sourceNormal.z / sourceLen,
           }
-          targetPlane = {
-            normal,
-            distance:
-              normal.x * edge.start.x +
-              normal.y * edge.start.y +
-              normal.z * edge.start.z,
-          };
-        }
+        : { x: 0, y: 0, z: 1 };
+
+    const sourceBoundary = face.map((vertexIndex, offset) => ({
+      start: this.screen(brush.vertices[vertexIndex]),
+      end: this.screen(brush.vertices[face[(offset + 1) % face.length]]),
+    }));
+
+    const pointSegmentDistance = (point, startPoint, endPoint) => {
+      const dx = endPoint.x - startPoint.x,
+        dy = endPoint.y - startPoint.y,
+        lengthSquared = dx * dx + dy * dy;
+      if (!lengthSquared)
+        return Math.hypot(point.x - startPoint.x, point.y - startPoint.y);
+      const t = Math.max(
+        0,
+        Math.min(
+          1,
+          ((point.x - startPoint.x) * dx + (point.y - startPoint.y) * dy) /
+            lengthSquared,
+        ),
+      );
+      return Math.hypot(
+        point.x - (startPoint.x + t * dx),
+        point.y - (startPoint.y + t * dy),
+      );
+    };
+
+    const segmentDistance = (aStart, aEnd, bStart, bEnd) =>
+      Math.min(
+        pointSegmentDistance(aStart, bStart, bEnd),
+        pointSegmentDistance(aEnd, bStart, bEnd),
+        pointSegmentDistance(bStart, aStart, aEnd),
+        pointSegmentDistance(bEnd, aStart, aEnd),
+      );
+
+    const snapCandidates = [],
+      acquireRadius = 10;
+
+    for (const targetBrush of this.visibleBrushes()) {
+      if (sourceBrushIds.has(targetBrush.id)) continue;
+      for (
+        let targetFaceIndex = 0;
+        targetFaceIndex < targetBrush.faces.length;
+        targetFaceIndex++
+      ) {
+        const targetFace = targetBrush.faces[targetFaceIndex];
+        const targetNormal = this.faceNormal(targetBrush, targetFace);
+        const targetLen = Math.hypot(
+          targetNormal.x,
+          targetNormal.y,
+          targetNormal.z,
+        );
+        if (targetLen < 0.000001) continue;
+        const targetUnit = {
+          x: targetNormal.x / targetLen,
+          y: targetNormal.y / targetLen,
+          z: targetNormal.z / targetLen,
+        };
+        const normalDot =
+          sourceUnit.x * targetUnit.x +
+          sourceUnit.y * targetUnit.y +
+          sourceUnit.z * targetUnit.z;
+        if (normalDot > -0.9) continue;
+
+        const targetPlane = {
+          normal: targetUnit,
+          distance:
+            targetUnit.x * targetBrush.vertices[targetFace[0]].x +
+            targetUnit.y * targetBrush.vertices[targetFace[0]].y +
+            targetUnit.z * targetBrush.vertices[targetFace[0]].z,
+        };
+
+        const targetBoundary = targetFace.map((vertexIndex, offset) => ({
+          start: this.screen(targetBrush.vertices[vertexIndex]),
+          end: this.screen(
+            targetBrush.vertices[targetFace[(offset + 1) % targetFace.length]],
+          ),
+        }));
+
+        let finiteSeparation = Infinity;
+
+        for (let si = 0; si < sourceBoundary.length; si++)
+          for (let ti = 0; ti < targetBoundary.length; ti++) {
+            const dist = segmentDistance(
+              sourceBoundary[si].start,
+              sourceBoundary[si].end,
+              targetBoundary[ti].start,
+              targetBoundary[ti].end,
+            );
+            if (dist < finiteSeparation) finiteSeparation = dist;
+          }
+
+        const mouseDistance = Math.min(
+          ...targetBoundary.map((seg) =>
+            pointSegmentDistance(current, seg.start, seg.end),
+          ),
+        );
+
+        const solvedCap = solveCapFromPlane(brush, faceIndex, targetPlane);
         if (
-          targetPlane.normal.x * unitDirection.x +
-            targetPlane.normal.y * unitDirection.y +
-            targetPlane.normal.z * unitDirection.z <
-          0
-        ) {
-          targetPlane.normal.x *= -1;
-          targetPlane.normal.y *= -1;
-          targetPlane.normal.z *= -1;
-          targetPlane.distance *= -1;
-        }
-        const solvedCap = solveCapFromPlane(brush, faceIndex, targetPlane),
-          candidateBrush = solvedCap?.every(Boolean)
-            ? {
-                id: "snap-preview",
-                material: brush.material,
-                vertices: [
-                  ...face.map((index) => brush.vertices[index]),
-                  ...solvedCap,
-                ],
-                faces: [
-                  [...Array(face.length).keys()],
-                  [...Array(face.length).keys()].map(
-                    (index) => face.length + index,
-                  ),
-                  ...Array.from({ length: face.length }, (_, index) => [
-                    index,
-                    (index + 1) % face.length,
-                    face.length + ((index + 1) % face.length),
-                    face.length + index,
-                  ]),
-                ].map((candidateFace) =>
-                  orientOutward(candidateFace, [
-                    ...face.map((index) => brush.vertices[index]),
-                    ...solvedCap,
-                  ]),
-                ),
-              }
-            : null,
-          candidateErrors = candidateBrush
-            ? validateBrush(candidateBrush)
-            : ["intersection failure"];
-        if (candidateErrors.length) {
-          console.debug("Rejected extrusion snap plane", {
-            targetBrushId: targetFaceCandidate?.brush.id || null,
-            targetFaceIndex: targetFaceCandidate
-              ? Number(targetFaceCandidate.match[2])
-              : null,
-            normalDotViewDepth:
-              targetPlane.normal.x * viewDepth.x +
-              targetPlane.normal.y * viewDepth.y +
-              targetPlane.normal.z * viewDepth.z,
-            intersectionFailureVertex:
-              solvedCap?.findIndex((point) => !point) ?? -1,
-            maximumCapDisplacement: solvedCap
-              ? Math.max(
-                  ...solvedCap.map((point, index) =>
-                    point
-                      ? Math.hypot(
-                          point.x - brush.vertices[face[index]].x,
-                          point.y - brush.vertices[face[index]].y,
-                          point.z - brush.vertices[face[index]].z,
-                        )
-                      : Infinity,
-                  ),
-                )
-              : Infinity,
-            rejectionReason: candidateErrors.join("; "),
-          });
-          return {
-            distance,
-            edge,
-            edgeKey: "",
-            edges: [edge],
-            mouseDistance,
-          };
-        }
-        const edgeKey = [
-          `${edge.start.x},${edge.start.y},${edge.start.z}`,
-          `${edge.end.x},${edge.end.y},${edge.end.z}`,
-        ]
-          .sort()
-          .join("|");
-        return {
-          distance: alignedDistance,
-          edge,
-          edgeKey,
-          edges: [edge],
+          !solvedCap ||
+          solvedCap.some((point) => !point || !Number.isFinite(point.x))
+        )
+          continue;
+
+        const candidateBrush = {
+          id: "snap-preview",
+          material: brush.material,
+          vertices: [
+            ...face.map((index) => brush.vertices[index]),
+            ...solvedCap,
+          ],
+          faces: [
+            [...Array(face.length).keys()],
+            [...Array(face.length).keys()].map((index) => face.length + index),
+            ...Array.from({ length: face.length }, (_, index) => [
+              index,
+              (index + 1) % face.length,
+              face.length + ((index + 1) % face.length),
+              face.length + index,
+            ]),
+          ].map((candidateFace) =>
+            orientOutward(candidateFace, [
+              ...face.map((index) => brush.vertices[index]),
+              ...solvedCap,
+            ]),
+          ),
+        };
+        if (validateBrush(candidateBrush).length) continue;
+
+        const sourceCenter = face.reduce(
+          (sum, index) => ({
+            x: sum.x + brush.vertices[index].x / face.length,
+            y: sum.y + brush.vertices[index].y / face.length,
+            z: sum.z + brush.vertices[index].z / face.length,
+          }),
+          { x: 0, y: 0, z: 0 },
+        );
+        const extrusionDistance = Math.max(
+          0,
+          sourceUnit.x *
+            (targetBrush.vertices[targetFace[0]].x - sourceCenter.x) +
+            sourceUnit.y *
+              (targetBrush.vertices[targetFace[0]].y - sourceCenter.y) +
+            sourceUnit.z *
+              (targetBrush.vertices[targetFace[0]].z - sourceCenter.z),
+        );
+
+        const faceKey = `${targetBrush.id}:f:${targetFaceIndex}`;
+        const synthEdge = {
+          start: targetBrush.vertices[targetFace[0]],
+          end: targetBrush.vertices[
+            (targetFace.length - 1) % targetFace.length
+          ],
+          startScreen: targetBoundary[0].start,
+          endScreen: targetBoundary[0].end,
+        };
+
+        snapCandidates.push({
+          distance: extrusionDistance || rawDistance,
+          edge: synthEdge,
+          edgeKey: faceKey,
+          edges: targetBoundary.map((seg, i) => ({
+            start: targetBrush.vertices[targetFace[i]],
+            end: targetBrush.vertices[targetFace[(i + 1) % targetFace.length]],
+            startScreen: seg.start,
+            endScreen: seg.end,
+          })),
           mouseDistance,
           snapTarget: {
-            type: "plane",
-            plane: {
-              normal: targetPlane.normal,
-              distance: targetPlane.distance,
-            },
-            distance: alignedDistance,
-            edge,
-            targetBrushId: targetFaceMatch?.[1] || null,
-            targetFaceIndex: targetFaceMatch
-              ? Number(targetFaceMatch[2])
-              : null,
-            targetEdge: edge,
+            type: "opposing-face",
+            sourceBrushId: brush.id,
+            sourceFaceIndex: faceIndex,
+            targetBrushId: targetBrush.id,
+            targetFaceIndex,
             targetPlane,
+            normalDot,
+            finiteSeparation,
+            distance: extrusionDistance || rawDistance,
           },
-        };
-      },
-      unitDirection = {
-        x: direction.x / length,
-        y: direction.y / length,
-        z: direction.z / length,
-      },
-      acquireRadius = 10;
-    for (const sourceIndex of face) {
-      const source = brush.vertices[sourceIndex],
-        origin = this.screen(source),
-        ahead = this.screen({
-          x: source.x + direction.x / length,
-          y: source.y + direction.y / length,
-          z: source.z + direction.z / length,
-        }),
-        screenDirection = { x: ahead.x - origin.x, y: ahead.y - origin.y };
-      if (Math.hypot(screenDirection.x, screenDirection.y) < 0.0001) continue;
-      for (const edge of targetEdges) {
-        const intersection = infiniteLineIntersection(
-          origin,
-          ahead,
-          edge.startScreen,
-          edge.endScreen,
-        );
-        if (intersection) {
-          const offset = {
-              x: intersection.x - origin.x,
-              y: intersection.y - origin.y,
-            },
-            candidate =
-              (offset.x * screenDirection.x + offset.y * screenDirection.y) /
-              (screenDirection.x ** 2 + screenDirection.y ** 2);
-          if (candidate >= 0)
-            snapCandidates.push(makeCandidate(candidate, edge));
-        }
+        });
       }
     }
-    for (const edge of targetEdges) {
-      const mouseDistance = pointSegmentDistance(
-        current,
-        edge.startScreen,
-        edge.endScreen,
-      );
-      if (mouseDistance > acquireRadius) continue;
-      const intersection = infiniteLineIntersection(
-        originScreen,
-        { x: originScreen.x + dx, y: originScreen.y + dy },
-        edge.startScreen,
-        edge.endScreen,
-      );
-      if (intersection) {
-        const candidate =
-          ((intersection.x - originScreen.x) * dx +
-            (intersection.y - originScreen.y) * dy) /
-          (dx * dx + dy * dy);
-        if (candidate >= 0) snapCandidates.push(makeCandidate(candidate, edge));
-      }
-    }
+
+    snapCandidates.sort((a, b) => {
+      const sa = a.snapTarget;
+      const sb = b.snapTarget;
+      if (sa.finiteSeparation !== sb.finiteSeparation)
+        return sa.finiteSeparation - sb.finiteSeparation;
+      if (a.mouseDistance !== b.mouseDistance)
+        return a.mouseDistance - b.mouseDistance;
+      return a.distance - b.distance;
+    });
+
     const releaseRadius = 14,
       locked = this.drag?.extrusionCandidate;
-    const nearbyCandidates = snapCandidates.filter(
-      (item) => item.snapTarget && item.mouseDistance <= acquireRadius,
-    );
-    const bestCandidate = (
-      nearbyCandidates.length
-        ? nearbyCandidates
-        : snapCandidates.filter((item) => item.snapTarget)
-    )
-      .filter(
-        (item) =>
-          item.mouseDistance <= acquireRadius ||
-          Math.abs(item.distance - rawDistance) * this.scale <= acquireRadius,
-      )
-      .reduce(
-        (best, item) =>
-          best == null ||
-          (nearbyCandidates.length
-            ? item.mouseDistance < best.mouseDistance ||
-              (item.mouseDistance === best.mouseDistance &&
-                Math.abs(item.distance - rawDistance) <
-                  Math.abs(best.distance - rawDistance))
-            : Math.abs(item.distance - rawDistance) <
-              Math.abs(best.distance - rawDistance))
-            ? item
-            : best,
-        null,
-      );
+    const bestCandidate = snapCandidates[0] || null;
     const lockedCandidate = locked
       ? snapCandidates.find((item) => item.edgeKey === locked.edgeKey)
       : null;
@@ -1167,16 +1020,22 @@ export class Viewport {
     if (
       candidate &&
       candidate.mouseDistance > releaseRadius &&
-      !nearbyCandidates.length
+      !snapCandidates.some(
+        (item) => item !== candidate && item.mouseDistance <= acquireRadius,
+      )
     )
       candidate = null;
     if (this.drag) this.drag.extrusionCandidate = candidate;
     if (candidate)
-      candidate.edges = targetEdges.filter(
-        (edge) =>
-          pointSegmentDistance(current, edge.startScreen, edge.endScreen) <=
-          acquireRadius,
-      );
+      candidate.edges = snapCandidates
+        .filter(
+          (item) =>
+            item.snapTarget?.targetBrushId ===
+              candidate.snapTarget?.targetBrushId &&
+            item.snapTarget?.targetFaceIndex ===
+              candidate.snapTarget?.targetFaceIndex,
+        )
+        .flatMap((item) => item.edges);
     this.extrusionCandidate = candidate;
     return candidate?.distance ?? rawDistance;
   }
