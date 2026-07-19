@@ -16,7 +16,7 @@ const state = {
   projectName: "untitled.json",
 };
 
-let faceExtrusionMode = "normal";
+let faceExtrusionMode = state.faceExtrusionMode || "normal";
 
 Object.defineProperty(state, "faceExtrusionMode", {
   enumerable: true,

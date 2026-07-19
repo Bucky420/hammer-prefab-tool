@@ -875,6 +875,27 @@ export class Viewport {
       })
       .filter(Boolean);
 
+    const xyKeys = [
+      ...new Set(
+        face.map(
+          (i) =>
+            `${brush.vertices[i].x.toFixed(8)},${brush.vertices[i].y.toFixed(8)}`,
+        ),
+      ),
+    ];
+    let edgeToEndpoint = [];
+    if (xyKeys.length === 2) {
+      const groupA = face.filter(
+        (i) =>
+          `${brush.vertices[i].x.toFixed(8)},${brush.vertices[i].y.toFixed(8)}` ===
+          xyKeys[0],
+      );
+      edgeToEndpoint = sideNorms.map((s) => {
+        const sv = face[s.edgeIndex];
+        return groupA.includes(sv) ? "A" : "B";
+      });
+    }
+
     const capPlane = {
       normal: sourceUnit,
       distance:
@@ -1025,6 +1046,19 @@ export class Viewport {
             endScreen: targetBoundary[0].end,
           };
 
+          const sideIndex = sideNorms.indexOf(side);
+          const railKey = edgeToEndpoint[sideIndex] || null;
+          const normalDot = useSideOverride ? sideDot : capDot;
+          const targetLineDir = {
+            x: -targetUnit.y || (targetUnit.x > 0 ? -1 : 1),
+            y: targetUnit.x || 0,
+          };
+          const tLen = Math.hypot(targetLineDir.x, targetLineDir.y);
+          if (tLen > 0.000001) {
+            targetLineDir.x /= tLen;
+            targetLineDir.y /= tLen;
+          }
+
           snapCandidates.push({
             distance: extrusionDistance,
             edge: synthEdge,
@@ -1039,15 +1073,29 @@ export class Viewport {
             })),
             mouseDistance,
             snapTarget: {
-              type: "opposing-face",
-              sourceBrushId: brush.id,
-              sourceFaceIndex: faceIndex,
+              type: "cross-section-rails",
+              activeAxes: ["x", "y", "z"],
+              plane: useSideOverride ? undefined : targetPlane,
+              targetPlane: useSideOverride ? undefined : targetPlane,
+              railA:
+                railKey === "A"
+                  ? {
+                      direction: targetLineDir,
+                      targetBrushId: targetBrush.id,
+                      targetFaceIndex,
+                    }
+                  : undefined,
+              railB:
+                railKey === "B"
+                  ? {
+                      direction: targetLineDir,
+                      targetBrushId: targetBrush.id,
+                      targetFaceIndex,
+                    }
+                  : undefined,
               targetBrushId: targetBrush.id,
               targetFaceIndex,
-              plane: targetPlane,
-              targetPlane,
-              sourceEdgeIndex: useSideOverride ? side.edgeIndex : undefined,
-              normalDot: useSideOverride ? sideDot : capDot,
+              normalDot,
               finiteSeparation,
               distance: extrusionDistance,
             },

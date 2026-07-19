@@ -141,35 +141,234 @@ export function solveCapFromPlane(
   return cap;
 }
 
-function offsetFacePlaneCap(brush, faceIndex, distance, snapTarget = null) {
-  const sourcePlane = planeForFace(brush, brush.faces[faceIndex]);
-  if (!sourcePlane) return null;
-  let sidePlaneOverrides = undefined;
-  const targetPlane =
-    snapTarget?.sourceEdgeIndex != null
-      ? {
-          normal: sourcePlane.normal,
-          distance: sourcePlane.distance + distance,
-        }
-      : snapTarget?.plane
-        ? {
-            normal: snapTarget.plane.normal,
-            distance:
-              snapTarget.plane.distance +
-              (distance - snapTarget.distance) *
-                dot(snapTarget.plane.normal, sourcePlane.normal),
-            maxDistance: snapTarget.maxDistance,
-          }
-        : {
-            normal: sourcePlane.normal,
-            distance: sourcePlane.distance + distance,
-          };
-  if (snapTarget?.sourceEdgeIndex != null && snapTarget?.plane) {
-    sidePlaneOverrides = new Map([
-      [snapTarget.sourceEdgeIndex, snapTarget.plane],
-    ]);
+function line2DIntersection(ax, ay, bx, by, cx, cy, dx, dy) {
+  const denom = (ax - bx) * (cy - dy) - (ay - by) * (cx - dx);
+  if (Math.abs(denom) < 0.000001) return null;
+  const t = ((ax - cx) * (cy - dy) - (ay - cy) * (cx - dx)) / denom;
+  return { x: ax + t * (bx - ax), y: ay + t * (by - ay) };
+}
+
+function isStrictlyConvex(points, epsilon = 1e-6) {
+  let sign = 0;
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i],
+      b = points[(i + 1) % points.length],
+      c = points[(i + 2) % points.length],
+      cross = (b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x);
+    if (Math.abs(cross) <= epsilon) return false;
+    const currentSign = Math.sign(cross);
+    if (!sign) sign = currentSign;
+    else if (currentSign !== sign) return false;
   }
-  return solveCapFromPlane(brush, faceIndex, targetPlane, sidePlaneOverrides);
+  return true;
+}
+
+function offsetFacePlaneCap(brush, faceIndex, distance, snapTarget = null) {
+  const face = brush.faces[faceIndex],
+    sourcePlane = planeForFace(brush, face);
+  if (!sourcePlane) return null;
+  const faceLength = face.length;
+
+  const axes = snapTarget?.activeAxes || ["x", "y"],
+    [axisX, axisY] = axes,
+    depthAxis = axes.length > 2 ? axes[2] : "z";
+
+  const sourceNormal = faceDirection(brush, face);
+  if (!sourceNormal) return null;
+
+  const pointKey = (index) =>
+    `${brush.vertices[index][axisX].toFixed(8)},${brush.vertices[index][axisY].toFixed(8)}`;
+  const xyGroups = new Map();
+  for (const index of face) {
+    const key = pointKey(index);
+    if (!xyGroups.has(key)) xyGroups.set(key, []);
+    xyGroups.get(key).push(index);
+  }
+  const xyEntries = [...xyGroups.entries()];
+  if (xyEntries.length !== 2 || (!snapTarget?.railA && !snapTarget?.railB)) {
+    return solveCapFromPlane(brush, faceIndex, {
+      normal: sourcePlane.normal,
+      distance: sourcePlane.distance + distance,
+    });
+  }
+
+  const [groupA, groupB] = xyEntries.map(([, indices]) => indices);
+  const baseA = {
+      x: brush.vertices[groupA[0]][axisX],
+      y: brush.vertices[groupA[0]][axisY],
+    },
+    baseB = {
+      x: brush.vertices[groupB[0]][axisX],
+      y: brush.vertices[groupB[0]][axisY],
+    };
+
+  const allZ = face.map((index) => brush.vertices[index][depthAxis]);
+  const zMin = Math.min(...allZ),
+    zMax = Math.max(...allZ);
+
+  const srcDir = { x: baseB.x - baseA.x, y: baseB.y - baseA.y },
+    srcLen = Math.hypot(srcDir.x, srcDir.y);
+  if (srcLen < 0.000001)
+    return solveCapFromPlane(brush, faceIndex, {
+      normal: sourcePlane.normal,
+      distance: sourcePlane.distance + distance,
+    });
+
+  const srcNormal = { x: -srcDir.y / srcLen, y: srcDir.x / srcLen };
+  let outwardSign =
+    srcNormal.x * sourceNormal[axisX] + srcNormal.y * sourceNormal[axisY];
+  if (outwardSign < 0) {
+    srcNormal.x *= -1;
+    srcNormal.y *= -1;
+  }
+
+  const capLine = {
+    origin: {
+      x: baseA.x + srcNormal.x * distance,
+      y: baseA.y + srcNormal.y * distance,
+    },
+    direction: srcDir,
+  };
+
+  const railForEndpoint = (endpoint, indices, snapKey) => {
+    if (snapTarget?.[snapKey]) {
+      const s = snapTarget[snapKey];
+      return {
+        origin: { x: endpoint.x, y: endpoint.y },
+        direction: s.direction,
+      };
+    }
+    let bestIndex = -1;
+    for (const vi of indices) {
+      const prev = face[(face.indexOf(vi) + faceLength - 1) % faceLength];
+      const adj = adjacentFaceForEdge(brush, faceIndex, prev, vi);
+      if (adj >= 0) {
+        bestIndex = adj;
+        break;
+      }
+    }
+    if (bestIndex < 0)
+      return { origin: { x: endpoint.x, y: endpoint.y }, direction: srcDir };
+    const adjNormal = faceDirection(brush, brush.faces[bestIndex]);
+    if (!adjNormal)
+      return { origin: { x: endpoint.x, y: endpoint.y }, direction: srcDir };
+    const adjDir = {
+      x: -adjNormal[axisY] || srcDir.x,
+      y: adjNormal[axisX] || srcDir.y,
+    };
+    const adjLen = Math.hypot(adjDir.x, adjDir.y);
+    return adjLen > 0.000001
+      ? {
+          origin: { x: endpoint.x, y: endpoint.y },
+          direction: { x: adjDir.x / adjLen, y: adjDir.y / adjLen },
+        }
+      : { origin: { x: endpoint.x, y: endpoint.y }, direction: srcDir };
+  };
+
+  const railA = railForEndpoint(baseA, groupA, "railA");
+  const railB = railForEndpoint(baseB, groupB, "railB");
+
+  const railALen = Math.hypot(railA.direction.x, railA.direction.y);
+  const railBLen = Math.hypot(railB.direction.x, railB.direction.y);
+  if (railALen < 0.000001 || railBLen < 0.000001)
+    return solveCapFromPlane(brush, faceIndex, {
+      normal: sourcePlane.normal,
+      distance: sourcePlane.distance + distance,
+    });
+
+  const capA = line2DIntersection(
+    capLine.origin.x,
+    capLine.origin.y,
+    capLine.origin.x + capLine.direction.x,
+    capLine.origin.y + capLine.direction.y,
+    railA.origin.x,
+    railA.origin.y,
+    railA.origin.x + railA.direction.x,
+    railA.origin.y + railA.direction.y,
+  );
+  const capB = line2DIntersection(
+    capLine.origin.x,
+    capLine.origin.y,
+    capLine.origin.x + capLine.direction.x,
+    capLine.origin.y + capLine.direction.y,
+    railB.origin.x,
+    railB.origin.y,
+    railB.origin.x + railB.direction.x,
+    railB.origin.y + railB.direction.y,
+  );
+
+  if (!capA || !capB) return null;
+  if (
+    !Number.isFinite(capA.x) ||
+    !Number.isFinite(capA.y) ||
+    !Number.isFinite(capB.x) ||
+    !Number.isFinite(capB.y)
+  )
+    return null;
+
+  const pushedA = dot({ x: capA.x - baseA.x, y: capA.y - baseA.y }, srcNormal);
+  const pushedB = dot({ x: capB.x - baseB.x, y: capB.y - baseB.y }, srcNormal);
+  if (pushedA <= 0.0001 || pushedB <= 0.0001) return null;
+
+  if (
+    !isStrictlyConvex([baseA, baseB, capB, capA]) &&
+    !isStrictlyConvex([baseA, capA, capB, baseB])
+  ) {
+    if (!snapTarget?.railA || !snapTarget?.railB) return null;
+    const swappedA = line2DIntersection(
+      capLine.origin.x,
+      capLine.origin.y,
+      capLine.origin.x + capLine.direction.x,
+      capLine.origin.y + capLine.direction.y,
+      snapTarget.railB.origin.x,
+      snapTarget.railB.origin.y,
+      snapTarget.railB.origin.x + snapTarget.railB.direction.x,
+      snapTarget.railB.origin.y + snapTarget.railB.direction.y,
+    );
+    const swappedB = line2DIntersection(
+      capLine.origin.x,
+      capLine.origin.y,
+      capLine.origin.x + capLine.direction.x,
+      capLine.origin.y + capLine.direction.y,
+      snapTarget.railA.origin.x,
+      snapTarget.railA.origin.y,
+      snapTarget.railA.origin.x + snapTarget.railA.direction.x,
+      snapTarget.railA.origin.y + snapTarget.railA.direction.y,
+    );
+    if (
+      !swappedA ||
+      !swappedB ||
+      !isStrictlyConvex([baseA, baseB, swappedB, swappedA])
+    )
+      return null;
+    capA.x = swappedA.x;
+    capA.y = swappedA.y;
+    capB.x = swappedB.x;
+    capB.y = swappedB.y;
+  }
+
+  const cap = [];
+  for (let i = 0; i < faceLength; i++) {
+    const vertexIndex = face[i],
+      z = brush.vertices[vertexIndex][depthAxis];
+    const isA = groupA.includes(vertexIndex),
+      pt = isA ? capA : capB;
+    cap[i] = { x: 0, y: 0, z: z };
+    cap[i][axisX] = pt.x;
+    cap[i][axisY] = pt.y;
+    cap[i][depthAxis] = z;
+  }
+
+  const aZ = [...new Set(groupA.map((i) => brush.vertices[i][depthAxis]))];
+  const bZ = [...new Set(groupB.map((i) => brush.vertices[i][depthAxis]))];
+  if (
+    !aZ.every((z) => Number.isFinite(z)) ||
+    !bZ.every((z) => Number.isFinite(z))
+  )
+    return null;
+  if (aZ.length > 2 || bZ.length > 2) return null;
+
+  return cap;
 }
 
 function extrudedPoint(point, direction, distance) {
@@ -406,12 +605,12 @@ export function extrudeSelectedFaces(
     const base = face.map((index) => ({ ...brush.vertices[index] }));
     const cap =
       region.caps.get(id) ||
-      (snapTarget?.plane && selection.size === 1
+      (selection.size === 1 && snapTarget
         ? offsetFacePlaneCap(brush, faceIndex, distance, snapTarget)
         : mode === "parallel" && selection.size === 1
           ? offsetFacePlaneCap(brush, faceIndex, distance)
           : base.map((point) => extrudedPoint(point, direction, distance)));
-    if (cap.some((point) => !point)) {
+    if (!cap || cap.some((point) => !point)) {
       errors.push(`${id}: cap plane intersection failed or exceeded bounds`);
       continue;
     }
@@ -553,7 +752,21 @@ export function limitExtrusionDistance(
     );
     if (!result.previewBrushes.length || result.errors.length) return false;
     const targetBrushId = snapTarget?.targetBrushId,
-      targetPlane = snapTarget?.targetPlane || snapTarget?.plane,
+      targetPlane =
+        snapTarget?.targetPlane ||
+        snapTarget?.plane ||
+        (targetBrushId
+          ? (() => {
+              const targetBrush = sourceBrushes.find(
+                (b) => b.id === targetBrushId,
+              );
+              const targetFace =
+                targetBrush?.faces[snapTarget?.targetFaceIndex];
+              return targetBrush && targetFace
+                ? planeForFace(targetBrush, targetFace)
+                : null;
+            })()
+          : null),
       targetCrossed =
         targetBrushId && targetPlane
           ? result.previewBrushes.some((candidate) =>

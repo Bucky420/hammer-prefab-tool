@@ -1015,20 +1015,20 @@ const opposingCandidate = snapViewport.extrusionCandidate;
 assert.ok(opposingCandidate, "opposing face must produce a snap candidate");
 assert.equal(
   opposingCandidate.snapTarget?.type,
-  "opposing-face",
-  "snap target must be opposing-face type",
+  "cross-section-rails",
+  "snap target must be cross-section-rails type",
 );
 assert.ok(
   opposingCandidate.snapTarget.normalDot <= -0.9,
-  "opposing-face normal dot must be <= -0.9",
+  "snap normal dot must be <= -0.9",
 );
 assert.ok(
   Number.isFinite(opposingCandidate.snapTarget.finiteSeparation),
   "candidate must carry finite boundary separation",
 );
 assert.ok(
-  opposingCandidate.snapTarget.targetPlane,
-  "candidate must carry the target face plane",
+  opposingCandidate.snapTarget.activeAxes,
+  "candidate must carry active axes for cross-section solving",
 );
 assert.ok(
   opposingCandidate.snapTarget.targetBrushId,
