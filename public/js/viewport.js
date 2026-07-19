@@ -944,6 +944,39 @@ export class Viewport {
       { id: "sideB", start: freeCapBScreen, end: baseBScreen },
     ];
 
+    // Extracted geometry setup helper (for progressive locking, Stage 2)
+    const buildExtrusionFrame = () => ({
+      activeAxes,
+      axisX,
+      axisY,
+      baseA,
+      baseB,
+      baseAWorld,
+      baseBWorld,
+      baseAScreen,
+      baseBScreen,
+      freeCapA2D,
+      freeCapB2D,
+      freeCapAScreen,
+      freeCapBScreen,
+      freeCapAWorld,
+      freeCapBWorld,
+      srcDir2D,
+      extNormal,
+      sourceBrushIds,
+      sourceUnit,
+      pointSegmentDistance,
+      segmentDistance,
+      closestPointOnSegment,
+      projectedEdgeKey,
+      movingEdges,
+      pointKey2D,
+      xyMap,
+      xyKeys,
+      groupA,
+      groupB,
+    });
+
     const candidatesByEdge = { sideA: [], cap: [], sideB: [] };
 
     for (const targetBrush of this.visibleBrushes()) {
