@@ -1009,16 +1009,60 @@ assert.equal(
     { x: 126, y: 32 },
   ),
   62,
-  "face extrusion follows mouse drag with cross-section solver",
+  "face extrusion follows mouse drag",
 );
 const extrusionCandidate = snapViewport.extrusionCandidate;
-if (extrusionCandidate) {
-  assert.equal(
-    extrusionCandidate.snapTarget?.type,
-    "cross-section-rails",
-    "candidate must be cross-section-rails type",
-  );
-}
+assert.ok(
+  extrusionCandidate,
+  "snap acquisition must detect the target edge 6px from freeCapA",
+);
+assert.ok(
+  extrusionCandidate.snapTarget?.snapA || extrusionCandidate.snapTarget?.snapB,
+  "at least one cap column must snap",
+);
+assert.notDeepEqual(
+  extrusionCandidate.snapTarget?.snapA?.point,
+  { x: 64, y: 32 },
+  "snap point must not collapse back to the fixed base endpoint",
+);
+
+// Verify the snap reaches into actual extrusion geometry
+const snapResult = extrudeSelectedFaces(
+  [snapSource, snapTarget],
+  new Set([`${snapSource.id}:f:3`]),
+  62,
+  16,
+  new Set([`${snapSource.id}:f:3`]),
+  "normal",
+  extrusionCandidate.snapTarget,
+);
+assert.equal(
+  snapResult.errors.length,
+  0,
+  "vertex-snapped extrusion must produce valid geometry",
+);
+assert.equal(snapResult.brushes.length, 1);
+const snappedBrush = snapResult.brushes[0];
+assert.ok(
+  snappedBrush.vertices.some((v) => Math.abs(v.x - 120) < 2),
+  "snapped cap must contain a vertex at x=120",
+);
+
+// Preview must equal commit
+const previewResult = extrudeSelectedFaces(
+  [snapSource, snapTarget],
+  new Set([`${snapSource.id}:f:3`]),
+  62,
+  16,
+  new Set([`${snapSource.id}:f:3`]),
+  "normal",
+  extrusionCandidate.snapTarget,
+);
+assert.deepEqual(
+  previewResult.previewBrushes[0].vertices,
+  snappedBrush.vertices,
+  "preview and committed vertices must be identical",
+);
 const zoomViewport = Object.create(Viewport.prototype);
 zoomViewport.canvas = {
   getBoundingClientRect: () => ({ width: 800, height: 600 }),

@@ -958,8 +958,29 @@ export class Viewport {
             closestAScr.y - freeCapAScreen.y,
           );
           if (distAScr <= acquireRadius) {
+            // When free cap lies on the target edge line, snap to nearest vertex instead
+            let snapPointA = closestA.point;
+            if (
+              Math.hypot(
+                snapPointA.x - freeCapA2D.x,
+                snapPointA.y - freeCapA2D.y,
+              ) < 0.5
+            ) {
+              const distStart = Math.hypot(
+                startWorld[axisX] - freeCapA2D.x,
+                startWorld[axisY] - freeCapA2D.y,
+              );
+              const distEnd = Math.hypot(
+                endWorld[axisX] - freeCapA2D.x,
+                endWorld[axisY] - freeCapA2D.y,
+              );
+              snapPointA =
+                distStart <= distEnd
+                  ? { x: startWorld[axisX], y: startWorld[axisY] }
+                  : { x: endWorld[axisX], y: endWorld[axisY] };
+            }
             candidateEdgesA.push({
-              point: closestA.point,
+              point: snapPointA,
               targetBrushId: targetBrush.id,
               targetFaceIndex: fi,
               startWorld: { ...startWorld },
@@ -989,8 +1010,28 @@ export class Viewport {
             closestBScr.y - freeCapBScreen.y,
           );
           if (distBScr <= acquireRadius) {
+            let snapPointB = closestB.point;
+            if (
+              Math.hypot(
+                snapPointB.x - freeCapB2D.x,
+                snapPointB.y - freeCapB2D.y,
+              ) < 0.5
+            ) {
+              const distStart = Math.hypot(
+                startWorld[axisX] - freeCapB2D.x,
+                startWorld[axisY] - freeCapB2D.y,
+              );
+              const distEnd = Math.hypot(
+                endWorld[axisX] - freeCapB2D.x,
+                endWorld[axisY] - freeCapB2D.y,
+              );
+              snapPointB =
+                distStart <= distEnd
+                  ? { x: startWorld[axisX], y: startWorld[axisY] }
+                  : { x: endWorld[axisX], y: endWorld[axisY] };
+            }
             candidateEdgesB.push({
-              point: closestB.point,
+              point: snapPointB,
               targetBrushId: targetBrush.id,
               targetFaceIndex: fi,
               startWorld: { ...startWorld },
