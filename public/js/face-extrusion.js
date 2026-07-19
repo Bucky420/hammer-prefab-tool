@@ -483,8 +483,279 @@ export function solveVertexSnappedExtrusion(
   return cap;
 }
 
+export function collectWeldedVertexColumns(
+  brushes,
+  worldPoint,
+  activeAxes,
+  epsilon,
+) {
+  const [axisX, axisY] = activeAxes || ["x", "y"];
+  const eps = epsilon !== undefined ? epsilon : 0.01;
+  const columns = [];
+  for (const brush of brushes) {
+    const visited = new Set();
+    for (let i = 0; i < brush.vertices.length; i++) {
+      if (visited.has(i)) continue;
+      const v = brush.vertices[i];
+      if (
+        Math.hypot(v[axisX] - worldPoint[axisX], v[axisY] - worldPoint[axisY]) >
+        eps
+      )
+        continue;
+      const col = [];
+      for (let j = 0; j < brush.vertices.length; j++) {
+        if (visited.has(j)) continue;
+        const w = brush.vertices[j];
+        if (Math.hypot(w[axisX] - v[axisX], w[axisY] - v[axisY]) < eps) {
+          col.push(j);
+          visited.add(j);
+        }
+      }
+      columns.push({ brush, indices: col, x: v[axisX], y: v[axisY] });
+    }
+  }
+  return columns;
+}
+
+export function solveConvexConformingExtrusion(options) {
+  const {
+    brushes,
+    sourceBrushId,
+    faceIndex,
+    distance,
+    activeAxes,
+    constraints,
+  } = options;
+  const sourceBrush = brushes.find((b) => b.id === sourceBrushId);
+  if (!sourceBrush) return null;
+  const face = sourceBrush.faces[faceIndex];
+  if (!face) return null;
+
+  const axes = activeAxes || ["x", "y"],
+    [axisX, axisY] = axes,
+    depthAxis = axes.length > 2 ? axes[2] : "z";
+
+  const sourceNormal = faceDirection(sourceBrush, face);
+  if (!sourceNormal) return null;
+
+  const pointKey = (index) =>
+    `${sourceBrush.vertices[index][axisX].toFixed(8)},${sourceBrush.vertices[index][axisY].toFixed(8)}`;
+  const xyGroups = new Map();
+  for (const index of face) {
+    const key = pointKey(index);
+    if (!xyGroups.has(key)) xyGroups.set(key, []);
+    xyGroups.get(key).push(index);
+  }
+  const xyEntries = [...xyGroups.entries()];
+  if (xyEntries.length !== 2) return null;
+
+  const [groupA, groupB] = xyEntries.map(([, indices]) => indices);
+  const baseA = {
+      x: sourceBrush.vertices[groupA[0]][axisX],
+      y: sourceBrush.vertices[groupA[0]][axisY],
+    },
+    baseB = {
+      x: sourceBrush.vertices[groupB[0]][axisX],
+      y: sourceBrush.vertices[groupB[0]][axisY],
+    };
+
+  const srcDir = { x: baseB.x - baseA.x, y: baseB.y - baseA.y },
+    srcLen = Math.hypot(srcDir.x, srcDir.y);
+  if (srcLen < 0.000001) return null;
+
+  const srcNormal = { x: -srcDir.y / srcLen, y: srcDir.x / srcLen };
+  let outwardSign =
+    srcNormal.x * sourceNormal[axisX] + srcNormal.y * sourceNormal[axisY];
+  if (outwardSign < 0) {
+    srcNormal.x *= -1;
+    srcNormal.y *= -1;
+  }
+
+  // Adjacent side direction fallback
+  const adjSideDir = (group) => {
+    for (const vi of group) {
+      const fi = face.indexOf(vi);
+      if (fi < 0) continue;
+      const prev = face[(fi + face.length - 1) % face.length];
+      const adj = adjacentFaceForEdge(sourceBrush, faceIndex, prev, vi);
+      if (adj >= 0) {
+        const adjN = faceDirection(sourceBrush, sourceBrush.faces[adj]);
+        if (adjN) {
+          const d = { x: -adjN[axisY] || srcDir.x, y: adjN[axisX] || srcDir.y };
+          const dl = Math.hypot(d.x, d.y);
+          if (dl > 0.0001) return { x: d.x / dl, y: d.y / dl };
+        }
+      }
+    }
+    return { x: srcDir.x, y: srcDir.y };
+  };
+
+  // Compute lines: baseLine, capLine, sideA, sideB
+  const baseLineOrigin = { x: baseA.x, y: baseA.y };
+  const baseLineDir = { x: srcDir.x, y: srcDir.y };
+  const capLineOrigin = {
+    x: baseA.x + srcNormal.x * distance,
+    y: baseA.y + srcNormal.y * distance,
+  };
+  const capLineDir = { x: srcDir.x, y: srcDir.y };
+  let sideADir = adjSideDir(groupA);
+  let sideBDir = adjSideDir(groupB);
+  const sideAOrigin = { x: baseA.x, y: baseA.y };
+  const sideBOrigin = { x: baseB.x, y: baseB.y };
+
+  // Track which constraints were applied
+  const applied = { sideA: false, sideB: false, base: false, cap: false };
+
+  if (constraints?.sideA) {
+    sideADir = constraints.sideA.direction;
+    applied.sideA = true;
+  }
+  if (constraints?.sideB) {
+    sideBDir = constraints.sideB.direction;
+    applied.sideB = true;
+  } else if (applied.sideA) {
+    // One-side snap: copy A's direction to B
+    sideBDir = { x: sideADir.x, y: sideADir.y };
+  }
+  if (constraints?.baseLine) {
+    baseLineDir = constraints.baseLine;
+    applied.base = true;
+  }
+  if (constraints?.capLine) {
+    capLineDir = constraints.capLine;
+    capLineOrigin.x = baseA.x + srcNormal.x * distance;
+    capLineOrigin.y = baseA.y + srcNormal.y * distance;
+    applied.cap = true;
+  }
+
+  // Solve four corners
+  const solvePt = (lx, ly, ldx, ldy, sx, sy, sdx, sdy) => {
+    const den =
+      (lx - (lx + ldx)) * (sy - (sy + sdy)) -
+      (ly - (ly + ldy)) * (sx - (sx + sdx));
+    if (Math.abs(den) < 0.000001) return null;
+    const t =
+      ((lx - sx) * (sy - (sy + sdy)) - (ly - sy) * (sx - (sx + sdx))) / den;
+    return { x: lx + t * ldx, y: ly + t * ldy };
+  };
+
+  const newBaseA = solvePt(
+    baseLineOrigin.x,
+    baseLineOrigin.y,
+    baseLineDir.x,
+    baseLineDir.y,
+    sideAOrigin.x,
+    sideAOrigin.y,
+    sideADir.x,
+    sideADir.y,
+  );
+  const newBaseB = solvePt(
+    baseLineOrigin.x,
+    baseLineOrigin.y,
+    baseLineDir.x,
+    baseLineDir.y,
+    sideBOrigin.x,
+    sideBOrigin.y,
+    sideBDir.x,
+    sideBDir.y,
+  );
+  const newCapA = solvePt(
+    capLineOrigin.x,
+    capLineOrigin.y,
+    capLineDir.x,
+    capLineDir.y,
+    sideAOrigin.x,
+    sideAOrigin.y,
+    sideADir.x,
+    sideADir.y,
+  );
+  const newCapB = solvePt(
+    capLineOrigin.x,
+    capLineOrigin.y,
+    capLineDir.x,
+    capLineDir.y,
+    sideBOrigin.x,
+    sideBOrigin.y,
+    sideBDir.x,
+    sideBDir.y,
+  );
+
+  if (!newBaseA || !newBaseB || !newCapA || !newCapB) return null;
+  if (!Number.isFinite(newBaseA.x) || !Number.isFinite(newBaseB.x)) return null;
+
+  // Validate convexity
+  if (
+    !isStrictlyConvex([newBaseA, newBaseB, newCapB, newCapA]) &&
+    !isStrictlyConvex([newBaseA, newCapA, newCapB, newBaseB])
+  )
+    return null;
+
+  // Forward movement check
+  const pushedA =
+    (newCapA.x - baseA.x) * srcNormal.x + (newCapA.y - baseA.y) * srcNormal.y;
+  const pushedB =
+    (newCapB.x - baseB.x) * srcNormal.x + (newCapB.y - baseB.y) * srcNormal.y;
+  if (pushedA <= 0.0001 || pushedB <= 0.0001) return null;
+
+  // Build cap vertices
+  const cap = [];
+  for (let i = 0; i < face.length; i++) {
+    const vertexIndex = face[i],
+      z = sourceBrush.vertices[vertexIndex][depthAxis];
+    const isA = groupA.includes(vertexIndex),
+      pt = isA ? newCapA : newCapB;
+    cap[i] = { x: 0, y: 0, z };
+    cap[i][axisX] = pt.x;
+    cap[i][axisY] = pt.y;
+    cap[i][depthAxis] = z;
+  }
+
+  // Propagate base column movement to source brush
+  const movedColumns = [];
+  for (const [orig, moved] of [
+    [baseA, newBaseA],
+    [baseB, newBaseB],
+  ]) {
+    if (Math.hypot(orig.x - moved.x, orig.y - moved.y) < 0.01) continue;
+    const cols = collectWeldedVertexColumns([sourceBrush], orig, activeAxes);
+    for (const col of cols) {
+      for (const i of col.indices) {
+        sourceBrush.vertices[i][axisX] = moved.x;
+        sourceBrush.vertices[i][axisY] = moved.y;
+      }
+      movedColumns.push({
+        brushId: sourceBrush.id,
+        indices: col.indices,
+        dx: moved.x - orig.x,
+        dy: moved.y - orig.y,
+      });
+    }
+  }
+
+  return {
+    generatedCap: cap,
+    modifiedBrushes: movedColumns.length ? [sourceBrush] : [],
+    movedColumns,
+    corners: { newBaseA, newBaseB, newCapA, newCapB },
+    applied,
+  };
+}
+
 function offsetFacePlaneCap(brush, faceIndex, distance, snapTarget = null) {
   const face = brush.faces[faceIndex];
+
+  // Conforming extrusion with four support lines
+  if (snapTarget?.conforming) {
+    const result = solveConvexConformingExtrusion({
+      brushes: snapTarget.brushes || [brush],
+      sourceBrushId: brush.id,
+      faceIndex,
+      distance,
+      activeAxes: snapTarget.activeAxes,
+      constraints: snapTarget.conforming,
+    });
+    if (result && result.generatedCap) return result.generatedCap;
+  }
 
   if (snapTarget?.snapA || snapTarget?.snapB) {
     const result = solveVertexSnappedExtrusion(
