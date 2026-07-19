@@ -1493,6 +1493,7 @@ export class Viewport {
             this.canvas.setPointerCapture(event.pointerId);
             this.drag = {
               type: "face-extrude",
+              extrusionLocks: { sideA: null, cap: null, sideB: null },
               faceId: hit.id,
               selection: new Set(this.state.faceSelection),
               guideSelection: new Set(this.state.faceSelection),
@@ -1847,6 +1848,7 @@ export class Viewport {
         else this.onChange(`face-selected:${this.edgeViewForFace(faceId)}`);
         this.drag = null;
         this.extrusionCandidate = null;
+        this.extrusionLocks = null;
         this.requestDraw();
         return;
       }
