@@ -163,7 +163,7 @@ function isStrictlyConvex(points, epsilon = 1e-6) {
   return true;
 }
 
-function offsetFacePlaneCap(brush, faceIndex, distance, snapTarget = null) {
+export function solveCrossSectionCap(brush, faceIndex, distance, snapTarget) {
   const face = brush.faces[faceIndex],
     sourcePlane = planeForFace(brush, face);
   if (!sourcePlane) return null;
@@ -369,6 +369,29 @@ function offsetFacePlaneCap(brush, faceIndex, distance, snapTarget = null) {
   if (aZ.length > 2 || bZ.length > 2) return null;
 
   return cap;
+}
+
+function offsetFacePlaneCap(brush, faceIndex, distance, snapTarget = null) {
+  const face = brush.faces[faceIndex];
+  if (snapTarget?.railA || snapTarget?.railB) {
+    const result = solveCrossSectionCap(brush, faceIndex, distance, snapTarget);
+    if (result) return result;
+  }
+  const sourcePlane = planeForFace(brush, face);
+  if (!sourcePlane) return null;
+  const targetPlane = snapTarget?.plane
+    ? {
+        normal: snapTarget.plane.normal,
+        distance:
+          snapTarget.plane.distance +
+          (distance - snapTarget.distance) *
+            dot(snapTarget.plane.normal, sourcePlane.normal),
+      }
+    : {
+        normal: sourcePlane.normal,
+        distance: sourcePlane.distance + distance,
+      };
+  return solveCapFromPlane(brush, faceIndex, targetPlane);
 }
 
 function extrudedPoint(point, direction, distance) {
@@ -751,14 +774,18 @@ export function limitExtrusionDistance(
       snapTarget,
     );
     if (!result.previewBrushes.length || result.errors.length) return false;
-    const targetBrushId = snapTarget?.targetBrushId,
+    const targetBrushIds = snapTarget?.targetBrushIds?.length
+        ? snapTarget.targetBrushIds
+        : snapTarget?.targetBrushId
+          ? [snapTarget.targetBrushId]
+          : [],
       targetPlane =
         snapTarget?.targetPlane ||
         snapTarget?.plane ||
-        (targetBrushId
+        (targetBrushIds[0]
           ? (() => {
               const targetBrush = sourceBrushes.find(
-                (b) => b.id === targetBrushId,
+                (b) => b.id === targetBrushIds[0],
               );
               const targetFace =
                 targetBrush?.faces[snapTarget?.targetFaceIndex];
@@ -768,7 +795,7 @@ export function limitExtrusionDistance(
             })()
           : null),
       targetCrossed =
-        targetBrushId && targetPlane
+        targetBrushIds.length && targetPlane
           ? result.previewBrushes.some((candidate) =>
               candidate.vertices.some(
                 (point) =>
@@ -779,7 +806,8 @@ export function limitExtrusionDistance(
           : false;
     if (targetCrossed) return true;
     const obstacles = sourceBrushes.filter(
-      (brush) => !selectedBrushIds.has(brush.id) && brush.id !== targetBrushId,
+      (brush) =>
+        !selectedBrushIds.has(brush.id) && !targetBrushIds.includes(brush.id),
     );
     return result.previewBrushes.some((candidate) =>
       obstacles.some((obstacle) => convexBrushesOverlap(candidate, obstacle)),
