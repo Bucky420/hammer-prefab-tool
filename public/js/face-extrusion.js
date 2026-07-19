@@ -498,20 +498,20 @@ export function solveConformingExtrusion(
       capLine.origin.y,
       capLine.origin.x + capLine.direction.x,
       capLine.origin.y + capLine.direction.y,
-      baseB.x,
-      baseB.y,
-      baseB.x + edgeB.x,
-      baseB.y + edgeB.y,
+      baseA.x,
+      baseA.y,
+      baseA.x + edgeB.x,
+      baseA.y + edgeB.y,
     );
     const swappedB = line2DIntersection(
       capLine.origin.x,
       capLine.origin.y,
       capLine.origin.x + capLine.direction.x,
       capLine.origin.y + capLine.direction.y,
-      baseA.x,
-      baseA.y,
-      baseA.x + edgeA.x,
-      baseA.y + edgeA.y,
+      baseB.x,
+      baseB.y,
+      baseB.x + edgeA.x,
+      baseB.y + edgeA.y,
     );
     if (
       !swappedA ||
@@ -955,42 +955,23 @@ export function limitExtrusionDistance(
     );
     if (!result.previewBrushes.length || result.errors.length) return false;
     const targetBrushIds = snapTarget?.targetBrushIds?.length
-        ? snapTarget.targetBrushIds
-        : snapTarget?.targetBrushId
-          ? [snapTarget.targetBrushId]
-          : [],
-      targetPlane =
-        snapTarget?.targetPlane ||
-        snapTarget?.plane ||
-        (targetBrushIds[0]
-          ? (() => {
-              const targetBrush = sourceBrushes.find(
-                (b) => b.id === targetBrushIds[0],
-              );
-              const targetFace =
-                targetBrush?.faces[snapTarget?.targetFaceIndex];
-              return targetBrush && targetFace
-                ? planeForFace(targetBrush, targetFace)
-                : null;
-            })()
-          : null),
-      targetCrossed =
-        targetBrushIds.length && targetPlane
-          ? result.previewBrushes.some((candidate) =>
-              candidate.vertices.some(
-                (point) =>
-                  dot(point, targetPlane.normal) - targetPlane.distance >
-                  CONTACT_EPSILON,
-              ),
-            )
-          : false;
-    if (targetCrossed) return true;
-    const obstacles = sourceBrushes.filter(
-      (brush) =>
-        !selectedBrushIds.has(brush.id) && !targetBrushIds.includes(brush.id),
-    );
+      ? snapTarget.targetBrushIds
+      : snapTarget?.targetBrushId
+        ? [snapTarget.targetBrushId]
+        : [];
+    const targetEpsilon = targetBrushIds.length ? 0.05 : CONTACT_EPSILON;
     return result.previewBrushes.some((candidate) =>
-      obstacles.some((obstacle) => convexBrushesOverlap(candidate, obstacle)),
+      sourceBrushes.some(
+        (obstacle) =>
+          !selectedBrushIds.has(obstacle.id) &&
+          convexBrushesOverlap(
+            candidate,
+            obstacle,
+            targetBrushIds.includes(obstacle.id)
+              ? targetEpsilon
+              : CONTACT_EPSILON,
+          ),
+      ),
     );
   };
   if (distance <= 0 || !collides(distance)) return distance;

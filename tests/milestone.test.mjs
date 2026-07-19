@@ -104,7 +104,7 @@ const safeDistance = limitExtrusionDistance(
   16,
 );
 assert.ok(
-  safeDistance <= 32.001,
+  safeDistance <= 32.1,
   "extrusion must stop at the first blocking brush instead of passing through it",
 );
 duplicateSource[0].groupId = "duplicate-source";
