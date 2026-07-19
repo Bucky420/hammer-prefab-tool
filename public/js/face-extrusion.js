@@ -104,15 +104,19 @@ function intersectPlanes(first, second, third) {
   };
 }
 
-function offsetFacePlaneCap(brush, faceIndex, distance) {
-  const face = brush.faces[faceIndex],
-    sourcePlane = planeForFace(brush, face);
-  if (!sourcePlane) return null;
-  const offsetPlane = {
-    normal: sourcePlane.normal,
-    distance: sourcePlane.distance + distance,
-  };
-  return face.map((vertexIndex, index) => {
+export function solveCapFromPlane(brush, faceIndex, targetPlane) {
+  const face = brush.faces[faceIndex];
+  if (!face || !targetPlane) return null;
+  const sourceDiagonal = Math.max(
+    ...face.map((index) =>
+      Math.hypot(
+        brush.vertices[index].x - brush.vertices[face[0]].x,
+        brush.vertices[index].y - brush.vertices[face[0]].y,
+        brush.vertices[index].z - brush.vertices[face[0]].z,
+      ),
+    ),
+  );
+  const cap = face.map((vertexIndex, index) => {
     const previous = face[(index + face.length - 1) % face.length],
       next = face[(index + 1) % face.length],
       previousFaceIndex = adjacentFaceForEdge(
@@ -123,12 +127,75 @@ function offsetFacePlaneCap(brush, faceIndex, distance) {
       ),
       nextFaceIndex = adjacentFaceForEdge(brush, faceIndex, vertexIndex, next);
     if (previousFaceIndex < 0 || nextFaceIndex < 0) return null;
-    return intersectPlanes(
-      offsetPlane,
+    const point = intersectPlanes(
+      targetPlane,
       planeForFace(brush, brush.faces[previousFaceIndex]),
       planeForFace(brush, brush.faces[nextFaceIndex]),
     );
+    if (!point) return null;
+    const maxAllowed = Math.max(
+      targetPlane.maxDistance || 0,
+      sourceDiagonal * 4,
+    );
+    return Math.hypot(
+      point.x - brush.vertices[vertexIndex].x,
+      point.y - brush.vertices[vertexIndex].y,
+      point.z - brush.vertices[vertexIndex].z,
+    ) > maxAllowed
+      ? null
+      : point;
   });
+  return cap;
+}
+
+function offsetFacePlaneCap(brush, faceIndex, distance, snapTarget = null) {
+  const sourcePlane = planeForFace(brush, brush.faces[faceIndex]);
+  if (!sourcePlane) return null;
+  const targetPlane = snapTarget?.radial
+    ? (() => {
+        const progress = Math.min(
+            1,
+            distance / Math.max(snapTarget.distance, 0.0001),
+          ),
+          angle = snapTarget.sourceAngle + snapTarget.deltaAngle * progress,
+          normal = {
+            x: -Math.sin(angle),
+            y: Math.cos(angle),
+            z: 0,
+          };
+        return {
+          normal,
+          distance:
+            normal.x * snapTarget.center.x + normal.y * snapTarget.center.y,
+          maxDistance: snapTarget.maxDistance,
+        };
+      })()
+    : snapTarget?.plane
+      ? {
+          normal: snapTarget.plane.normal,
+          distance:
+            snapTarget.plane.distance +
+            (distance - snapTarget.distance) *
+              dot(snapTarget.plane.normal, sourcePlane.normal),
+          maxDistance: snapTarget.maxDistance,
+        }
+      : {
+          normal: sourcePlane.normal,
+          distance: sourcePlane.distance + distance,
+        };
+  return solveCapFromPlane(brush, faceIndex, targetPlane);
+}
+
+function rotateAroundCenter(point, center, angle) {
+  const dx = point.x - center.x,
+    dy = point.y - center.y,
+    cosine = Math.cos(angle),
+    sine = Math.sin(angle);
+  return {
+    x: center.x + dx * cosine - dy * sine,
+    y: center.y + dx * sine + dy * cosine,
+    z: point.z,
+  };
 }
 
 function radialRole(brush, face, enabled) {
@@ -377,6 +444,7 @@ export function extrudeSelectedFaces(
   grid,
   guideSelection = selection,
   mode = "normal",
+  snapTarget = null,
 ) {
   const created = [],
     preview = [],
@@ -412,11 +480,13 @@ export function extrudeSelectedFaces(
     const base = face.map((index) => ({ ...brush.vertices[index] }));
     const cap =
       region.caps.get(id) ||
-      (mode === "parallel" && selection.size === 1
-        ? offsetFacePlaneCap(brush, faceIndex, distance)
-        : base.map((point) => extrudedPoint(point, direction, distance)));
+      (snapTarget?.plane && selection.size === 1
+        ? offsetFacePlaneCap(brush, faceIndex, distance, snapTarget)
+        : mode === "parallel" && selection.size === 1
+          ? offsetFacePlaneCap(brush, faceIndex, distance)
+          : base.map((point) => extrudedPoint(point, direction, distance)));
     if (cap.some((point) => !point)) {
-      errors.push(`${id}: extrusion crossed the ring center`);
+      errors.push(`${id}: cap plane intersection failed or exceeded bounds`);
       continue;
     }
     const vertices = [...base, ...cap],
@@ -539,7 +609,9 @@ export function limitExtrusionDistance(
   grid,
   guideSelection = selection,
   mode = "normal",
+  snapTarget = null,
 ) {
+  const CONTACT_EPSILON = 0.01;
   const selectedBrushIds = new Set(
     [...selection].map((id) => id.match(/^(.*):f:/)?.[1]).filter(Boolean),
   );
@@ -551,10 +623,24 @@ export function limitExtrusionDistance(
       grid,
       guideSelection,
       mode,
+      snapTarget,
     );
     if (!result.previewBrushes.length || result.errors.length) return false;
+    const targetBrushId = snapTarget?.targetBrushId,
+      targetPlane = snapTarget?.targetPlane || snapTarget?.plane,
+      targetCrossed =
+        targetBrushId && targetPlane
+          ? result.previewBrushes.some((candidate) =>
+              candidate.vertices.some(
+                (point) =>
+                  dot(point, targetPlane.normal) - targetPlane.distance >
+                  CONTACT_EPSILON,
+              ),
+            )
+          : false;
+    if (targetCrossed) return true;
     const obstacles = sourceBrushes.filter(
-      (brush) => !selectedBrushIds.has(brush.id),
+      (brush) => !selectedBrushIds.has(brush.id) && brush.id !== targetBrushId,
     );
     return result.previewBrushes.some((candidate) =>
       obstacles.some((obstacle) => convexBrushesOverlap(candidate, obstacle)),

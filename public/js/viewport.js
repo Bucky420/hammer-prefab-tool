@@ -10,8 +10,46 @@ import { distanceToSegment, pointInPolygon } from "./math.js";
 import {
   extrudeSelectedFaces,
   limitExtrusionDistance,
+  solveCapFromPlane,
 } from "./face-extrusion.js";
+import { validateBrush } from "./brush-validation.js";
 import { duplicateBrushes } from "./geometry-model.js";
+const cross = (a, b) => ({
+  x: a.y * b.z - a.z * b.y,
+  y: a.z * b.x - a.x * b.z,
+  z: a.x * b.y - a.y * b.x,
+});
+const orientOutward = (face, vertices) => {
+  const a = vertices[face[0]],
+    b = vertices[face[1]],
+    c = vertices[face[2]],
+    normal = cross(
+      { x: b.x - a.x, y: b.y - a.y, z: b.z - a.z },
+      { x: c.x - a.x, y: c.y - a.y, z: c.z - a.z },
+    ),
+    center = vertices.reduce(
+      (sum, point) => ({
+        x: sum.x + point.x / vertices.length,
+        y: sum.y + point.y / vertices.length,
+        z: sum.z + point.z / vertices.length,
+      }),
+      { x: 0, y: 0, z: 0 },
+    ),
+    faceCenter = face.reduce(
+      (sum, index) => ({
+        x: sum.x + vertices[index].x / face.length,
+        y: sum.y + vertices[index].y / face.length,
+        z: sum.z + vertices[index].z / face.length,
+      }),
+      { x: 0, y: 0, z: 0 },
+    );
+  return normal.x * (faceCenter.x - center.x) +
+    normal.y * (faceCenter.y - center.y) +
+    normal.z * (faceCenter.z - center.z) <
+    0
+    ? [...face].reverse()
+    : face;
+};
 
 const COLORS = {
   grid: "#4c4c4c",
@@ -87,6 +125,7 @@ export class Viewport {
     this.creationPreviewBrushes = [];
     this.previewBrushes = [];
     this.previewErrors = [];
+    this.extrusionCandidate = null;
     this.hoverFaceIds = new Set();
     this.hoverFillPolygon = null;
     this.drawFrame = 0;
@@ -140,6 +179,7 @@ export class Viewport {
     this.previewBrushes = [];
     this.creationPreviewBrushes = [];
     this.previewErrors = [];
+    this.extrusionCandidate = null;
     this.requestDraw();
     return true;
   }
@@ -775,11 +815,233 @@ export class Viewport {
           ),
       ),
       snapCandidates = [],
+      pointSegmentDistance = (point, startPoint, endPoint) => {
+        const dx = endPoint.x - startPoint.x,
+          dy = endPoint.y - startPoint.y,
+          lengthSquared = dx * dx + dy * dy;
+        if (!lengthSquared)
+          return Math.hypot(point.x - startPoint.x, point.y - startPoint.y);
+        const t = Math.max(
+          0,
+          Math.min(
+            1,
+            ((point.x - startPoint.x) * dx + (point.y - startPoint.y) * dy) /
+              lengthSquared,
+          ),
+        );
+        return Math.hypot(
+          point.x - (startPoint.x + t * dx),
+          point.y - (startPoint.y + t * dy),
+        );
+      },
+      makeCandidate = (distance, edge) => {
+        const mouseDistance = pointSegmentDistance(
+            current,
+            edge.startScreen,
+            edge.endScreen,
+          ),
+          midpoint = {
+            x: (edge.start.x + edge.end.x) / 2,
+            y: (edge.start.y + edge.end.y) / 2,
+            z: (edge.start.z + edge.end.z) / 2,
+          },
+          alignedDistance =
+            Math.max(
+              0,
+              (midpoint.x - center.x) * unitDirection.x +
+                (midpoint.y - center.y) * unitDirection.y +
+                (midpoint.z - center.z) * unitDirection.z,
+            ) || distance,
+          depthVector = { x: 0, y: 0, z: 0 },
+          edgeDirection = {
+            x: edge.end.x - edge.start.x,
+            y: edge.end.y - edge.start.y,
+            z: edge.end.z - edge.start.z,
+          },
+          viewDepth = { x: 0, y: 0, z: 0 },
+          targetFaceCandidates = [...edge.faceIds]
+            .map((faceId) => {
+              const match = faceId.match(/^(.*):f:(\d+)$/),
+                brush = match
+                  ? this.state.brushes.find((item) => item.id === match[1])
+                  : null,
+                face = brush?.faces[Number(match?.[2])];
+              return match && brush && face && !sourceBrushIds.has(brush.id)
+                ? { id: faceId, match, brush, face }
+                : null;
+            })
+            .filter(Boolean);
+        viewDepth[this.axes()[2]] = 1;
+        const targetFaceCandidate = targetFaceCandidates.find((candidate) => {
+          const normal = this.faceNormal(candidate.brush, candidate.face);
+          return (
+            Math.abs(
+              normal.x * viewDepth.x +
+                normal.y * viewDepth.y +
+                normal.z * viewDepth.z,
+            ) < 0.0001
+          );
+        });
+        const targetFaceMatch = targetFaceCandidate?.match,
+          targetBrush = targetFaceCandidate?.brush,
+          targetFace = targetFaceCandidate?.face;
+        let targetPlane = null;
+        if (targetBrush && targetFace) {
+          const targetNormal = this.faceNormal(targetBrush, targetFace);
+          targetPlane = {
+            normal: targetNormal,
+            distance:
+              targetNormal.x * targetBrush.vertices[targetFace[0]].x +
+              targetNormal.y * targetBrush.vertices[targetFace[0]].y +
+              targetNormal.z * targetBrush.vertices[targetFace[0]].z,
+          };
+        } else {
+          depthVector[this.axes()[2]] = 1;
+          let normal = cross(edgeDirection, depthVector),
+            length = Math.hypot(normal.x, normal.y, normal.z);
+          if (length < 0.000001)
+            return {
+              distance,
+              edge,
+              edgeKey: "",
+              edges: [edge],
+              mouseDistance,
+            };
+          normal = {
+            x: normal.x / length,
+            y: normal.y / length,
+            z: normal.z / length,
+          };
+          if (
+            normal.x * unitDirection.x +
+              normal.y * unitDirection.y +
+              normal.z * unitDirection.z <
+            0
+          ) {
+            normal.x *= -1;
+            normal.y *= -1;
+            normal.z *= -1;
+          }
+          targetPlane = {
+            normal,
+            distance:
+              normal.x * edge.start.x +
+              normal.y * edge.start.y +
+              normal.z * edge.start.z,
+          };
+        }
+        if (
+          targetPlane.normal.x * unitDirection.x +
+            targetPlane.normal.y * unitDirection.y +
+            targetPlane.normal.z * unitDirection.z <
+          0
+        ) {
+          targetPlane.normal.x *= -1;
+          targetPlane.normal.y *= -1;
+          targetPlane.normal.z *= -1;
+          targetPlane.distance *= -1;
+        }
+        const solvedCap = solveCapFromPlane(brush, faceIndex, targetPlane),
+          candidateBrush = solvedCap?.every(Boolean)
+            ? {
+                id: "snap-preview",
+                material: brush.material,
+                vertices: [
+                  ...face.map((index) => brush.vertices[index]),
+                  ...solvedCap,
+                ],
+                faces: [
+                  [...Array(face.length).keys()],
+                  [...Array(face.length).keys()].map(
+                    (index) => face.length + index,
+                  ),
+                  ...Array.from({ length: face.length }, (_, index) => [
+                    index,
+                    (index + 1) % face.length,
+                    face.length + ((index + 1) % face.length),
+                    face.length + index,
+                  ]),
+                ].map((candidateFace) =>
+                  orientOutward(candidateFace, [
+                    ...face.map((index) => brush.vertices[index]),
+                    ...solvedCap,
+                  ]),
+                ),
+              }
+            : null,
+          candidateErrors = candidateBrush
+            ? validateBrush(candidateBrush)
+            : ["intersection failure"];
+        if (candidateErrors.length) {
+          console.debug("Rejected extrusion snap plane", {
+            targetBrushId: targetFaceCandidate?.brush.id || null,
+            targetFaceIndex: targetFaceCandidate
+              ? Number(targetFaceCandidate.match[2])
+              : null,
+            normalDotViewDepth:
+              targetPlane.normal.x * viewDepth.x +
+              targetPlane.normal.y * viewDepth.y +
+              targetPlane.normal.z * viewDepth.z,
+            intersectionFailureVertex:
+              solvedCap?.findIndex((point) => !point) ?? -1,
+            maximumCapDisplacement: solvedCap
+              ? Math.max(
+                  ...solvedCap.map((point, index) =>
+                    point
+                      ? Math.hypot(
+                          point.x - brush.vertices[face[index]].x,
+                          point.y - brush.vertices[face[index]].y,
+                          point.z - brush.vertices[face[index]].z,
+                        )
+                      : Infinity,
+                  ),
+                )
+              : Infinity,
+            rejectionReason: candidateErrors.join("; "),
+          });
+          return {
+            distance,
+            edge,
+            edgeKey: "",
+            edges: [edge],
+            mouseDistance,
+          };
+        }
+        const edgeKey = [
+          `${edge.start.x},${edge.start.y},${edge.start.z}`,
+          `${edge.end.x},${edge.end.y},${edge.end.z}`,
+        ]
+          .sort()
+          .join("|");
+        return {
+          distance: alignedDistance,
+          edge,
+          edgeKey,
+          edges: [edge],
+          mouseDistance,
+          snapTarget: {
+            type: "plane",
+            plane: {
+              normal: targetPlane.normal,
+              distance: targetPlane.distance,
+            },
+            distance: alignedDistance,
+            edge,
+            targetBrushId: targetFaceMatch?.[1] || null,
+            targetFaceIndex: targetFaceMatch
+              ? Number(targetFaceMatch[2])
+              : null,
+            targetEdge: edge,
+            targetPlane,
+          },
+        };
+      },
       unitDirection = {
         x: direction.x / length,
         y: direction.y / length,
         z: direction.z / length,
-      };
+      },
+      acquireRadius = 10;
     for (const sourceIndex of face) {
       const source = brush.vertices[sourceIndex],
         origin = this.screen(source),
@@ -827,9 +1089,9 @@ export class Viewport {
               targetPoint.y - projected.y,
             ) <= 8
           )
-            snapCandidates.push(worldCandidate);
+            snapCandidates.push(makeCandidate(worldCandidate, edge));
           if (candidate >= 0 && perpendicular <= 8)
-            snapCandidates.push(candidate);
+            snapCandidates.push(makeCandidate(candidate, edge));
         }
         const candidate = raySegmentDistance(
           origin,
@@ -837,22 +1099,126 @@ export class Viewport {
           edge.startScreen,
           edge.endScreen,
         );
-        if (candidate != null) snapCandidates.push(candidate);
+        if (candidate != null)
+          snapCandidates.push(makeCandidate(candidate, edge));
       }
     }
-    const snapped = snapCandidates
+    for (const edge of targetEdges) {
+      const mouseDistance = pointSegmentDistance(
+        current,
+        edge.startScreen,
+        edge.endScreen,
+      );
+      if (mouseDistance > acquireRadius) continue;
+      const candidate = raySegmentDistance(
+        originScreen,
+        { x: dx, y: dy },
+        edge.startScreen,
+        edge.endScreen,
+      );
+      snapCandidates.push(
+        makeCandidate(
+          Math.max(0, candidate == null ? rawDistance : candidate),
+          edge,
+        ),
+      );
+    }
+    const releaseRadius = 14,
+      locked = this.drag?.extrusionCandidate;
+    const nearbyCandidates = snapCandidates.filter(
+      (item) => item.snapTarget && item.mouseDistance <= acquireRadius,
+    );
+    const bestCandidate = (
+      nearbyCandidates.length
+        ? nearbyCandidates
+        : snapCandidates.filter((item) => item.snapTarget)
+    )
       .filter(
-        (candidate) => Math.abs(candidate - rawDistance) * this.scale <= 14,
+        (item) =>
+          item.mouseDistance <= acquireRadius ||
+          Math.abs(item.distance - rawDistance) * this.scale <= acquireRadius,
       )
       .reduce(
-        (best, candidate) =>
+        (best, item) =>
           best == null ||
-          Math.abs(candidate - rawDistance) < Math.abs(best - rawDistance)
-            ? candidate
+          (nearbyCandidates.length
+            ? item.mouseDistance < best.mouseDistance ||
+              (item.mouseDistance === best.mouseDistance &&
+                Math.abs(item.distance - rawDistance) <
+                  Math.abs(best.distance - rawDistance))
+            : Math.abs(item.distance - rawDistance) <
+              Math.abs(best.distance - rawDistance))
+            ? item
             : best,
         null,
       );
-    return snapped ?? rawDistance;
+    const lockedCandidate = locked
+      ? snapCandidates.find((item) => item.edgeKey === locked.edgeKey)
+      : null;
+    let candidate = bestCandidate;
+    if (
+      lockedCandidate &&
+      (bestCandidate == null ||
+        bestCandidate.edgeKey === lockedCandidate.edgeKey ||
+        bestCandidate.mouseDistance + 4 >= lockedCandidate.mouseDistance)
+    )
+      candidate = lockedCandidate;
+    if (
+      candidate &&
+      candidate.mouseDistance > releaseRadius &&
+      !nearbyCandidates.length
+    )
+      candidate = null;
+    if (this.drag) this.drag.extrusionCandidate = candidate;
+    if (candidate)
+      candidate.edges = targetEdges.filter(
+        (edge) =>
+          pointSegmentDistance(current, edge.startScreen, edge.endScreen) <=
+          acquireRadius,
+      );
+    this.extrusionCandidate = candidate;
+    return candidate?.distance ?? rawDistance;
+  }
+  arcExtrusionInfo(brush, face) {
+    if (!brush.generator || !["ring", "arch"].includes(brush.generator.type))
+      return null;
+    const grouped = this.state.brushes.filter(
+        (item) => (item.groupId || item.id) === (brush.groupId || brush.id),
+      ),
+      points = grouped.flatMap((item) => item.vertices),
+      center = brush.generator.extrusionCenter || {
+        x: points.length
+          ? (Math.min(...points.map((point) => point.x)) +
+              Math.max(...points.map((point) => point.x))) /
+            2
+          : 0,
+        y: points.length
+          ? (Math.min(...points.map((point) => point.y)) +
+              Math.max(...points.map((point) => point.y))) /
+            2
+          : 0,
+      },
+      angles = face.map((index) =>
+        Math.atan2(
+          brush.vertices[index].y - center.y,
+          brush.vertices[index].x - center.x,
+        ),
+      ),
+      sourceAngle = Math.atan2(
+        angles.reduce((sum, angle) => sum + Math.sin(angle), 0),
+        angles.reduce((sum, angle) => sum + Math.cos(angle), 0),
+      ),
+      spread = Math.max(
+        ...angles.map((angle) =>
+          Math.abs(
+            Math.atan2(
+              Math.sin(angle - sourceAngle),
+              Math.cos(angle - sourceAngle),
+            ),
+          ),
+        ),
+      );
+    return spread <= 0.08 ? { center, sourceAngle } : null;
   }
   edgeViewForFace(id) {
     const match = id.match(/^(.*):f:(\d+)$/),
@@ -1207,6 +1573,7 @@ export class Viewport {
           this.drag.start,
           this.drag.current,
         );
+        this.drag.snapTarget = this.drag.extrusionCandidate?.snapTarget || null;
         this.drag.distance = limitExtrusionDistance(
           this.state.brushes,
           this.drag.selection,
@@ -1214,6 +1581,7 @@ export class Viewport {
           this.state.grid,
           this.drag.guideSelection,
           this.state.faceExtrusionMode,
+          this.drag.snapTarget,
         );
         if (this.drag.distance > 0) {
           const previewSource = JSON.parse(JSON.stringify(this.state.brushes));
@@ -1224,6 +1592,7 @@ export class Viewport {
             this.state.grid,
             this.drag.guideSelection,
             this.state.faceExtrusionMode,
+            this.drag.snapTarget,
           );
           this.previewBrushes = preview.previewBrushes || preview.brushes;
           this.previewErrors = preview.errors;
@@ -1392,9 +1761,9 @@ export class Viewport {
         return;
       }
       if (this.drag.type === "face-extrude") {
-        const { selection, guideSelection, distance, faceId } = this.drag,
+        const { selection, guideSelection, distance, faceId, snapTarget } =
+            this.drag,
           error = this.previewErrors[0];
-        this.drag = null;
         this.previewBrushes = [];
         this.previewErrors = [];
         if (error) this.onChange(`extrusion-invalid:${error}`);
@@ -1404,8 +1773,11 @@ export class Viewport {
             distance,
             guideSelection,
             this.state.faceExtrusionMode,
+            snapTarget,
           );
         else this.onChange(`face-selected:${this.edgeViewForFace(faceId)}`);
+        this.drag = null;
+        this.extrusionCandidate = null;
         this.requestDraw();
         return;
       }
@@ -1869,6 +2241,18 @@ export class Viewport {
         context.lineTo(edge.endScreen.x, edge.endScreen.y);
         context.stroke();
       }
+    if (this.state.mode === "face" && this.extrusionCandidate?.edge) {
+      context.strokeStyle = "#43e8ff";
+      context.lineWidth = 5;
+      for (const edge of this.extrusionCandidate.edges || [
+        this.extrusionCandidate.edge,
+      ]) {
+        context.beginPath();
+        context.moveTo(edge.startScreen.x, edge.startScreen.y);
+        context.lineTo(edge.endScreen.x, edge.endScreen.y);
+        context.stroke();
+      }
+    }
     if (this.state.mode === "face" && this.state.faceSelection.size) {
       context.strokeStyle = COLORS.selected;
       context.lineWidth = 4;

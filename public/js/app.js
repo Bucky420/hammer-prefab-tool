@@ -123,8 +123,8 @@ const view = new Viewport(
   (bounds) => {
     createBrushFromBounds(bounds);
   },
-  (selection, distance, guideSelection, mode) =>
-    commitFaceExtrusion(selection, distance, guideSelection, mode),
+  (selection, distance, guideSelection, mode, snapTarget) =>
+    commitFaceExtrusion(selection, distance, guideSelection, mode, snapTarget),
   (bounds) => {
     view.creationPreviewBrushes = buildBrushesFromBounds(bounds) || [];
     view.requestDraw();
@@ -1078,6 +1078,7 @@ function commitFaceExtrusion(
   distance = null,
   guideSelection = selection,
   mode = state.faceExtrusionMode,
+  snapTarget = null,
 ) {
   state.faceSelection = new Set(selection);
   if (!state.faceSelection.size)
@@ -1098,6 +1099,7 @@ function commitFaceExtrusion(
     state.grid,
     guideSelection,
     mode,
+    snapTarget,
   );
   if (distance <= 0.0001)
     return setStatus("Extrusion blocked by an adjacent brush", true);
@@ -1108,6 +1110,7 @@ function commitFaceExtrusion(
     state.grid,
     guideSelection,
     mode,
+    snapTarget,
   );
   if (!result.brushes.length)
     return setStatus(

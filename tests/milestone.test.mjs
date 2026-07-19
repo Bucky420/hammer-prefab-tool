@@ -28,6 +28,7 @@ import { applyNodrawToHiddenFaces } from "../public/js/nodraw.js";
 import {
   extrudeSelectedFaces,
   limitExtrusionDistance,
+  solveCapFromPlane,
 } from "../public/js/face-extrusion.js";
 import { fillSelectedLoop } from "../public/js/face-fill.js";
 import {
@@ -905,6 +906,78 @@ for (const source of [
     "parallel wedge offset must remain convex",
   );
 }
+const arcSnapSource = generateRing({
+  radius: 256,
+  width: 64,
+  height: 128,
+  segments: 8,
+  grid: 16,
+});
+const arcSnapId = `${arcSnapSource[0].id}:f:5`;
+const arcSnapExtrusion = extrudeSelectedFaces(
+  arcSnapSource,
+  new Set([arcSnapId]),
+  64,
+  16,
+  new Set([arcSnapId]),
+  "normal",
+  {
+    type: "arc-angle",
+    center: { x: 0, y: 0 },
+    targetAngle: Math.PI / 4,
+    deltaAngle: Math.PI / 4,
+    distance: 64,
+  },
+);
+assert.equal(
+  arcSnapExtrusion.errors.length,
+  0,
+  "arc-angle snap must build a valid ring wedge",
+);
+assert.equal(
+  validateAll(arcSnapExtrusion.brushes).length,
+  0,
+  "arc-angle snap must preserve convex brush geometry",
+);
+const radialRing = generateRing({
+  radius: 256,
+  width: 64,
+  height: 128,
+  segments: 32,
+  grid: 16,
+});
+const radialPlaneSource = radialRing[0],
+  radialFaceIndex = 5,
+  radialAngle = (Math.PI * 5) / 16,
+  radialPlane = {
+    normal: { x: -Math.sin(radialAngle), y: Math.cos(radialAngle), z: 0 },
+    distance: 0,
+  },
+  radialCap = solveCapFromPlane(
+    radialPlaneSource,
+    radialFaceIndex,
+    radialPlane,
+  );
+assert.ok(
+  radialCap.every(Boolean),
+  "radial cap must have bounded intersections",
+);
+radialCap.forEach((point, index) => {
+  assert.ok(
+    Math.abs(radialPlane.normal.x * point.x + radialPlane.normal.y * point.y) <
+      0.0001,
+    "radial cap vertices must lie on the center-pivoted target plane",
+  );
+  assert.ok(
+    Math.abs(
+      point.z -
+        radialPlaneSource.vertices[
+          radialPlaneSource.faces[radialFaceIndex][index]
+        ].z,
+    ) < 0.0001,
+    "radial cap must preserve top and bottom coordinates",
+  );
+});
 resizeViewport.drag.bounds = { min: { x: 0, y: 0 }, max: { x: 192, y: 64 } };
 resizeViewport.drag.handle = "w";
 resizeViewport.applyObjectTransform({ x: 400, y: 32 });
