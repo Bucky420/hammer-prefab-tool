@@ -847,6 +847,125 @@ export class Viewport {
       );
     };
 
+    // --- Progressive lock logic (Stage 4) ---
+    const locks = this.drag?.extrusionLocks || {
+      sideA: null,
+      cap: null,
+      sideB: null,
+    };
+    const lockedKeys = ["sideA", "cap", "sideB"].filter((k) => locks[k]);
+    if (lockedKeys.length) {
+      const csts = lockedKeys.map((k) => ({
+        movingEdge: k,
+        direction: locks[k].directionWorld2D,
+        origin: locks[k].originWorld2D,
+        targetBrushId: locks[k].targetBrushId,
+      }));
+      const sol = solveConvexConformingExtrusion({
+        brushes: [
+          {
+            ...brush,
+            vertices: brush.vertices.map((v) => ({ ...v })),
+          },
+        ],
+        sourceBrushId: brush.id,
+        faceIndex,
+        distance: rawDistance,
+        activeAxes: this.axes(),
+        constraints: csts,
+      });
+      if (sol?.generatedCap) {
+        // Release drifted locks
+        const lockDist = 18;
+        for (const k of lockedKeys) {
+          if (!locks[k] || !sol.solvedEdges?.[k]) continue;
+          const [p1, p2] = sol.solvedEdges[k];
+          const s1 = this.screen({ x: p1.x, y: p1.y, z: 0 });
+          const s2 = this.screen({ x: p2.x, y: p2.y, z: 0 });
+          if (
+            segmentDistance(s1, s2, locks[k].startScreen, locks[k].endScreen) >
+            lockDist
+          )
+            locks[k] = null;
+        }
+        // If locks still valid, return lock-based result
+        const activeLocks = lockedKeys.filter((k) => locks[k]);
+        if (activeLocks.length) {
+          const finalCsts = activeLocks.map((k) => ({
+            movingEdge: k,
+            direction: locks[k].directionWorld2D,
+            origin: locks[k].originWorld2D,
+            targetBrushId: locks[k].targetBrushId,
+          }));
+          const finalSol = solveConvexConformingExtrusion({
+            brushes: [
+              {
+                ...brush,
+                vertices: brush.vertices.map((v) => ({ ...v })),
+              },
+            ],
+            sourceBrushId: brush.id,
+            faceIndex,
+            distance: rawDistance,
+            activeAxes: this.axes(),
+            constraints: finalCsts,
+          });
+          if (finalSol?.generatedCap) {
+            const candidate = {
+              distance: rawDistance,
+              edgeKey: activeLocks.join("|"),
+              edges: activeLocks.map((k) => ({
+                startScreen: locks[k].startScreen,
+                endScreen: locks[k].endScreen,
+              })),
+              matchCount: activeLocks.length,
+              snapTarget: {
+                type: "cross-section-rails",
+                activeAxes: this.axes(),
+                conforming: finalCsts,
+                brushes: this.state.brushes,
+                distance: rawDistance,
+                targetBrushIds: [
+                  ...new Set(finalCsts.map((c) => c.targetBrushId)),
+                ],
+              },
+            };
+            this.extrusionCandidate = candidate;
+            if (this.drag) this.drag.extrusionCandidate = candidate;
+            // Convert conforming candidate constraints to progressive locks
+            if (
+              candidate?.snapTarget?.conforming &&
+              this.drag?.extrusionLocks
+            ) {
+              for (const c of candidate.snapTarget.conforming) {
+                if (!this.drag.extrusionLocks[c.movingEdge]) {
+                  const edgeData = candidate.edges?.find(
+                    (e) =>
+                      e.startScreen &&
+                      Math.hypot(
+                        e.startScreen.x - c.origin.x,
+                        e.startScreen.y - c.origin.y,
+                      ) < 0.1,
+                  );
+                  this.drag.extrusionLocks[c.movingEdge] = {
+                    movingEdge: c.movingEdge,
+                    projectedTargetKey: c.targetEdgeKey || "",
+                    targetBrushId: c.targetBrushId,
+                    directionWorld2D: c.direction,
+                    originWorld2D: c.origin,
+                    startScreen: edgeData?.startScreen || { x: 0, y: 0 },
+                    endScreen: edgeData?.endScreen || { x: 0, y: 0 },
+                    segmentDistance: 0,
+                  };
+                }
+              }
+            }
+            return rawDistance;
+          }
+        }
+      }
+    }
+
     const snapCandidates = [],
       acquireRadius = 10,
       activeAxes = this.axes(),
