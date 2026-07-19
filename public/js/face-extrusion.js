@@ -107,15 +107,6 @@ function intersectPlanes(first, second, third) {
 export function solveCapFromPlane(brush, faceIndex, targetPlane) {
   const face = brush.faces[faceIndex];
   if (!face || !targetPlane) return null;
-  const sourceDiagonal = Math.max(
-    ...face.map((index) =>
-      Math.hypot(
-        brush.vertices[index].x - brush.vertices[face[0]].x,
-        brush.vertices[index].y - brush.vertices[face[0]].y,
-        brush.vertices[index].z - brush.vertices[face[0]].z,
-      ),
-    ),
-  );
   const cap = face.map((vertexIndex, index) => {
     const previous = face[(index + face.length - 1) % face.length],
       next = face[(index + 1) % face.length],
@@ -133,17 +124,11 @@ export function solveCapFromPlane(brush, faceIndex, targetPlane) {
       planeForFace(brush, brush.faces[nextFaceIndex]),
     );
     if (!point) return null;
-    const maxAllowed = Math.max(
-      targetPlane.maxDistance || 0,
-      sourceDiagonal * 4,
-    );
-    return Math.hypot(
-      point.x - brush.vertices[vertexIndex].x,
-      point.y - brush.vertices[vertexIndex].y,
-      point.z - brush.vertices[vertexIndex].z,
-    ) > maxAllowed
-      ? null
-      : point;
+    return Number.isFinite(point.x) &&
+      Number.isFinite(point.y) &&
+      Number.isFinite(point.z)
+      ? point
+      : null;
   });
   return cap;
 }
@@ -151,102 +136,23 @@ export function solveCapFromPlane(brush, faceIndex, targetPlane) {
 function offsetFacePlaneCap(brush, faceIndex, distance, snapTarget = null) {
   const sourcePlane = planeForFace(brush, brush.faces[faceIndex]);
   if (!sourcePlane) return null;
-  const targetPlane = snapTarget?.radial
-    ? (() => {
-        const progress = Math.min(
-            1,
-            distance / Math.max(snapTarget.distance, 0.0001),
-          ),
-          angle = snapTarget.sourceAngle + snapTarget.deltaAngle * progress,
-          normal = {
-            x: -Math.sin(angle),
-            y: Math.cos(angle),
-            z: 0,
-          };
-        return {
-          normal,
-          distance:
-            normal.x * snapTarget.center.x + normal.y * snapTarget.center.y,
-          maxDistance: snapTarget.maxDistance,
-        };
-      })()
-    : snapTarget?.plane
-      ? {
-          normal: snapTarget.plane.normal,
-          distance:
-            snapTarget.plane.distance +
-            (distance - snapTarget.distance) *
-              dot(snapTarget.plane.normal, sourcePlane.normal),
-          maxDistance: snapTarget.maxDistance,
-        }
-      : {
-          normal: sourcePlane.normal,
-          distance: sourcePlane.distance + distance,
-        };
+  const targetPlane = snapTarget?.plane
+    ? {
+        normal: snapTarget.plane.normal,
+        distance:
+          snapTarget.plane.distance +
+          (distance - snapTarget.distance) *
+            dot(snapTarget.plane.normal, sourcePlane.normal),
+        maxDistance: snapTarget.maxDistance,
+      }
+    : {
+        normal: sourcePlane.normal,
+        distance: sourcePlane.distance + distance,
+      };
   return solveCapFromPlane(brush, faceIndex, targetPlane);
 }
 
-function rotateAroundCenter(point, center, angle) {
-  const dx = point.x - center.x,
-    dy = point.y - center.y,
-    cosine = Math.cos(angle),
-    sine = Math.sin(angle);
-  return {
-    x: center.x + dx * cosine - dy * sine,
-    y: center.y + dx * sine + dy * cosine,
-    z: point.z,
-  };
-}
-
-function radialRole(brush, face, enabled) {
-  if (!enabled) return null;
-  for (const role of ["outer", "inner"]) {
-    const vertices = new Set(brush.vertexRoles?.[role] || []);
-    if (face.every((index) => vertices.has(index))) return role;
-  }
-  return null;
-}
-
-function extrudedPoint(
-  point,
-  direction,
-  distance,
-  radial,
-  brush,
-  sourceBrushes,
-) {
-  if (radial) {
-    const axes = brush.generator?.extrusionAxes || ["x", "y"],
-      group = brush.groupId || brush.id,
-      points = sourceBrushes
-        .filter((item) => (item.groupId || item.id) === group)
-        .flatMap((item) => item.vertices),
-      bounds = axes.reduce((result, axis) => {
-        const values = points.map((item) => item[axis]);
-        if (values.length)
-          result[axis] = (Math.min(...values) + Math.max(...values)) / 2;
-        return result;
-      }, {}),
-      source = brush.generator?.sourceBrushId
-        ? sourceBrushes.find(
-            (item) => item.id === brush.generator.sourceBrushId,
-          )
-        : null,
-      center =
-        brush.generator?.extrusionCenter ||
-        source?.generator?.extrusionCenter ||
-        bounds,
-      dx = point[axes[0]] - (center[axes[0]] || 0),
-      dy = point[axes[1]] - (center[axes[1]] || 0),
-      radius = Math.hypot(dx, dy);
-    if (!radius) return null;
-    const nextRadius = radius + (radial === "outer" ? distance : -distance);
-    if (nextRadius <= 0) return null;
-    const result = { ...point };
-    result[axes[0]] = (center[axes[0]] || 0) + (dx * nextRadius) / radius;
-    result[axes[1]] = (center[axes[1]] || 0) + (dy * nextRadius) / radius;
-    return result;
-  }
+function extrudedPoint(point, direction, distance) {
   return {
     x: point.x + direction.x * distance,
     y: point.y + direction.y * distance,

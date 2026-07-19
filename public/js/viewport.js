@@ -14,6 +14,7 @@ import {
 } from "./face-extrusion.js";
 import { validateBrush } from "./brush-validation.js";
 import { duplicateBrushes } from "./geometry-model.js";
+import { Line, Point } from "@flatten-js/core";
 const cross = (a, b) => ({
   x: a.y * b.z - a.z * b.y,
   y: a.z * b.x - a.x * b.z,
@@ -49,6 +50,33 @@ const orientOutward = (face, vertices) => {
     0
     ? [...face].reverse()
     : face;
+};
+const infiniteLineIntersection = (
+  firstStart,
+  firstEnd,
+  secondStart,
+  secondEnd,
+) => {
+  if (
+    Math.hypot(firstEnd.x - firstStart.x, firstEnd.y - firstStart.y) <
+      0.000001 ||
+    Math.hypot(secondEnd.x - secondStart.x, secondEnd.y - secondStart.y) <
+      0.000001
+  )
+    return null;
+  const intersections = new Line(
+    new Point(firstStart.x, firstStart.y),
+    new Point(firstEnd.x, firstEnd.y),
+  ).intersect(
+    new Line(
+      new Point(secondStart.x, secondStart.y),
+      new Point(secondEnd.x, secondEnd.y),
+    ),
+  );
+  const point = intersections[0];
+  return point && Number.isFinite(point.x) && Number.isFinite(point.y)
+    ? point
+    : null;
 };
 
 const COLORS = {
@@ -872,16 +900,19 @@ export class Viewport {
             })
             .filter(Boolean);
         viewDepth[this.axes()[2]] = 1;
-        const targetFaceCandidate = targetFaceCandidates.find((candidate) => {
-          const normal = this.faceNormal(candidate.brush, candidate.face);
-          return (
-            Math.abs(
-              normal.x * viewDepth.x +
-                normal.y * viewDepth.y +
-                normal.z * viewDepth.z,
-            ) < 0.0001
-          );
-        });
+        const compatibleTargetFaces = targetFaceCandidates.filter(
+          (candidate) => {
+            const normal = this.faceNormal(candidate.brush, candidate.face);
+            return (
+              Math.abs(
+                normal.x * viewDepth.x +
+                  normal.y * viewDepth.y +
+                  normal.z * viewDepth.z,
+              ) < 0.0001
+            );
+          },
+        );
+        const targetFaceCandidate = compatibleTargetFaces[0];
         const targetFaceMatch = targetFaceCandidate?.match,
           targetBrush = targetFaceCandidate?.brush,
           targetFace = targetFaceCandidate?.face;
@@ -1053,54 +1084,23 @@ export class Viewport {
         screenDirection = { x: ahead.x - origin.x, y: ahead.y - origin.y };
       if (Math.hypot(screenDirection.x, screenDirection.y) < 0.0001) continue;
       for (const edge of targetEdges) {
-        for (const targetVertex of [edge.start, edge.end]) {
-          const worldOffset = {
-              x: targetVertex.x - source.x,
-              y: targetVertex.y - source.y,
-              z: targetVertex.z - source.z,
-            },
-            worldCandidate =
-              worldOffset.x * unitDirection.x +
-              worldOffset.y * unitDirection.y +
-              worldOffset.z * unitDirection.z,
-            projected = this.screen({
-              x: source.x + unitDirection.x * worldCandidate,
-              y: source.y + unitDirection.y * worldCandidate,
-              z: source.z + unitDirection.z * worldCandidate,
-            }),
-            targetPoint = this.screen(targetVertex),
-            offset = {
-              x: targetPoint.x - origin.x,
-              y: targetPoint.y - origin.y,
-            },
-            directionLengthSquared =
-              screenDirection.x ** 2 + screenDirection.y ** 2,
-            candidate =
-              (offset.x * screenDirection.x + offset.y * screenDirection.y) /
-              directionLengthSquared,
-            perpendicular =
-              Math.abs(
-                offset.x * screenDirection.y - offset.y * screenDirection.x,
-              ) / Math.sqrt(directionLengthSquared);
-          if (
-            worldCandidate >= 0 &&
-            Math.hypot(
-              targetPoint.x - projected.x,
-              targetPoint.y - projected.y,
-            ) <= 8
-          )
-            snapCandidates.push(makeCandidate(worldCandidate, edge));
-          if (candidate >= 0 && perpendicular <= 8)
-            snapCandidates.push(makeCandidate(candidate, edge));
-        }
-        const candidate = raySegmentDistance(
+        const intersection = infiniteLineIntersection(
           origin,
-          screenDirection,
+          ahead,
           edge.startScreen,
           edge.endScreen,
         );
-        if (candidate != null)
-          snapCandidates.push(makeCandidate(candidate, edge));
+        if (intersection) {
+          const offset = {
+              x: intersection.x - origin.x,
+              y: intersection.y - origin.y,
+            },
+            candidate =
+              (offset.x * screenDirection.x + offset.y * screenDirection.y) /
+              (screenDirection.x ** 2 + screenDirection.y ** 2);
+          if (candidate >= 0)
+            snapCandidates.push(makeCandidate(candidate, edge));
+        }
       }
     }
     for (const edge of targetEdges) {
@@ -1110,18 +1110,19 @@ export class Viewport {
         edge.endScreen,
       );
       if (mouseDistance > acquireRadius) continue;
-      const candidate = raySegmentDistance(
+      const intersection = infiniteLineIntersection(
         originScreen,
-        { x: dx, y: dy },
+        { x: originScreen.x + dx, y: originScreen.y + dy },
         edge.startScreen,
         edge.endScreen,
       );
-      snapCandidates.push(
-        makeCandidate(
-          Math.max(0, candidate == null ? rawDistance : candidate),
-          edge,
-        ),
-      );
+      if (intersection) {
+        const candidate =
+          ((intersection.x - originScreen.x) * dx +
+            (intersection.y - originScreen.y) * dy) /
+          (dx * dx + dy * dy);
+        if (candidate >= 0) snapCandidates.push(makeCandidate(candidate, edge));
+      }
     }
     const releaseRadius = 14,
       locked = this.drag?.extrusionCandidate;
@@ -1178,47 +1179,6 @@ export class Viewport {
       );
     this.extrusionCandidate = candidate;
     return candidate?.distance ?? rawDistance;
-  }
-  arcExtrusionInfo(brush, face) {
-    if (!brush.generator || !["ring", "arch"].includes(brush.generator.type))
-      return null;
-    const grouped = this.state.brushes.filter(
-        (item) => (item.groupId || item.id) === (brush.groupId || brush.id),
-      ),
-      points = grouped.flatMap((item) => item.vertices),
-      center = brush.generator.extrusionCenter || {
-        x: points.length
-          ? (Math.min(...points.map((point) => point.x)) +
-              Math.max(...points.map((point) => point.x))) /
-            2
-          : 0,
-        y: points.length
-          ? (Math.min(...points.map((point) => point.y)) +
-              Math.max(...points.map((point) => point.y))) /
-            2
-          : 0,
-      },
-      angles = face.map((index) =>
-        Math.atan2(
-          brush.vertices[index].y - center.y,
-          brush.vertices[index].x - center.x,
-        ),
-      ),
-      sourceAngle = Math.atan2(
-        angles.reduce((sum, angle) => sum + Math.sin(angle), 0),
-        angles.reduce((sum, angle) => sum + Math.cos(angle), 0),
-      ),
-      spread = Math.max(
-        ...angles.map((angle) =>
-          Math.abs(
-            Math.atan2(
-              Math.sin(angle - sourceAngle),
-              Math.cos(angle - sourceAngle),
-            ),
-          ),
-        ),
-      );
-    return spread <= 0.08 ? { center, sourceAngle } : null;
   }
   edgeViewForFace(id) {
     const match = id.match(/^(.*):f:(\d+)$/),

@@ -46,6 +46,14 @@ async function backup(name, content, suffix) { const stamp = new Date().toISOStr
 async function list(kind, extension) { const root = roots()[kind]; const items = await fsp.readdir(root, { withFileTypes: true }); return Promise.all(items.filter(x => x.isFile() && (!extension || x.name.toLowerCase().endsWith(extension))).map(async x => ({ name: x.name, size: (await fsp.stat(path.join(root, x.name))).size, modified: (await fsp.stat(path.join(root, x.name))).mtime.toISOString() }))); }
 function watchFolders() { watchers.forEach(w => w.close()); watchers = Object.values(roots()).map(folder => { try { return fs.watch(folder, () => {}); } catch { return null; } }).filter(Boolean); }
 function staticFile(requestPath, res) {
+  if (requestPath === "/_deps/flatten-js.mjs") {
+    const dependency = path.join(ROOT, "node_modules", "@flatten-js", "core", "dist", "main.mjs");
+    return fs.readFile(dependency, (err, data) => {
+      if (err) return fail(res, 404, "NOT_FOUND", "Dependency could not be read");
+      res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store" });
+      res.end(data);
+    });
+  }
   const publicRoot = path.join(ROOT, "public"); const file = path.resolve(publicRoot, requestPath === "/" ? "index.html" : "." + requestPath);
   if (file !== publicRoot && !file.startsWith(publicRoot + path.sep)) return fail(res, 403, "FORBIDDEN", "Static path is not allowed");
   fs.readFile(file, (err, data) => { if (err) { const status = err.code === "ENOENT" ? 404 : 500; const code = err.code === "ENOENT" ? "NOT_FOUND" : "READ_FAILED"; if (status >= 500) logError({ method: "GET", url: requestPath }, status, code, err); return fail(res, status, code, "Static file could not be read"); } res.writeHead(200, { "Content-Type": MIME[path.extname(file).toLowerCase()] || "application/octet-stream", "X-Content-Type-Options": "nosniff", "Cache-Control": "no-store" }); res.end(data); });
