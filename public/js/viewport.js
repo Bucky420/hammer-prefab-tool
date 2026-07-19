@@ -847,262 +847,242 @@ export class Viewport {
       );
 
     const snapCandidates = [],
-      acquireRadius = 10;
+      acquireRadius = 10,
+      activeAxes = this.axes(),
+      [axisX, axisY] = activeAxes;
 
-    const sideNorms = face
-      .map((vertexIndex, offset) => {
-        const nextVertex = face[(offset + 1) % face.length];
-        const sideFaceIndex = adjacentFaceForEdge(
-          brush,
-          faceIndex,
-          vertexIndex,
-          nextVertex,
-        );
-        if (sideFaceIndex < 0) return null;
-        const sideNormal = this.faceNormal(brush, brush.faces[sideFaceIndex]);
-        const sideLen = Math.hypot(sideNormal.x, sideNormal.y, sideNormal.z);
-        return sideLen > 0.000001
-          ? {
-              edgeIndex: offset,
-              faceIndex: sideFaceIndex,
-              unit: {
-                x: sideNormal.x / sideLen,
-                y: sideNormal.y / sideLen,
-                z: sideNormal.z / sideLen,
-              },
-            }
-          : null;
-      })
-      .filter(Boolean);
-
-    const xyKeys = [
-      ...new Set(
-        face.map(
-          (i) =>
-            `${brush.vertices[i].x.toFixed(8)},${brush.vertices[i].y.toFixed(8)}`,
-        ),
-      ),
-    ];
-    let edgeToEndpoint = [];
-    if (xyKeys.length === 2) {
-      const groupA = face.filter(
-        (i) =>
-          `${brush.vertices[i].x.toFixed(8)},${brush.vertices[i].y.toFixed(8)}` ===
-          xyKeys[0],
-      );
-      edgeToEndpoint = sideNorms.map((s) => {
-        const sv = face[s.edgeIndex];
-        return groupA.includes(sv) ? "A" : "B";
-      });
+    // Group face vertices into the two unique 2D endpoints (baseA, baseB)
+    const pointKey2D = (i) =>
+      `${brush.vertices[i][axisX].toFixed(8)},${brush.vertices[i][axisY].toFixed(8)}`;
+    const xyMap = new Map();
+    for (const i of face) {
+      const k = pointKey2D(i);
+      if (!xyMap.has(k)) xyMap.set(k, []);
+      xyMap.get(k).push(i);
     }
+    const xyKeys = [...xyMap.keys()];
+    if (xyKeys.length !== 2) return rawDistance;
 
-    const capPlane = {
-      normal: sourceUnit,
-      distance:
-        sourceUnit.x * brush.vertices[face[0]].x +
-        sourceUnit.y * brush.vertices[face[0]].y +
-        sourceUnit.z * brush.vertices[face[0]].z,
+    const groupA = xyMap.get(xyKeys[0]),
+      groupB = xyMap.get(xyKeys[1]);
+    const baseA = {
+        x: brush.vertices[groupA[0]][axisX],
+        y: brush.vertices[groupA[0]][axisY],
+      },
+      baseB = {
+        x: brush.vertices[groupB[0]][axisX],
+        y: brush.vertices[groupB[0]][axisY],
+      };
+    const baseAScreen = this.screen({
+      x: 0,
+      y: 0,
+      z: 0,
+    });
+    baseAScreen.x = baseA.x;
+    baseAScreen.y = baseA.y;
+    const baseBScreen = {
+      x: baseB.x,
+      y: baseB.y,
     };
+
+    const candidateRailsA = [],
+      candidateRailsB = [];
 
     for (const targetBrush of this.visibleBrushes()) {
       if (sourceBrushIds.has(targetBrush.id)) continue;
-      for (
-        let targetFaceIndex = 0;
-        targetFaceIndex < targetBrush.faces.length;
-        targetFaceIndex++
-      ) {
-        const targetFace = targetBrush.faces[targetFaceIndex];
-        const targetNormal = this.faceNormal(targetBrush, targetFace);
-        const targetLen = Math.hypot(
-          targetNormal.x,
-          targetNormal.y,
-          targetNormal.z,
-        );
-        if (targetLen < 0.000001) continue;
-        const targetUnit = {
-          x: targetNormal.x / targetLen,
-          y: targetNormal.y / targetLen,
-          z: targetNormal.z / targetLen,
-        };
+      for (const [vi, vertex] of targetBrush.vertices.entries()) {
+        const tv = this.screen(vertex);
+        const distA = Math.hypot(tv.x - baseAScreen.x, tv.y - baseAScreen.y);
+        const distB = Math.hypot(tv.x - baseBScreen.x, tv.y - baseBScreen.y);
 
-        const targetPlane = {
-          normal: targetUnit,
-          distance:
-            targetUnit.x * targetBrush.vertices[targetFace[0]].x +
-            targetUnit.y * targetBrush.vertices[targetFace[0]].y +
-            targetUnit.z * targetBrush.vertices[targetFace[0]].z,
-        };
-
-        const targetBoundary = targetFace.map((vertexIndex, offset) => ({
-          start: this.screen(targetBrush.vertices[vertexIndex]),
-          end: this.screen(
-            targetBrush.vertices[targetFace[(offset + 1) % targetFace.length]],
-          ),
-        }));
-
-        const mouseDistance = Math.min(
-          ...targetBoundary.map((seg) =>
-            pointSegmentDistance(current, seg.start, seg.end),
-          ),
-        );
-
-        for (const side of sideNorms) {
-          const sideDot =
-            side.unit.x * targetUnit.x +
-            side.unit.y * targetUnit.y +
-            side.unit.z * targetUnit.z;
-          const capDot =
-            sourceUnit.x * targetUnit.x +
-            sourceUnit.y * targetUnit.y +
-            sourceUnit.z * targetUnit.z;
-          const isSideAlign = sideDot <= -0.9;
-          const isCapAlign = capDot <= -0.9;
-          if (!isSideAlign && !isCapAlign) continue;
-
-          const useSideOverride = isSideAlign;
-          const sideOverride = useSideOverride
-            ? new Map([[side.edgeIndex, targetPlane]])
-            : undefined;
-          const solvedPlane = useSideOverride ? capPlane : targetPlane;
-
-          let finiteSeparation = Infinity;
-          for (let si = 0; si < sourceBoundary.length; si++)
-            for (let ti = 0; ti < targetBoundary.length; ti++) {
-              const dist = segmentDistance(
-                sourceBoundary[si].start,
-                sourceBoundary[si].end,
-                targetBoundary[ti].start,
-                targetBoundary[ti].end,
+        if (distA <= acquireRadius || distB <= acquireRadius) {
+          // Collect target edges incident to this vertex
+          const incidentEdges = [];
+          for (let fi = 0; fi < targetBrush.faces.length; fi++) {
+            const tf = targetBrush.faces[fi];
+            const viPos = tf.indexOf(vi);
+            if (viPos < 0) continue;
+            const prevVi = tf[(viPos + tf.length - 1) % tf.length];
+            const nextVi = tf[(viPos + 1) % tf.length];
+            for (const otherVi of [prevVi, nextVi]) {
+              const other = targetBrush.vertices[otherVi];
+              const dir = {
+                x: other[axisX] - vertex[axisX],
+                y: other[axisY] - vertex[axisY],
+              };
+              const drLen = Math.hypot(dir.x, dir.y);
+              if (drLen < 0.0001) continue;
+              dir.x /= drLen;
+              dir.y /= drLen;
+              const edgeScreen = {
+                start: tv,
+                end: this.screen(other),
+              };
+              const md = pointSegmentDistance(
+                current,
+                edgeScreen.start,
+                edgeScreen.end,
               );
-              if (dist < finiteSeparation) finiteSeparation = dist;
+              incidentEdges.push({
+                direction: dir,
+                mouseDistance: md,
+                targetBrushId: targetBrush.id,
+                targetFaceIndex: fi,
+                targetVertex: vertex,
+              });
             }
-
-          const solvedCap = solveCapFromPlane(
-            brush,
-            faceIndex,
-            solvedPlane,
-            sideOverride,
-          );
-          if (
-            !solvedCap ||
-            solvedCap.some((point) => !point || !Number.isFinite(point.x))
-          )
-            continue;
-
-          const candidateBrush = {
-            id: "snap-preview",
-            material: brush.material,
-            vertices: [
-              ...face.map((index) => brush.vertices[index]),
-              ...solvedCap,
-            ],
-            faces: [
-              [...Array(face.length).keys()],
-              [...Array(face.length).keys()].map(
-                (index) => face.length + index,
-              ),
-              ...Array.from({ length: face.length }, (_, index) => [
-                index,
-                (index + 1) % face.length,
-                face.length + ((index + 1) % face.length),
-                face.length + index,
-              ]),
-            ].map((candidateFace) =>
-              orientOutward(candidateFace, [
-                ...face.map((index) => brush.vertices[index]),
-                ...solvedCap,
-              ]),
-            ),
-          };
-          if (validateBrush(candidateBrush).length) continue;
-
-          const sourceCenter = face.reduce(
-            (sum, index) => ({
-              x: sum.x + brush.vertices[index].x / face.length,
-              y: sum.y + brush.vertices[index].y / face.length,
-              z: sum.z + brush.vertices[index].z / face.length,
-            }),
-            { x: 0, y: 0, z: 0 },
-          );
-          const extrusionDistance = useSideOverride
-            ? rawDistance
-            : Math.max(
-                0,
-                sourceUnit.x *
-                  (targetBrush.vertices[targetFace[0]].x - sourceCenter.x) +
-                  sourceUnit.y *
-                    (targetBrush.vertices[targetFace[0]].y - sourceCenter.y) +
-                  sourceUnit.z *
-                    (targetBrush.vertices[targetFace[0]].z - sourceCenter.z),
-              ) || rawDistance;
-
-          const faceKey = `${targetBrush.id}:f:${targetFaceIndex}`;
-          const synthEdge = {
-            start: targetBrush.vertices[targetFace[0]],
-            end: targetBrush.vertices[
-              (targetFace.length - 1) % targetFace.length
-            ],
-            startScreen: targetBoundary[0].start,
-            endScreen: targetBoundary[0].end,
-          };
-
-          const sideIndex = sideNorms.indexOf(side);
-          const railKey = edgeToEndpoint[sideIndex] || null;
-          const normalDot = useSideOverride ? sideDot : capDot;
-          const targetLineDir = {
-            x: -targetUnit.y || (targetUnit.x > 0 ? -1 : 1),
-            y: targetUnit.x || 0,
-          };
-          const tLen = Math.hypot(targetLineDir.x, targetLineDir.y);
-          if (tLen > 0.000001) {
-            targetLineDir.x /= tLen;
-            targetLineDir.y /= tLen;
           }
+          if (!incidentEdges.length) continue;
 
-          snapCandidates.push({
-            distance: extrusionDistance,
-            edge: synthEdge,
-            edgeKey: faceKey,
-            edges: targetBoundary.map((seg, i) => ({
-              start: targetBrush.vertices[targetFace[i]],
-              end: targetBrush.vertices[
-                targetFace[(i + 1) % targetFace.length]
-              ],
-              startScreen: seg.start,
-              endScreen: seg.end,
-            })),
-            mouseDistance,
-            snapTarget: {
-              type: "cross-section-rails",
-              activeAxes: ["x", "y", "z"],
-              plane: useSideOverride ? undefined : targetPlane,
-              targetPlane: useSideOverride ? undefined : targetPlane,
-              railA:
-                railKey === "A"
-                  ? {
-                      direction: targetLineDir,
-                      targetBrushId: targetBrush.id,
-                      targetFaceIndex,
-                    }
-                  : undefined,
-              railB:
-                railKey === "B"
-                  ? {
-                      direction: targetLineDir,
-                      targetBrushId: targetBrush.id,
-                      targetFaceIndex,
-                    }
-                  : undefined,
-              targetBrushId: targetBrush.id,
-              targetFaceIndex,
-              normalDot,
-              finiteSeparation,
-              distance: extrusionDistance,
-            },
-          });
-          break;
+          // Pick best edge (closest to mouse direction)
+          incidentEdges.sort((a, b) => a.mouseDistance - b.mouseDistance);
+          const best = incidentEdges[0];
+          const rail = {
+            direction: best.direction,
+            targetBrushId: best.targetBrushId,
+            targetFaceIndex: best.targetFaceIndex,
+          };
+
+          if (distA <= acquireRadius) candidateRailsA.push(rail);
+          if (distB <= acquireRadius) candidateRailsB.push(rail);
         }
       }
+    }
+
+    // Combine independent A/B rails
+    const allCombinations = [];
+    const tryPush = (railA, railB, distOverride) => {
+      const st = {
+        type: "cross-section-rails",
+        activeAxes,
+        railA,
+        railB,
+        distance: distOverride ?? rawDistance,
+      };
+      const solvedCap = true
+        ? (() => {
+            // Use the cross-section solver with rawDistance
+            const axes = activeAxes;
+            const [ax, ay] = axes;
+            const srcDir = { x: baseB.x - baseA.x, y: baseB.y - baseA.y };
+            const srcLen = Math.hypot(srcDir.x, srcDir.y);
+            if (srcLen < 0.000001) return null;
+            const srcNormal = { x: -srcDir.y / srcLen, y: srcDir.x / srcLen };
+            const normal = this.faceNormal(brush, face);
+            let outSign = srcNormal.x * normal[ax] + srcNormal.y * normal[ay];
+            if (outSign < 0) {
+              srcNormal.x *= -1;
+              srcNormal.y *= -1;
+            }
+            const d = distOverride ?? rawDistance;
+            const capLine = {
+              origin: {
+                x: baseA.x + srcNormal.x * d,
+                y: baseA.y + srcNormal.y * d,
+              },
+              direction: srcDir,
+            };
+            const railForEndpoint = (endpoint, snapKey) => {
+              if (st[snapKey])
+                return {
+                  origin: { x: endpoint.x, y: endpoint.y },
+                  direction: st[snapKey].direction,
+                };
+              const idx = endpoint === baseA ? groupA[0] : groupB[0];
+              const prev =
+                face[(face.indexOf(idx) + face.length - 1) % face.length];
+              const adj = adjacentFaceForEdge(brush, faceIndex, prev, idx);
+              if (adj < 0) return null;
+              const adjN = this.faceNormal(brush, brush.faces[adj]);
+              if (!adjN) return null;
+              const adjD = {
+                x: -adjN[ay] || srcDir.x,
+                y: adjN[ax] || srcDir.y,
+              };
+              const adjL = Math.hypot(adjD.x, adjD.y);
+              if (adjL < 0.000001) return null;
+              return {
+                origin: { x: endpoint.x, y: endpoint.y },
+                direction: { x: adjD.x / adjL, y: adjD.y / adjL },
+              };
+            };
+            const rA = railForEndpoint(baseA, "railA");
+            const rB = railForEndpoint(baseB, "railB");
+            if (!rA || !rB) return null;
+            const intersect = (ox, oy, dx, dy, rx, ry, rdx, rdy) => {
+              const den =
+                (ox - (ox + dx)) * (ry - (ry + rdy)) -
+                (oy - (oy + dy)) * (rx - (rx + rdx));
+              if (Math.abs(den) < 0.000001) return null;
+              const t =
+                ((ox - rx) * (ry - (ry + rdy)) -
+                  (oy - ry) * (rx - (rx + rdx))) /
+                den;
+              return { x: ox + t * dx, y: oy + t * dy };
+            };
+            const cA = intersect(
+              capLine.origin.x,
+              capLine.origin.y,
+              capLine.direction.x,
+              capLine.direction.y,
+              rA.origin.x,
+              rA.origin.y,
+              rA.direction.x,
+              rA.direction.y,
+            );
+            const cB = intersect(
+              capLine.origin.x,
+              capLine.origin.y,
+              capLine.direction.x,
+              capLine.direction.y,
+              rB.origin.x,
+              rB.origin.y,
+              rB.direction.x,
+              rB.direction.y,
+            );
+            if (!cA || !cB) return null;
+            if (!Number.isFinite(cA.x) || !Number.isFinite(cB.x)) return null;
+            if (
+              Math.hypot(cA.x - baseA.x, cA.y - baseA.y) * srcNormal.x +
+                (cA.x - baseA.x) * 0 <=
+              0.0001
+            )
+              return null;
+            return { capA: cA, capB: cB };
+          })()
+        : null;
+      if (!solvedCap) return;
+      allCombinations.push({
+        railA,
+        railB,
+        snapTarget: st,
+        mouseDistance: acquireRadius,
+      });
+    };
+
+    if (!candidateRailsA.length && !candidateRailsB.length) {
+      tryPush(undefined, undefined, rawDistance);
+    } else {
+      const aList = candidateRailsA.length ? candidateRailsA : [undefined];
+      const bList = candidateRailsB.length ? candidateRailsB : [undefined];
+      for (const ra of aList)
+        for (const rb of bList) tryPush(ra, rb, rawDistance);
+    }
+
+    // Build final snapCandidates from allCombinations
+    for (const combo of allCombinations) {
+      snapCandidates.push({
+        distance: rawDistance,
+        edge: combo.railA ||
+          combo.railB || {
+            startScreen: { x: 0, y: 0 },
+            endScreen: { x: 0, y: 0 },
+          },
+        edgeKey: `${combo.snapTarget.railA?.targetBrushId ?? "none"}:${combo.snapTarget.railB?.targetBrushId ?? "none"}`,
+        edges: [],
+        mouseDistance: acquireRadius,
+        snapTarget: combo.snapTarget,
+      });
     }
 
     snapCandidates.sort((a, b) => {
