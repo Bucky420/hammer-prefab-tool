@@ -371,8 +371,188 @@ export function solveCrossSectionCap(brush, faceIndex, distance, snapTarget) {
   return cap;
 }
 
+export function solveConformingExtrusion(
+  brush,
+  faceIndex,
+  distance,
+  targetEdges,
+) {
+  const face = brush.faces[faceIndex];
+  if (!face) return null;
+
+  const activeAxes = targetEdges?.activeAxes || ["x", "y"],
+    [axisX, axisY] = activeAxes,
+    depthAxis = activeAxes.length > 2 ? activeAxes[2] : "z";
+
+  const pointKey = (index) =>
+    `${brush.vertices[index][axisX].toFixed(8)},${brush.vertices[index][axisY].toFixed(8)}`;
+  const xyGroups = new Map();
+  for (const index of face) {
+    const key = pointKey(index);
+    if (!xyGroups.has(key)) xyGroups.set(key, []);
+    xyGroups.get(key).push(index);
+  }
+  const xyEntries = [...xyGroups.entries()];
+  if (xyEntries.length !== 2) return null;
+
+  const [groupA, groupB] = xyEntries.map(([, indices]) => indices);
+  const baseA = {
+      x: brush.vertices[groupA[0]][axisX],
+      y: brush.vertices[groupA[0]][axisY],
+    },
+    baseB = {
+      x: brush.vertices[groupB[0]][axisX],
+      y: brush.vertices[groupB[0]][axisY],
+    };
+
+  const srcDir = { x: baseB.x - baseA.x, y: baseB.y - baseA.y },
+    srcLen = Math.hypot(srcDir.x, srcDir.y);
+  if (srcLen < 0.000001) return null;
+
+  const sourceNormal = faceDirection(brush, face);
+  if (!sourceNormal) return null;
+
+  const srcNormal = { x: -srcDir.y / srcLen, y: srcDir.x / srcLen };
+  let outwardSign =
+    srcNormal.x * sourceNormal[axisX] + srcNormal.y * sourceNormal[axisY];
+  if (outwardSign < 0) {
+    srcNormal.x *= -1;
+    srcNormal.y *= -1;
+  }
+
+  // Free cap endpoints from drag distance
+  const freeCapA = {
+    x: baseA.x + srcNormal.x * distance,
+    y: baseA.y + srcNormal.y * distance,
+  };
+  const freeCapB = {
+    x: baseB.x + srcNormal.x * distance,
+    y: baseB.y + srcNormal.y * distance,
+  };
+
+  const capLine = {
+    origin: freeCapA,
+    direction: srcDir,
+  };
+
+  const edgeA = targetEdges?.edgeA ? targetEdges.edgeA.direction : null;
+  const edgeB = targetEdges?.edgeB ? targetEdges.edgeB.direction : null;
+
+  let railADir, railBDir;
+
+  if (edgeA && edgeB) {
+    railADir = edgeA;
+    railBDir = edgeB;
+  } else if (edgeA) {
+    railADir = edgeA;
+    railBDir = edgeA; // Copy snapped rail direction
+  } else if (edgeB) {
+    railBDir = edgeB;
+    railADir = edgeB; // Copy snapped rail direction
+  } else {
+    // Free extrusion: use original adjacent face directions
+    return null; // Let caller fall back
+  }
+
+  const railA = { origin: { x: baseA.x, y: baseA.y }, direction: railADir };
+  const railB = { origin: { x: baseB.x, y: baseB.y }, direction: railBDir };
+
+  const capA = line2DIntersection(
+    capLine.origin.x,
+    capLine.origin.y,
+    capLine.origin.x + capLine.direction.x,
+    capLine.origin.y + capLine.direction.y,
+    railA.origin.x,
+    railA.origin.y,
+    railA.origin.x + railA.direction.x,
+    railA.origin.y + railA.direction.y,
+  );
+  const capB = line2DIntersection(
+    capLine.origin.x,
+    capLine.origin.y,
+    capLine.origin.x + capLine.direction.x,
+    capLine.origin.y + capLine.direction.y,
+    railB.origin.x,
+    railB.origin.y,
+    railB.origin.x + railB.direction.x,
+    railB.origin.y + railB.direction.y,
+  );
+
+  if (!capA || !capB) return null;
+  if (!Number.isFinite(capA.x) || !Number.isFinite(capB.x)) return null;
+
+  const pushedA =
+    (capA.x - baseA.x) * srcNormal.x + (capA.y - baseA.y) * srcNormal.y;
+  const pushedB =
+    (capB.x - baseB.x) * srcNormal.x + (capB.y - baseB.y) * srcNormal.y;
+  if (pushedA <= 0.0001 || pushedB <= 0.0001) return null;
+
+  if (
+    !isStrictlyConvex([baseA, baseB, capB, capA]) &&
+    !isStrictlyConvex([baseA, capA, capB, baseB])
+  ) {
+    // Try swapping rail assignments
+    if (!edgeA || !edgeB) return null;
+    const swappedA = line2DIntersection(
+      capLine.origin.x,
+      capLine.origin.y,
+      capLine.origin.x + capLine.direction.x,
+      capLine.origin.y + capLine.direction.y,
+      baseB.x,
+      baseB.y,
+      baseB.x + edgeB.x,
+      baseB.y + edgeB.y,
+    );
+    const swappedB = line2DIntersection(
+      capLine.origin.x,
+      capLine.origin.y,
+      capLine.origin.x + capLine.direction.x,
+      capLine.origin.y + capLine.direction.y,
+      baseA.x,
+      baseA.y,
+      baseA.x + edgeA.x,
+      baseA.y + edgeA.y,
+    );
+    if (
+      !swappedA ||
+      !swappedB ||
+      !isStrictlyConvex([baseA, baseB, swappedB, swappedA])
+    )
+      return null;
+    capA.x = swappedA.x;
+    capA.y = swappedA.y;
+    capB.x = swappedB.x;
+    capB.y = swappedB.y;
+  }
+
+  const cap = [];
+  for (let i = 0; i < face.length; i++) {
+    const vertexIndex = face[i],
+      z = brush.vertices[vertexIndex][depthAxis];
+    const isA = groupA.includes(vertexIndex),
+      pt = isA ? capA : capB;
+    cap[i] = { x: 0, y: 0, z };
+    cap[i][axisX] = pt.x;
+    cap[i][axisY] = pt.y;
+    cap[i][depthAxis] = z;
+  }
+  return cap;
+}
+
 function offsetFacePlaneCap(brush, faceIndex, distance, snapTarget = null) {
   const face = brush.faces[faceIndex];
+
+  // Try conforming extrusion first (snaps near moving cap endpoints)
+  if (snapTarget?.edgeA || snapTarget?.edgeB) {
+    const result = solveConformingExtrusion(brush, faceIndex, distance, {
+      activeAxes: snapTarget.activeAxes,
+      edgeA: snapTarget.edgeA,
+      edgeB: snapTarget.edgeB,
+    });
+    if (result) return result;
+  }
+
+  // Fall back to cross-section rails or plane offset
   if (snapTarget?.railA || snapTarget?.railB) {
     const result = solveCrossSectionCap(brush, faceIndex, distance, snapTarget);
     if (result) return result;

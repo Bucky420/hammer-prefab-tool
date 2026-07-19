@@ -10,8 +10,7 @@ import { distanceToSegment, pointInPolygon } from "./math.js";
 import {
   extrudeSelectedFaces,
   limitExtrusionDistance,
-  solveCapFromPlane,
-  solveCrossSectionCap,
+  solveConformingExtrusion,
   adjacentFaceForEdge,
   planeForFace,
 } from "./face-extrusion.js";
@@ -887,18 +886,45 @@ export class Viewport {
     const baseAScreen = this.screen(baseAWorld),
       baseBScreen = this.screen(baseBWorld);
 
-    const candidateRailsA = [],
-      candidateRailsB = [];
+    // Compute free cap endpoints from drag distance
+    const srcDir2D = { x: baseB.x - baseA.x, y: baseB.y - baseA.y },
+      srcLen2D = Math.hypot(srcDir2D.x, srcDir2D.y);
+    if (srcLen2D < 0.000001) return rawDistance;
+    const extNormal = { x: -srcDir2D.y / srcLen2D, y: srcDir2D.x / srcLen2D };
+    let outSign =
+      extNormal.x * sourceUnit[axisX] + extNormal.y * sourceUnit[axisY];
+    if (outSign < 0) {
+      extNormal.x *= -1;
+      extNormal.y *= -1;
+    }
+    const freeCapA = {
+      x: baseA.x + extNormal.x * rawDistance,
+      y: baseA.y + extNormal.y * rawDistance,
+    };
+    const freeCapB = {
+      x: baseB.x + extNormal.x * rawDistance,
+      y: baseB.y + extNormal.y * rawDistance,
+    };
+    const freeCapAScreen = { x: freeCapA.x, y: freeCapA.y };
+    const freeCapBScreen = { x: freeCapB.x, y: freeCapB.y };
+
+    const candidateEdgesA = [],
+      candidateEdgesB = [];
 
     for (const targetBrush of this.visibleBrushes()) {
       if (sourceBrushIds.has(targetBrush.id)) continue;
       for (const [vi, vertex] of targetBrush.vertices.entries()) {
         const tv = this.screen(vertex);
-        const distA = Math.hypot(tv.x - baseAScreen.x, tv.y - baseAScreen.y);
-        const distB = Math.hypot(tv.x - baseBScreen.x, tv.y - baseBScreen.y);
+        const distA = Math.hypot(
+          tv.x - freeCapAScreen.x,
+          tv.y - freeCapAScreen.y,
+        );
+        const distB = Math.hypot(
+          tv.x - freeCapBScreen.x,
+          tv.y - freeCapBScreen.y,
+        );
 
         if (distA <= acquireRadius || distB <= acquireRadius) {
-          // Collect target edges incident to this vertex
           const incidentEdges = [];
           for (let fi = 0; fi < targetBrush.faces.length; fi++) {
             const tf = targetBrush.faces[fi];
@@ -916,22 +942,17 @@ export class Viewport {
               if (drLen < 0.0001) continue;
               dir.x /= drLen;
               dir.y /= drLen;
-              const edgeScreen = {
-                start: tv,
-                end: this.screen(other),
-              };
-              const md = pointSegmentDistance(
-                current,
-                edgeScreen.start,
-                edgeScreen.end,
-              );
+              const endScr = this.screen(other);
+              const md = pointSegmentDistance(current, tv, endScr);
               incidentEdges.push({
                 direction: dir,
                 mouseDistance: md,
                 targetBrushId: targetBrush.id,
                 targetFaceIndex: fi,
-                otherVertex: { ...other },
-                endScreen: this.screen(other),
+                startWorld: { ...vertex },
+                endWorld: { ...other },
+                startScreen: tv,
+                endScreen: endScr,
                 edgeKey: [
                   targetBrush.id,
                   Math.min(vi, otherVi),
@@ -942,79 +963,69 @@ export class Viewport {
           }
           if (!incidentEdges.length) continue;
 
-          for (const best of incidentEdges) {
-            const rail = {
-              direction: best.direction,
-              targetBrushId: best.targetBrushId,
-              targetFaceIndex: best.targetFaceIndex,
-              targetEdgeKey: best.edgeKey,
-              originWorld: { ...vertex },
-              endWorld: { ...best.otherVertex },
-              startScreen: tv,
-              endScreen: best.endScreen,
-              mouseDistance: best.mouseDistance,
-              endpointDistance: distA <= acquireRadius ? distA : distB,
-            };
+          // Sort by mouse distance, take closest
+          incidentEdges.sort((a, b) => a.mouseDistance - b.mouseDistance);
+          const best = incidentEdges[0];
 
-            if (distA <= acquireRadius) candidateRailsA.push(rail);
-            if (distB <= acquireRadius) candidateRailsB.push(rail);
-          }
+          if (distA <= acquireRadius)
+            candidateEdgesA.push({ ...best, endpointDistance: distA });
+          if (distB <= acquireRadius)
+            candidateEdgesB.push({ ...best, endpointDistance: distB });
         }
       }
     }
 
-    // Combine independent A/B rails
-    const aList = candidateRailsA.length ? candidateRailsA : [undefined];
-    const bList = candidateRailsB.length ? candidateRailsB : [undefined];
-    for (const ra of aList)
-      for (const rb of bList) {
-        if (!ra && !rb) continue;
+    // Combine independent A/B edge targets
+    const aList = candidateEdgesA.length ? candidateEdgesA : [undefined];
+    const bList = candidateEdgesB.length ? candidateEdgesB : [undefined];
+    for (const ea of aList)
+      for (const eb of bList) {
+        if (!ea && !eb) continue;
         const st = {
           type: "cross-section-rails",
           activeAxes,
-          railA: ra || undefined,
-          railB: rb || undefined,
+          edgeA: ea || undefined,
+          edgeB: eb || undefined,
           distance: rawDistance,
-          targetBrushIds: [ra?.targetBrushId, rb?.targetBrushId].filter(
+          targetBrushIds: [ea?.targetBrushId, eb?.targetBrushId].filter(
             Boolean,
           ),
         };
 
-        const solvedCap = solveCrossSectionCap(
+        const solvedCap = solveConformingExtrusion(
           brush,
           faceIndex,
           rawDistance,
-          st,
+          {
+            activeAxes,
+            edgeA: ea || undefined,
+            edgeB: eb || undefined,
+          },
         );
         if (!solvedCap || solvedCap.some((p) => !p || !Number.isFinite(p.x)))
           continue;
 
-        const edgeDist = Math.min(
-          ra?.endpointDistance ?? Infinity,
-          rb?.endpointDistance ?? Infinity,
-        );
-        const dirErr = (ra?.direction ? 0 : 1) + (rb?.direction ? 0 : 1);
         const md = Math.min(
-          ra?.mouseDistance ?? Infinity,
-          rb?.mouseDistance ?? Infinity,
+          ea?.mouseDistance ?? Infinity,
+          eb?.mouseDistance ?? Infinity,
         );
 
         snapCandidates.push({
           distance: rawDistance,
-          edge: ra ||
-            rb || {
+          edge: ea ||
+            eb || {
               startScreen: { x: 0, y: 0 },
               endScreen: { x: 0, y: 0 },
             },
-          edgeKey: [ra?.targetEdgeKey ?? "", rb?.targetEdgeKey ?? ""].join("|"),
+          edgeKey: [ea?.edgeKey ?? "", eb?.edgeKey ?? ""].join("|"),
           edges: [
-            ...[ra].filter(Boolean).map((r) => ({
-              startScreen: r.startScreen,
-              endScreen: r.endScreen,
+            ...[ea].filter(Boolean).map((e) => ({
+              startScreen: e.startScreen,
+              endScreen: e.endScreen,
             })),
-            ...[rb].filter(Boolean).map((r) => ({
-              startScreen: r.startScreen,
-              endScreen: r.endScreen,
+            ...[eb].filter(Boolean).map((e) => ({
+              startScreen: e.startScreen,
+              endScreen: e.endScreen,
             })),
           ],
           mouseDistance: md,
