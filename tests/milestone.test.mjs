@@ -1013,18 +1013,21 @@ assert.equal(
   "face extrusion follows mouse drag",
 );
 const extrusionCandidate = snapViewport.extrusionCandidate;
+assert.ok(extrusionCandidate, "snap acquisition must produce a candidate");
 assert.ok(
-  extrusionCandidate,
-  "snap acquisition must detect the target edge 6px from freeCapA",
+  extrusionCandidate.snapTarget?.snapA ||
+    extrusionCandidate.snapTarget?.snapB ||
+    extrusionCandidate.snapTarget?.conforming?.length,
+  "candidate must have snap data",
+);
+assert.equal(
+  extrusionCandidate.candidateType,
+  "conforming",
+  "candidate must be conforming type",
 );
 assert.ok(
-  extrusionCandidate.snapTarget?.snapA || extrusionCandidate.snapTarget?.snapB,
-  "at least one cap column must snap",
-);
-assert.notDeepEqual(
-  extrusionCandidate.snapTarget?.snapA?.point,
-  { x: 64, y: 32 },
-  "snap point must not collapse back to the fixed base endpoint",
+  extrusionCandidate.matchCount >= 1,
+  "candidate must have verified matched constraints",
 );
 
 // Verify the snap reaches into actual extrusion geometry

@@ -594,15 +594,15 @@ export function solveConvexConformingExtrusion(options) {
   // Compute lines: baseLine, capLine, sideA, sideB
   const baseLineOrigin = { x: baseA.x, y: baseA.y };
   let baseLineDir = { x: srcDir.x, y: srcDir.y };
-  const capLineOrigin = {
+  let capLineOrigin = {
     x: baseA.x + srcNormal.x * distance,
     y: baseA.y + srcNormal.y * distance,
   };
   let capLineDir = { x: srcDir.x, y: srcDir.y };
   let sideADir = adjSideDir(groupA);
   let sideBDir = adjSideDir(groupB);
-  const sideAOrigin = { x: baseA.x, y: baseA.y };
-  const sideBOrigin = { x: baseB.x, y: baseB.y };
+  let sideAOrigin = { x: baseA.x, y: baseA.y };
+  let sideBOrigin = { x: baseB.x, y: baseB.y };
 
   // Track which constraints were applied
   const applied = { sideA: false, sideB: false, base: false, cap: false };
@@ -631,7 +631,13 @@ export function solveConvexConformingExtrusion(options) {
               ]
             : []),
           ...(constraints.capLine
-            ? [{ movingEdge: "cap", direction: constraints.capLine }]
+            ? [
+                {
+                  movingEdge: "cap",
+                  direction: constraints.capLine,
+                  origin: capLineOrigin,
+                },
+              ]
             : []),
           ...(constraints.baseLine
             ? [{ movingEdge: "base", direction: constraints.baseLine }]
@@ -642,17 +648,22 @@ export function solveConvexConformingExtrusion(options) {
   for (const c of constraintList) {
     if (c.movingEdge === "sideA") {
       sideADir = c.direction;
+      if (c.origin) sideAOrigin = { x: c.origin.x, y: c.origin.y };
       applied.sideA = true;
     } else if (c.movingEdge === "sideB") {
       sideBDir = c.direction;
+      if (c.origin) sideBOrigin = { x: c.origin.x, y: c.origin.y };
       applied.sideB = true;
     } else if (c.movingEdge === "base") {
       baseLineDir = c.direction;
+      if (c.origin) {
+        baseLineOrigin.x = c.origin.x;
+        baseLineOrigin.y = c.origin.y;
+      }
       applied.base = true;
     } else if (c.movingEdge === "cap") {
       capLineDir = c.direction;
-      capLineOrigin.x = baseA.x + srcNormal.x * distance;
-      capLineOrigin.y = baseA.y + srcNormal.y * distance;
+      if (c.origin) capLineOrigin = { x: c.origin.x, y: c.origin.y };
       applied.cap = true;
     }
   }
@@ -754,13 +765,18 @@ export function solveConvexConformingExtrusion(options) {
   ]) {
     if (Math.hypot(orig.x - moved.x, orig.y - moved.y) < 0.01) continue;
     const cols = collectWeldedVertexColumns([sourceBrush], orig, activeAxes);
+    const affectedFaces = [];
     for (const col of cols) {
-      sourceVertexMoves.push({
+      for (const i of col.indices) {
+        sourceVertexMoves.push({
+          brushId: sourceBrush.id,
+          vertexIndex: i,
+          position: { [axisX]: moved.x, [axisY]: moved.y },
+        });
+      }
+      affectedFaces.push({
         brushId: sourceBrush.id,
-        vertexIndices: [...col.indices],
-        position: { [axisX]: moved.x, [axisY]: moved.y },
-        dx: moved.x - orig.x,
-        dy: moved.y - orig.y,
+        indices: [...col.indices],
       });
     }
   }
@@ -823,14 +839,6 @@ export function solveConvexConformingExtrusion(options) {
             position: { [axisX]: movedFar.x, [axisY]: movedFar.y },
           });
         }
-        sourceVertexMoves.push({
-          brushId: sourceBrush.id,
-          faceIndex: adjFaceIndex,
-          endpoint,
-          farVertices,
-          dx: movedFar.x - farX,
-          dy: movedFar.y - farY,
-        });
         break;
       }
     }
@@ -839,6 +847,11 @@ export function solveConvexConformingExtrusion(options) {
   return {
     generatedCap: cap,
     sourceVertexMoves,
+    solvedEdges: {
+      sideA: [newBaseA, newCapA],
+      cap: [newCapA, newCapB],
+      sideB: [newCapB, newBaseB],
+    },
     corners: { newBaseA, newBaseB, newCapA, newCapB },
     applied,
   };
@@ -857,7 +870,13 @@ function offsetFacePlaneCap(brush, faceIndex, distance, snapTarget = null) {
       activeAxes: snapTarget.activeAxes,
       constraints: snapTarget.conforming,
     });
-    if (result && result.generatedCap) return result.generatedCap;
+    if (result && result.generatedCap)
+      return {
+        cap: result.generatedCap,
+        sourceVertexMoves: result.sourceVertexMoves,
+        solvedEdges: result.solvedEdges,
+        applied: result.applied,
+      };
   }
 
   if (snapTarget?.snapA || snapTarget?.snapB) {
@@ -1126,13 +1145,17 @@ export function extrudeSelectedFaces(
       continue;
     }
     const base = face.map((index) => ({ ...brush.vertices[index] }));
-    const cap =
+    const capResult =
       region.caps.get(id) ||
       (selection.size === 1 && snapTarget
         ? offsetFacePlaneCap(brush, faceIndex, distance, snapTarget)
         : mode === "parallel" && selection.size === 1
           ? offsetFacePlaneCap(brush, faceIndex, distance)
           : base.map((point) => extrudedPoint(point, direction, distance)));
+    const cap = Array.isArray(capResult)
+      ? capResult
+      : capResult?.cap || capResult;
+    const sourceVertexMoves = capResult?.sourceVertexMoves || [];
     if (!cap || cap.some((point) => !point)) {
       errors.push(`${id}: cap plane intersection failed or exceeded bounds`);
       continue;
