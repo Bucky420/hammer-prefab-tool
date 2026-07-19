@@ -838,98 +838,92 @@ export class Viewport {
     };
 
     // --- Face-magnet evaluation (Stage 5) ---
-    // Check that two faces oppose each other across a small gap.
-    // Requires: opposite normals, parallel tangents, target in front, tangent overlap.
     const evaluateFaceMagnet = (
-      movingStart,
-      movingEnd,
-      movingNormal2D,
+      moving,
       targetBrush,
       targetFaceIndex,
-      targetStart,
-      targetEnd,
+      targetStartW,
+      targetEndW,
       tS,
       tE,
+      axX,
+      axY,
       depthAxis,
     ) => {
       const targetFace = targetBrush.faces[targetFaceIndex];
       if (!targetFace) return null;
 
-      // Target face normal (3D outward)
+      // Target face normal (3D outward) using active axes
       const targetNormal3D = this.faceNormal(targetBrush, targetFace);
-      const targetNormalLen = Math.hypot(
+      const tNL = Math.hypot(
         targetNormal3D.x,
         targetNormal3D.y,
         targetNormal3D.z,
       );
-      if (targetNormalLen < 0.000001) return null;
+      if (tNL < 0.000001) return null;
 
       // Reject horizontal (top/bottom) faces in active view
       if (Math.abs(targetNormal3D[depthAxis]) > 0.1) return null;
 
+      // Project to active 2D plane
       const targetNormal2D = {
-        x: targetNormal3D.x / targetNormalLen,
-        y: targetNormal3D.y / targetNormalLen,
+        x: targetNormal3D[axX] / tNL,
+        y: targetNormal3D[axY] / tNL,
       };
 
       // Normals must oppose (dot near -1)
       const normalDot =
-        movingNormal2D.x * targetNormal2D.x +
-        movingNormal2D.y * targetNormal2D.y;
+        moving.outwardNormal2D.x * targetNormal2D.x +
+        moving.outwardNormal2D.y * targetNormal2D.y;
       if (normalDot > -Math.cos((20 * Math.PI) / 180)) return null;
 
-      // Tangents must be parallel
-      const movingTan = {
-        x: movingEnd.x - movingStart.x,
-        y: movingEnd.y - movingStart.y,
+      // Tangents must be parallel (world-space)
+      const movingTanW = {
+        x: moving.endWorld2D.x - moving.startWorld2D.x,
+        y: moving.endWorld2D.y - moving.startWorld2D.y,
       };
-      const targetTan = {
-        x: targetEnd.x - targetStart.x,
-        y: targetEnd.y - targetStart.y,
+      const targetTanW = {
+        x: targetEndW[axX] - targetStartW[axX],
+        y: targetEndW[axY] - targetStartW[axY],
       };
-      const mtLen = Math.hypot(movingTan.x, movingTan.y);
-      const ttLen = Math.hypot(targetTan.x, targetTan.y);
+      const mtLen = Math.hypot(movingTanW.x, movingTanW.y);
+      const ttLen = Math.hypot(targetTanW.x, targetTanW.y);
       if (mtLen < 0.000001 || ttLen < 0.000001) return null;
-      const mTu = { x: movingTan.x / mtLen, y: movingTan.y / mtLen };
-      const tTu = { x: targetTan.x / ttLen, y: targetTan.y / ttLen };
+      const mTu = { x: movingTanW.x / mtLen, y: movingTanW.y / mtLen };
+      const tTu = { x: targetTanW.x / ttLen, y: targetTanW.y / ttLen };
       const tangentDot = Math.abs(mTu.x * tTu.x + mTu.y * tTu.y);
       if (tangentDot < Math.cos((20 * Math.PI) / 180)) return null;
 
-      // Target must be on the face's magnetic side (not behind)
-      const movingMid = {
-        x: (movingStart.x + movingEnd.x) / 2,
-        y: (movingStart.y + movingEnd.y) / 2,
+      // Target must be on the face's magnetic side (not behind) — world-space
+      const movingMidW = {
+        x: (moving.startWorld2D.x + moving.endWorld2D.x) / 2,
+        y: (moving.startWorld2D.y + moving.endWorld2D.y) / 2,
       };
-      const targetMid = { x: (tS.x + tE.x) / 2, y: (tS.y + tE.y) / 2 };
+      const targetMidW = {
+        x: targetStartW[axX] + (targetEndW[axX] - targetStartW[axX]) / 2,
+        y: targetStartW[axY] + (targetEndW[axY] - targetStartW[axY]) / 2,
+      };
       const signedGap =
-        (targetMid.x - movingMid.x) * movingNormal2D.x +
-        (targetMid.y - movingMid.y) * movingNormal2D.y;
+        (targetMidW.x - movingMidW.x) * moving.outwardNormal2D.x +
+        (targetMidW.y - movingMidW.y) * moving.outwardNormal2D.y;
       if (signedGap < -0.5) return null;
 
-      // Tangent overlap
-      const intervalOnAxis = (a, b, axis) => {
-        const p = a.x * axis.x + a.y * axis.y;
-        const q = b.x * axis.x + b.y * axis.y;
+      // Tangent overlap in screen space
+      const intervalOnAxis = (aScr, bScr, axis) => {
+        const p = aScr.x * axis.x + aScr.y * axis.y;
+        const q = bScr.x * axis.x + bScr.y * axis.y;
         return [Math.min(p, q), Math.max(p, q)];
       };
-      const mInt = intervalOnAxis(movingStart, movingEnd, mTu);
+      const mInt = intervalOnAxis(moving.startScreen, moving.endScreen, mTu);
       const tInt = intervalOnAxis(tS, tE, mTu);
       const overlap = Math.min(mInt[1], tInt[1]) - Math.max(mInt[0], tInt[0]);
       if (overlap < -10) return null;
 
-      // Score: gap weighted heavily, minus overlap bonus, plus angle penalty
       const angleError = Math.acos(Math.min(1, tangentDot)) * (180 / Math.PI);
-      const score = signedGap * 10 + angleError * 2 - Math.max(0, overlap);
+      const score =
+        Math.max(0, signedGap) * 10 + angleError * 2 - Math.max(0, overlap);
 
-      return {
-        normalDot,
-        tangentDot,
-        signedGap,
-        overlap,
-        score,
-        targetNormal2D,
-        targetNormal3D,
-      };
+      return { normalDot, tangentDot, signedGap, overlap, score };
     };
 
     const segmentDistance = (aStart, aEnd, bStart, bEnd) => {
@@ -1152,23 +1146,73 @@ export class Viewport {
       return p1 < p2 ? `${p1}|${p2}` : `${p2}|${p1}`;
     };
 
-    const makeMovingEdge = (id, start, end) => {
-      const tx = end.x - start.x,
-        ty = end.y - start.y,
-        len = Math.hypot(tx, ty);
+    // Build moving edges with both world-space geometry and screen-space display coords.
+    // Normals are derived from polygon winding, not from extNormal.
+    const makeMovingEdge = (
+      id,
+      startW2D,
+      endW2D,
+      startScr,
+      endScr,
+      centroid2D,
+    ) => {
+      const dx = endW2D.x - startW2D.x,
+        dy = endW2D.y - startW2D.y,
+        len = Math.hypot(dx, dy);
       if (len < 0.000001) return null;
-      const n = { x: -ty / len, y: tx / len };
-      if (n.x * extNormal.x + n.y * extNormal.y < 0) {
+      // Outward normal: rotate tangent CCW, then flip if pointing toward centroid
+      const n = { x: -dy / len, y: dx / len };
+      const mid = {
+        x: (startW2D.x + endW2D.x) / 2,
+        y: (startW2D.y + endW2D.y) / 2,
+      };
+      const towardInside =
+        n.x * (centroid2D.x - mid.x) + n.y * (centroid2D.y - mid.y);
+      if (towardInside > 0) {
         n.x *= -1;
         n.y *= -1;
       }
-      return { id, start, end, normal2D: n };
+      return {
+        id,
+        startWorld2D: startW2D,
+        endWorld2D: endW2D,
+        startScreen: startScr,
+        endScreen: endScr,
+        outwardNormal2D: n,
+      };
+    };
+
+    // 2D centroid of [baseA, freeCapA, freeCapB, baseB]
+    const centroid2D = {
+      x: (baseA.x + freeCapA2D.x + freeCapB2D.x + baseB.x) / 4,
+      y: (baseA.y + freeCapA2D.y + freeCapB2D.y + baseB.y) / 4,
     };
 
     const movingEdges = [
-      makeMovingEdge("sideA", baseAScreen, freeCapAScreen),
-      makeMovingEdge("cap", freeCapAScreen, freeCapBScreen),
-      makeMovingEdge("sideB", freeCapBScreen, baseBScreen),
+      makeMovingEdge(
+        "sideA",
+        baseA,
+        freeCapA2D,
+        baseAScreen,
+        freeCapAScreen,
+        centroid2D,
+      ),
+      makeMovingEdge(
+        "cap",
+        freeCapA2D,
+        freeCapB2D,
+        freeCapAScreen,
+        freeCapBScreen,
+        centroid2D,
+      ),
+      makeMovingEdge(
+        "sideB",
+        freeCapB2D,
+        baseB,
+        freeCapBScreen,
+        baseBScreen,
+        centroid2D,
+      ),
     ].filter(Boolean);
 
     // Extracted geometry setup helper (for progressive locking, Stage 2)
@@ -1220,8 +1264,8 @@ export class Viewport {
 
           for (const moving of movingEdges) {
             const dist = segmentDistance(
-              moving.start,
-              moving.end,
+              moving.startScreen,
+              moving.endScreen,
               tStart,
               tEnd,
             );
@@ -1238,8 +1282,8 @@ export class Viewport {
 
             // Compute world-space point from interpolation parameter
             const midScreen = {
-              x: (moving.start.x + moving.end.x) / 2,
-              y: (moving.start.y + moving.end.y) / 2,
+              x: (moving.startScreen.x + moving.endScreen.x) / 2,
+              y: (moving.startScreen.y + moving.endScreen.y) / 2,
             };
             const { point: scrPoint, t: interpT } = closestPointOnSegment(
               midScreen,
@@ -1309,20 +1353,29 @@ export class Viewport {
               tS = this.screen(startW),
               tE = this.screen(endW);
             for (const moving of movingEdgeList) {
-              if (!moving.start || !moving.end) continue;
-              if (!moving.normal2D) continue;
+              if (!moving.startScreen || !moving.endScreen) continue;
+              if (!moving.outwardNormal2D) continue;
 
-              // Apply face-magnet filter before segment distance
+              // Restore: require finite screen distance
+              const finiteDist = segmentDistance(
+                moving.startScreen,
+                moving.endScreen,
+                tS,
+                tE,
+              );
+              if (finiteDist > radius) continue;
+
+              // Apply face-magnet filter
               const magnet = evaluateFaceMagnet(
-                moving.start,
-                moving.end,
-                moving.normal2D,
+                moving,
                 targetBrush,
                 fi,
                 startW,
                 endW,
                 tS,
                 tE,
+                axX,
+                axY,
                 depthAxis,
               );
               if (!magnet) continue;
@@ -1335,8 +1388,8 @@ export class Viewport {
               if (dL < 0.0001) continue;
               const eDir = { x: d2D.x / dL, y: d2D.y / dL };
               const midS = {
-                x: (moving.start.x + moving.end.x) / 2,
-                y: (moving.start.y + moving.end.y) / 2,
+                x: (moving.startScreen.x + moving.endScreen.x) / 2,
+                y: (moving.startScreen.y + moving.endScreen.y) / 2,
               };
               const { t: interpT } = closestPointOnSegment(midS, tS, tE);
               const wPt = {
@@ -1355,7 +1408,7 @@ export class Viewport {
                 endWorld: { ...endW },
                 startScreen: tS,
                 endScreen: tE,
-                segmentDistance: magnet.score,
+                segmentDistance: finiteDist,
                 projectedKey: pKey,
               });
             }
