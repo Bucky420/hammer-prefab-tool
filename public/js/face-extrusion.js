@@ -732,10 +732,81 @@ export function solveConvexConformingExtrusion(options) {
     }
   }
 
+  // Adjacent-edge direction propagation:
+  // When a snapped side changes direction, rotate the adjacent source face
+  // edge so the red edge becomes parallel to the cyan snapped side.
+  const sourceVertexMoves = [];
+  for (const [endpoint, group, sideDir, origSideDir, snapKey] of [
+    [baseA, groupA, sideADir, adjSideDir(groupA), "sideA"],
+    [baseB, groupB, sideBDir, adjSideDir(groupB), "sideB"],
+  ]) {
+    if (!applied[snapKey]) continue;
+    const origLen = Math.hypot(origSideDir.x, origSideDir.y);
+    const dot =
+      origLen > 0.0001
+        ? Math.abs(sideDir.x * origSideDir.x + sideDir.y * origSideDir.y) /
+          origLen
+        : 1;
+    if (dot > 0.999) continue;
+
+    for (const vi of group) {
+      const fi = face.indexOf(vi);
+      if (fi < 0) continue;
+      const next = face[(fi + 1) % face.length];
+      const prev = face[(fi + face.length - 1) % face.length];
+      for (const [e1, e2] of [
+        [vi, next],
+        [prev, vi],
+      ]) {
+        const adjFaceIndex = adjacentFaceForEdge(
+          sourceBrush,
+          faceIndex,
+          e1,
+          e2,
+        );
+        if (adjFaceIndex < 0) continue;
+        const adjFace = sourceBrush.faces[adjFaceIndex];
+        const sharedKey = pointKey(vi);
+        const farVertices = adjFace.filter((v) => pointKey(v) !== sharedKey);
+        if (!farVertices.length) continue;
+
+        const farX =
+          farVertices.reduce((s, v) => s + sourceBrush.vertices[v][axisX], 0) /
+          farVertices.length;
+        const farY =
+          farVertices.reduce((s, v) => s + sourceBrush.vertices[v][axisY], 0) /
+          farVertices.length;
+        const farLen = Math.hypot(farX - endpoint.x, farY - endpoint.y);
+        if (farLen < 0.0001) continue;
+
+        const movedFar = {
+          x: endpoint.x + sideDir.x * farLen,
+          y: endpoint.y + sideDir.y * farLen,
+        };
+
+        for (const v of farVertices) {
+          sourceBrush.vertices[v][axisX] = movedFar.x;
+          sourceBrush.vertices[v][axisY] = movedFar.y;
+        }
+        sourceVertexMoves.push({
+          brushId: sourceBrush.id,
+          faceIndex: adjFaceIndex,
+          endpoint,
+          farVertices,
+          dx: movedFar.x - farX,
+          dy: movedFar.y - farY,
+        });
+        break;
+      }
+    }
+  }
+
   return {
     generatedCap: cap,
-    modifiedBrushes: movedColumns.length ? [sourceBrush] : [],
+    modifiedBrushes:
+      movedColumns.length || sourceVertexMoves.length ? [sourceBrush] : [],
     movedColumns,
+    sourceVertexMoves,
     corners: { newBaseA, newBaseB, newCapA, newCapB },
     applied,
   };
