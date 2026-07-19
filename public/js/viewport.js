@@ -908,145 +908,109 @@ export class Viewport {
     const freeCapAScreen = this.screen(freeCapAWorld);
     const freeCapBScreen = this.screen(freeCapBWorld);
 
-    // Generated side segments for detection
-    const sideASegment = { start: baseAScreen, end: freeCapAScreen };
-    const sideBSegment = { start: baseBScreen, end: freeCapBScreen };
-
-    const projectPointToRay = (point, origin, end) => {
-      const dx = end.x - origin.x,
-        dy = end.y - origin.y,
-        lengthSquared = dx * dx + dy * dy;
-      if (lengthSquared < 1e-8) return null;
+    const closestPointOnSegment = (point, a, b) => {
+      const dx = b.x - a.x,
+        dy = b.y - a.y,
+        len2 = dx * dx + dy * dy;
+      if (len2 < 1e-8) return { point: { x: a.x, y: a.y }, t: 0 };
       const t = Math.max(
         0,
-        ((point.x - origin.x) * dx + (point.y - origin.y) * dy) / lengthSquared,
+        Math.min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / len2),
       );
-      return { x: origin.x + dx * t, y: origin.y + dy * t };
+      return { point: { x: a.x + dx * t, y: a.y + dy * t }, t };
     };
 
-    const baseAcquireRadius = 5;
+    const freeCapA2D = {
+      x: baseA.x + extNormal.x * rawDistance,
+      y: baseA.y + extNormal.y * rawDistance,
+    };
+    const freeCapB2D = {
+      x: baseB.x + extNormal.x * rawDistance,
+      y: baseB.y + extNormal.y * rawDistance,
+    };
+
     const candidateEdgesA = [],
       candidateEdgesB = [];
 
     for (const targetBrush of this.visibleBrushes()) {
       if (sourceBrushIds.has(targetBrush.id)) continue;
-      for (const [vi, vertex] of targetBrush.vertices.entries()) {
-        const tv = this.screen(vertex);
-        const distToBaseA = Math.hypot(
-          tv.x - baseAScreen.x,
-          tv.y - baseAScreen.y,
-        );
-        const distToBaseB = Math.hypot(
-          tv.x - baseBScreen.x,
-          tv.y - baseBScreen.y,
-        );
+      for (let fi = 0; fi < targetBrush.faces.length; fi++) {
+        const tf = targetBrush.faces[fi];
+        for (let ei = 0; ei < tf.length; ei++) {
+          const vi = tf[ei],
+            otherVi = tf[(ei + 1) % tf.length],
+            startWorld = targetBrush.vertices[vi],
+            endWorld = targetBrush.vertices[otherVi],
+            startScr = this.screen(startWorld),
+            endScr = this.screen(endWorld);
 
-        if (distToBaseA > baseAcquireRadius && distToBaseB > baseAcquireRadius)
-          continue;
-
-        // Collect target edges incident to this vertex, oriented away from it
-        for (let fi = 0; fi < targetBrush.faces.length; fi++) {
-          const tf = targetBrush.faces[fi];
-          const viPos = tf.indexOf(vi);
-          if (viPos < 0) continue;
-          const prevVi = tf[(viPos + tf.length - 1) % tf.length];
-          const nextVi = tf[(viPos + 1) % tf.length];
-          for (const otherVi of [prevVi, nextVi]) {
-            const other = targetBrush.vertices[otherVi];
-            const dir = {
-              x: other[axisX] - vertex[axisX],
-              y: other[axisY] - vertex[axisY],
-            };
-            const drLen = Math.hypot(dir.x, dir.y);
-            if (drLen < 0.0001) continue;
-            dir.x /= drLen;
-            dir.y /= drLen;
-            const endScr = this.screen(other);
-
-            const edge = {
-              direction: dir,
+          const closestA = closestPointOnSegment(
+            freeCapA2D,
+            { x: startWorld[axisX], y: startWorld[axisY] },
+            { x: endWorld[axisX], y: endWorld[axisY] },
+          );
+          const closestAScr = {
+            x: startScr.x + (endScr.x - startScr.x) * closestA.t,
+            y: startScr.y + (endScr.y - startScr.y) * closestA.t,
+          };
+          const distAScr = Math.hypot(
+            closestAScr.x - freeCapAScreen.x,
+            closestAScr.y - freeCapAScreen.y,
+          );
+          if (distAScr <= acquireRadius) {
+            candidateEdgesA.push({
+              point: closestA.point,
               targetBrushId: targetBrush.id,
               targetFaceIndex: fi,
-              startWorld: { ...vertex },
-              endWorld: { ...other },
-              startScreen: tv,
+              startWorld: { ...startWorld },
+              endWorld: { ...endWorld },
+              startScreen: startScr,
               endScreen: endScr,
+              mouseDistance: distAScr,
               edgeKey: [
                 targetBrush.id,
                 Math.min(vi, otherVi),
                 Math.max(vi, otherVi),
               ].join(":"),
-            };
+            });
+          }
 
-            if (distToBaseA <= baseAcquireRadius) {
-              // Project freeCapA onto the target edge ray
-              const origin2D = {
-                  x: vertex[axisX],
-                  y: vertex[axisY],
-                },
-                toward2D = {
-                  x: other[axisX],
-                  y: other[axisY],
-                };
-              const freeCapA2D = {
-                x: baseA.x + extNormal.x * rawDistance,
-                y: baseA.y + extNormal.y * rawDistance,
-              };
-              const projected = projectPointToRay(
-                freeCapA2D,
-                origin2D,
-                toward2D,
-              );
-              if (projected) {
-                candidateEdgesA.push({
-                  ...edge,
-                  point: projected,
-                  mouseDistance: pointSegmentDistance(current, tv, endScr),
-                });
-              }
-            }
-            if (distToBaseB <= baseAcquireRadius) {
-              const origin2D = {
-                  x: vertex[axisX],
-                  y: vertex[axisY],
-                },
-                toward2D = {
-                  x: other[axisX],
-                  y: other[axisY],
-                };
-              const freeCapB2D = {
-                x: baseB.x + extNormal.x * rawDistance,
-                y: baseB.y + extNormal.y * rawDistance,
-              };
-              const projected = projectPointToRay(
-                freeCapB2D,
-                origin2D,
-                toward2D,
-              );
-              if (projected) {
-                candidateEdgesB.push({
-                  ...edge,
-                  point: projected,
-                  mouseDistance: pointSegmentDistance(current, tv, endScr),
-                });
-              }
-            }
+          const closestB = closestPointOnSegment(
+            freeCapB2D,
+            { x: startWorld[axisX], y: startWorld[axisY] },
+            { x: endWorld[axisX], y: endWorld[axisY] },
+          );
+          const closestBScr = {
+            x: startScr.x + (endScr.x - startScr.x) * closestB.t,
+            y: startScr.y + (endScr.y - startScr.y) * closestB.t,
+          };
+          const distBScr = Math.hypot(
+            closestBScr.x - freeCapBScreen.x,
+            closestBScr.y - freeCapBScreen.y,
+          );
+          if (distBScr <= acquireRadius) {
+            candidateEdgesB.push({
+              point: closestB.point,
+              targetBrushId: targetBrush.id,
+              targetFaceIndex: fi,
+              startWorld: { ...startWorld },
+              endWorld: { ...endWorld },
+              startScreen: startScr,
+              endScreen: endScr,
+              mouseDistance: distBScr,
+              edgeKey: [
+                targetBrush.id,
+                Math.min(vi, otherVi),
+                Math.max(vi, otherVi),
+              ].join(":"),
+            });
           }
         }
       }
     }
 
-    // Rank by segment distance then mouse distance
-    candidateEdgesA.sort(
-      (a, b) =>
-        a.segmentDistance - b.segmentDistance ||
-        a.mouseDistance - b.mouseDistance,
-    );
-    candidateEdgesB.sort(
-      (a, b) =>
-        a.segmentDistance - b.segmentDistance ||
-        a.mouseDistance - b.mouseDistance,
-    );
+    candidateEdgesA.sort((a, b) => a.mouseDistance - b.mouseDistance);
+    candidateEdgesB.sort((a, b) => a.mouseDistance - b.mouseDistance);
 
     // Combine independent A/B snap targets
     const aList = candidateEdgesA.length ? candidateEdgesA : [undefined];
