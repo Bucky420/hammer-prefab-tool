@@ -1279,6 +1279,14 @@ export class Viewport {
     // Perpendicular/wrong-direction edges are skipped.
     // This is the "corner slides along a target edge" model.
 
+    if (!this.state.faceSnapEnabled) {
+      this.extrusionMatchDebug = [];
+      this.extrusionSolvedDebug = null;
+      this.extrusionCandidate = null;
+      if (this.drag) this.drag.extrusionCandidate = null;
+      return rawDistance;
+    }
+
     const normal2D = {
         x: sourceNormal[axisX],
         y: sourceNormal[axisY],
@@ -1362,40 +1370,6 @@ export class Viewport {
               y: sW[axisY] + dy * tClamped,
             };
 
-            // Reject snaps where corner would be inside the target's
-            // 2D extent (strict interior) or past its facing plane.
-            var snapOk = true;
-            var tbMin = Infinity;
-            for (var tv of targetBrush.vertices) {
-              var proj =
-                tv[axisX] * sourceNormalDir.x + tv[axisY] * sourceNormalDir.y;
-              if (proj < tbMin) tbMin = proj;
-            }
-            var cornerProj =
-              snapped.x * sourceNormalDir.x + snapped.y * sourceNormalDir.y;
-            if (cornerProj > tbMin + 0.1) snapOk = false;
-
-            if (snapOk) {
-              var tbMaxX = -Infinity,
-                tbMinX = Infinity,
-                tbMaxY = -Infinity,
-                tbMinY = Infinity;
-              for (var tv of targetBrush.vertices) {
-                if (tv[axisX] < tbMinX) tbMinX = tv[axisX];
-                if (tv[axisX] > tbMaxX) tbMaxX = tv[axisX];
-                if (tv[axisY] < tbMinY) tbMinY = tv[axisY];
-                if (tv[axisY] > tbMaxY) tbMaxY = tv[axisY];
-              }
-              if (
-                snapped.x > tbMinX + 0.1 &&
-                snapped.x < tbMaxX - 0.1 &&
-                snapped.y > tbMinY + 0.1 &&
-                snapped.y < tbMaxY - 0.1
-              )
-                snapOk = false;
-            }
-            if (!snapOk) continue;
-
             results.push({
               targetBrushId: targetBrush.id,
               targetFaceIndex: fi,
@@ -1416,10 +1390,6 @@ export class Viewport {
 
     const aSnaps = findCornerSnaps(freeCapA2D, capCornerScreened.capA);
     const bSnaps = findCornerSnaps(freeCapB2D, capCornerScreened.capB);
-    if (this.drag?.type === "face-extrude")
-      console.log(
-        "snap diag: aSnaps=" + aSnaps.length + " bSnaps=" + bSnaps.length,
-      );
 
     const bestCapSnap = (snaps) => {
       const capOne = snaps.find((s) => s.capMatch);
