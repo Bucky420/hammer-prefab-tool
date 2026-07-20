@@ -2496,7 +2496,7 @@ export class Viewport {
       // user can tell at a glance which solved/target/moving/base line
       // is which.
       const SOLVED = {
-        sideA: "#ff4266",
+        sideA: "#ff7a00",
         cap: "#19d97a",
         sideB: "#4dabf7",
         base: "#19d97a",
