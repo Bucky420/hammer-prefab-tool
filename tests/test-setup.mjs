@@ -249,8 +249,47 @@ function approxPoint(a, b, eps = 0.01) {
 }
 
 // --------------------------------------------------------------------
-// Test 8: full setup save/load round-trip
+// Test 10: cap parallel to base — both sides equal length
 // --------------------------------------------------------------------
+{
+  const s = box({ x: 0, y: 0, z: 0 }, { x: 64, y: 64, z: 64 });
+  // Standard snap: cap on the target's left face (perpendicular
+  // to base). This is the parallelogram case.
+  const r = solveCornerSnappedExtrusion({
+    brush: s,
+    faceIndex: 3,
+    distance: 62,
+    activeAxes: ["x", "y"],
+    snapA: { x: 126, y: 0 },
+    snapB: { x: 126, y: 64 },
+  });
+  assert.ok(r, "snap should produce a result");
+  // Both sides should have the same length
+  const sideALen = Math.hypot(
+    r.capA.x - r.baseA.x,
+    r.capA.y - r.baseA.y,
+  );
+  const sideBLen = Math.hypot(
+    r.capB.x - r.baseB.x,
+    r.capB.y - r.baseB.y,
+  );
+  assert.ok(
+    Math.abs(sideALen - sideBLen) < 0.5,
+    "sides have equal length",
+  );
+  // Cap should be parallel to base
+  const baseVec = { x: r.baseB.x - r.baseA.x, y: r.baseB.y - r.baseA.y };
+  const capVec = { x: r.capB.x - r.capA.x, y: r.capB.y - r.capA.y };
+  const dot = baseVec.x * capVec.x + baseVec.y * capVec.y;
+  const baseLen = Math.hypot(baseVec.x, baseVec.y);
+  const capLen = Math.hypot(capVec.x, capVec.y);
+  const cosAngle = dot / (baseLen * capLen);
+  assert.ok(
+    Math.abs(cosAngle) > 0.99,
+    "cap is parallel to base",
+  );
+  console.log("parallel cap OK");
+}
 {
   // Build a "saved" setup
   const saved = {

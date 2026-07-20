@@ -1478,14 +1478,52 @@ export class Viewport {
     aSnaps.forEach(addDebug);
     bSnaps.forEach(addDebug);
 
+    // For the cap to be parallel to the base (so sideA and sideB
+    // are equal length and mirror each other), if one cap corner
+    // snaps and the other does not, project the un-snapped corner
+    // onto a line through the snapped corner parallel to the base.
+    const mirrorCapCorner = (snappedCorner, otherBaseCorner) => ({
+      x: otherBaseCorner.x + (snappedCorner.x - otherBaseCorner.x),
+      y: otherBaseCorner.y + (snappedCorner.y - otherBaseCorner.y),
+    });
+    let snapA = bestA?.cornerSnap || null;
+    let snapB = bestB?.cornerSnap || null;
+    if (snapA && !snapB && bestB !== null) {
+      snapB = mirrorCapCorner(snapA, baseB);
+    } else if (snapB && !snapA && bestA !== null) {
+      snapA = mirrorCapCorner(snapB, baseA);
+    } else if (snapA && snapB && bestA && bestB) {
+      // Both snapped. Force the cap to be parallel to the base by
+      // averaging the cap-corner offsets from their respective
+      // base corners. This makes sideA and sideB equal length.
+      const offA = { x: snapA.x - baseA.x, y: snapA.y - baseA.y };
+      const offB = { x: snapB.x - baseB.x, y: snapB.y - baseB.y };
+      // Project the per-corner offsets onto the perpendicular of
+      // the base direction (the cap displacement). The tangential
+      // component is ignored — it would tilt the cap.
+      const tangX = -sourceBaseDir.y;
+      const tangY = sourceBaseDir.x;
+      const projA = offA.x * tangX + offA.y * tangY;
+      const projB = offB.x * tangX + offB.y * tangY;
+      const avgProj = (projA + projB) / 2;
+      snapA = {
+        x: baseA.x + tangX * avgProj,
+        y: baseA.y + tangY * avgProj,
+      };
+      snapB = {
+        x: baseB.x + tangX * avgProj,
+        y: baseB.y + tangY * avgProj,
+      };
+    }
+
     const hasSnap = bestA !== null || bestB !== null;
 
     const snapTarget = hasSnap
       ? {
           type: "corner-snap",
           activeAxes: [axisX, axisY],
-          snapA: bestA?.cornerSnap || null,
-          snapB: bestB?.cornerSnap || null,
+          snapA,
+          snapB,
           brushes: this.state.brushes,
           distance: rawDistance,
         }
@@ -1498,8 +1536,8 @@ export class Viewport {
         faceIndex,
         distance: rawDistance,
         activeAxes: [axisX, axisY],
-        snapA: bestA?.cornerSnap || null,
-        snapB: bestB?.cornerSnap || null,
+        snapA,
+        snapB,
       });
       if (r?.solvedEdges) solvedEdges = r.solvedEdges;
     }
