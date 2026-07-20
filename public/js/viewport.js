@@ -2032,16 +2032,19 @@ export class Viewport {
         return;
       }
       if (this.drag.type === "face-extrude") {
-        const { selection, guideSelection, distance, faceId } = this.drag;
+        const { selection, guideSelection, distance, faceId, snapTarget } =
+          this.drag;
         this.previewBrushes = [];
         this.previewErrors = [];
-        // Branch: only preview; no brush is created on release.
-        // The user is iterating the snap math; the preview is the only
-        // live feedback. Remove this gate when snapping is stable.
-        if (distance > 0) {
-          // Preview-only — do not call onExtrudeFaces here.
-          // The preview is already drawn via requestDraw.
-        } else this.onChange(`face-selected:${this.edgeViewForFace(faceId)}`);
+        if (distance > 0)
+          this.onExtrudeFaces(
+            selection,
+            distance,
+            guideSelection,
+            this.state.faceExtrusionMode,
+            snapTarget,
+          );
+        else this.onChange(`face-selected:${this.edgeViewForFace(faceId)}`);
         this.drag = null;
         this.extrusionCandidate = null;
         this.extrusionMatchDebug = [];

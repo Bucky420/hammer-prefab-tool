@@ -1192,9 +1192,7 @@ function run(command) {
       "Drag an Arch bounding box; press Enter to create or Escape to cancel",
     );
   }
-  // Preview-only: brush creation is disabled while snap math is iterated.
-  // Restore when the preview is correct.
-  // if (command === "extrude-faces") commitFaceExtrusion();
+  if (command === "extrude-faces") commitFaceExtrusion();
   if (command === "nodraw-hidden") {
     const count = applyNodrawToHiddenFaces(state.brushes, state.brushSelection);
     if (count) changed();
