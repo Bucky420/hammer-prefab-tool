@@ -2435,54 +2435,31 @@ export class Viewport {
       // is which.
       const SOLVED = {
         sideA: "#ff4266",
-        cap: "#ffd166",
+        cap: "#ffe100",
         sideB: "#4dabf7",
         base: "#19d97a",
       };
-      const TARGET = {
-        sideA: "#ff4266",
-        cap: "#ffd166",
-        sideB: "#4dabf7",
-      };
 
-      // 1) Draw matched TARGET edges only (no face fill).
-      for (const match of this.extrusionMatchDebug) {
-        const color = TARGET[match.movingEdge];
-        if (!color) continue;
-        if (match.targetStartScreen && match.targetEndScreen) {
-          context.strokeStyle = color;
-          context.lineWidth = 3;
-          context.beginPath();
-          context.moveTo(match.targetStartScreen.x, match.targetStartScreen.y);
-          context.lineTo(match.targetEndScreen.x, match.targetEndScreen.y);
-          context.stroke();
-        }
-      }
-
-      // 2) Draw the SOLVED edges (what the new brush will actually have).
-      //    These are the most important - they show whether the cap and
-      //    sides actually land where the target wants them.
+      // Draw solved SIDE and BASE edges with black outline.
+      // No cap — the preview brush outline already shows it.
       const solved = this.extrusionSolvedDebug || {};
-      for (const [key, pair] of Object.entries(solved)) {
+      for (const key of ["sideA", "sideB", "base"]) {
+        const pair = solved[key];
         if (!pair) continue;
         const color = SOLVED[key] || "#ffffff";
-        context.strokeStyle = color;
-        context.lineWidth = 4;
+        context.strokeStyle = "#000000";
+        context.lineWidth = 12;
         context.lineCap = "round";
+        context.setLineDash(key === "base" ? [3, 3] : []);
         context.beginPath();
         context.moveTo(pair[0].x, pair[0].y);
         context.lineTo(pair[1].x, pair[1].y);
         context.stroke();
-      }
-
-      // 3) Draw the SOURCE base edge so the user can see what did NOT move.
-      if (solved.base) {
-        context.strokeStyle = SOLVED.base;
-        context.lineWidth = 2;
-        context.setLineDash([3, 3]);
+        context.strokeStyle = color;
+        context.lineWidth = 8;
         context.beginPath();
-        context.moveTo(solved.base[0].x, solved.base[0].y);
-        context.lineTo(solved.base[1].x, solved.base[1].y);
+        context.moveTo(pair[0].x, pair[0].y);
+        context.lineTo(pair[1].x, pair[1].y);
         context.stroke();
         context.setLineDash([]);
       }
@@ -2491,7 +2468,6 @@ export class Viewport {
       context.font = "12px monospace";
       context.textBaseline = "top";
       const legend = [
-        ["CAP", SOLVED.cap],
         ["SIDE A", SOLVED.sideA],
         ["SIDE B", SOLVED.sideB],
         ["BASE", SOLVED.base],
