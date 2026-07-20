@@ -1311,7 +1311,7 @@ export class Viewport {
                 axY,
                 depthAxis,
               );
-              // disabled until tuned if (!magnet) continue;
+              // TODO: tune magnet thresholds if (!magnet) continue;
 
               const d2D = {
                 x: endW[axX] - startW[axX],
@@ -1371,16 +1371,72 @@ export class Viewport {
     );
 
     // --- Conforming candidates (direction-line constraints) ---
-    // Compute which corner the mouse is nearer
-    const mouseToA = Math.hypot(
-      current.x - freeCapAScreen.x,
-      current.y - freeCapAScreen.y,
-    );
-    const mouseToB = Math.hypot(
-      current.x - freeCapBScreen.x,
-      current.y - freeCapBScreen.y,
-    );
-    const mouseCorner = mouseToA <= mouseToB ? "A" : "B";
+    // Determine which moving edge the mouse is controlling (intent)
+    const movingEdgesById = {
+      sideA: { startScreen: baseAScreen, endScreen: freeCapAScreen },
+      cap: { startScreen: freeCapAScreen, endScreen: freeCapBScreen },
+      sideB: { startScreen: freeCapBScreen, endScreen: baseBScreen },
+    };
+    const intentDistances = Object.entries(movingEdgesById)
+      .map(([id, edge]) => ({
+        id,
+        distance: pointSegmentDistance(
+          current,
+          edge.startScreen,
+          edge.endScreen,
+        ),
+      }))
+      .sort((a, b) => a.distance - b.distance);
+    const intentEdge = intentDistances[0].id;
+
+    // If a lock exists, rebuild intent from solved edges
+    let lockIntent = intentEdge;
+    if (locks.sideA || locks.cap || locks.sideB) {
+      // Use locked solution's solved edges for intent
+      const csts = ["sideA", "cap", "sideB"]
+        .filter((k) => locks[k])
+        .map((k) => ({
+          movingEdge: k,
+          direction: locks[k].directionWorld2D,
+          origin: locks[k].originWorld2D,
+        }));
+      const sol = solveConvexConformingExtrusion({
+        brushes: [
+          { ...brush, vertices: brush.vertices.map((v) => ({ ...v })) },
+        ],
+        sourceBrushId: brush.id,
+        faceIndex,
+        distance: rawDistance,
+        activeAxes,
+        constraints: csts,
+      });
+      if (sol?.solvedEdges) {
+        const solvedMoving = {};
+        for (const k of ["sideA", "cap", "sideB"]) {
+          const e = sol.solvedEdges[k];
+          if (e) {
+            solvedMoving[k] = {
+              startScreen: this.screen({ x: e[0].x, y: e[0].y, z: 0 }),
+              endScreen: this.screen({ x: e[1].x, y: e[1].y, z: 0 }),
+            };
+          }
+        }
+        // Compute intent from solved edges
+        const solDists = Object.entries(solvedMoving)
+          .map(([id, edge]) => ({
+            id,
+            distance: pointSegmentDistance(
+              current,
+              edge.startScreen,
+              edge.endScreen,
+            ),
+          }))
+          .sort((a, b) => a.distance - b.distance);
+        if (solDists.length) lockIntent = solDists[0].id;
+      }
+    }
+
+    const hasAnyLock = locks.sideA || locks.cap || locks.sideB;
 
     // Build allowed 1- and 2-face combinations (never sideA+sideB, never all 3)
     const conformingSets = [];
@@ -1405,6 +1461,41 @@ export class Viewport {
         if (dot > Math.cos((70 * Math.PI) / 180)) continue;
       }
 
+      // Strict intent-based filtering
+      if (!hasAnyLock) {
+        // No locks: only accept candidates matching the mouse-intended edge
+        if (active.length !== 1 || active[0].movingEdge !== lockIntent)
+          continue;
+      } else {
+        // Has lock: only accept the permitted adjacent partner
+        if (locks.sideA && !locks.cap) {
+          // sideA locked: only cap can join
+          const hasNewCap = active.some(
+            (c) => c.movingEdge === "cap" && !locks.cap,
+          );
+          if (!hasNewCap && active.length > 1) continue;
+          if (active.length === 1 && active[0].movingEdge !== "cap") continue;
+        } else if (locks.sideB && !locks.cap) {
+          const hasNewCap = active.some(
+            (c) => c.movingEdge === "cap" && !locks.cap,
+          );
+          if (!hasNewCap && active.length > 1) continue;
+          if (active.length === 1 && active[0].movingEdge !== "cap") continue;
+        } else if (locks.cap && !locks.sideA && !locks.sideB) {
+          // cap locked: mouse intent picks sideA or sideB
+          const wanted = lockIntent === "sideA" ? "sideA" : "sideB";
+          if (active.length === 1 && active[0].movingEdge !== wanted) continue;
+          if (
+            active.length > 1 &&
+            !active.some((c) => c.movingEdge === wanted && !locks[wanted])
+          )
+            continue;
+        } else {
+          // Both sides locked (shouldn't happen): just use existing locks
+          if (active.length > 1) continue;
+        }
+      }
+
       const conforming = active.map((c) => ({
         movingEdge: c.movingEdge,
         direction: c.direction,
@@ -1415,15 +1506,6 @@ export class Viewport {
         startScreen: c.startScreen,
         endScreen: c.endScreen,
       }));
-
-      // Mouse corner filter
-      if (mouseCorner === "A") {
-        const hasSideB = active.some((c) => c.movingEdge === "sideB");
-        if (hasSideB && !active.some((c) => c.movingEdge === "cap")) continue;
-      } else {
-        const hasSideA = active.some((c) => c.movingEdge === "sideA");
-        if (hasSideA && !active.some((c) => c.movingEdge === "cap")) continue;
-      }
 
       const solvedCap = (() => {
         const clonedBrush = {
@@ -1479,12 +1561,18 @@ export class Viewport {
       })();
       if (!solvedCap) continue;
 
-      // Cursor distance score
-      const cursorDist = Math.min(
-        ...active.map((c) =>
-          pointSegmentDistance(current, c.startScreen, c.endScreen),
-        ),
-      );
+      // Intent score: mouse distance to the generated moving edge
+      const intendedEdge = movingEdgesById[active[0].movingEdge];
+      const intentDist = intendedEdge
+        ? pointSegmentDistance(
+            current,
+            intendedEdge.startScreen,
+            intendedEdge.endScreen,
+          )
+        : 0;
+
+      // Worst target distance (not min - one bad match must not hide)
+      const worstTargetDist = Math.max(...active.map((c) => c.segmentDistance));
 
       snapCandidates.push({
         candidateType: "conforming",
@@ -1495,7 +1583,8 @@ export class Viewport {
           startScreen: c.startScreen,
           endScreen: c.endScreen,
         })),
-        mouseDistance: cursorDist,
+        mouseDistance: intentDist,
+        worstTargetDist,
         matchCount: conforming.length,
         totalDist: conforming.reduce((s, c) => s + c.segmentDistance, 0),
         snapTarget: {
@@ -1654,8 +1743,10 @@ export class Viewport {
         .flatMap((item) => item.edges);
     this.extrusionCandidate = candidate;
     // Acquire initial progressive lock from first one-edge conforming candidate
+    // that matches the mouse-intended edge
     if (
       candidate?.snapTarget?.conforming?.length === 1 &&
+      candidate.snapTarget.conforming[0].movingEdge === intentEdge &&
       this.drag?.extrusionLocks &&
       !locks.sideA &&
       !locks.cap &&
