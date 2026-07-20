@@ -36,7 +36,7 @@ function outward(face, vertices) {
     : face;
 }
 
-function faceDirection(brush, face) {
+export function faceDirection(brush, face) {
   const points = face.map((index) => brush.vertices[index]),
     center = brush.vertices.reduce(
       (sum, vertex) => ({

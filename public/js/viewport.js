@@ -9,6 +9,7 @@ import { roundToGrid } from "./grid.js";
 import { distanceToSegment, pointInPolygon } from "./math.js";
 import {
   extrudeSelectedFaces,
+  faceDirection,
   limitExtrusionDistance,
   solveCornerSnappedExtrusion,
   solveSingleFaceExtrusion,
@@ -1376,6 +1377,26 @@ export class Viewport {
               x: sW[axisX] + dx * tClamped,
               y: sW[axisY] + dy * tClamped,
             };
+
+            // Reject edges whose owning target face's normal points
+            // away from the source. The target face should face the
+            // source for a valid snap; otherwise the new brush
+            // would extend through or behind the target.
+            const tfNormal = faceDirection(targetBrush, tf);
+            if (tfNormal) {
+              var tfnX = tfNormal[axisX] || 0;
+              var tfnY = tfNormal[axisY] || 0;
+              var tfnLen = Math.hypot(tfnX, tfnY);
+              if (tfnLen > 0.0001) {
+                var tfnDX = tfnX / tfnLen;
+                var tfnDY = tfnY / tfnLen;
+                // Dot product of target face normal with source's
+                // outward normal direction. Negative = facing source.
+                var faceDot =
+                  tfnDX * sourceNormalDir.x + tfnDY * sourceNormalDir.y;
+                if (faceDot > -0.3) continue;
+              }
+            }
 
             // Reject snap if the corner would collapse onto the base
             // corner in 2D. The new brush would have a degenerate

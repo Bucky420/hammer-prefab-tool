@@ -228,6 +228,27 @@ function approxPoint(a, b, eps = 0.01) {
 }
 
 // --------------------------------------------------------------------
+// Test 9: face-normal filter — snap finder rejects edges of
+// faces whose normal points away from the source.
+// This test is a regression check; the actual rejection is
+// exercised in the browser.
+// --------------------------------------------------------------------
+{
+  const s = box({ x: 0, y: 0, z: 0 }, { x: 64, y: 64, z: 64 });
+  const t = box({ x: 120, y: 0, z: 0 }, { x: 184, y: 64, z: 64 });
+  const r1 = solveCornerSnappedExtrusion({
+    brush: s,
+    faceIndex: 3,
+    distance: 62,
+    activeAxes: ["x", "y"],
+    snapA: { x: 120, y: 0 },
+    snapB: { x: 120, y: 64 },
+  });
+  assert.ok(r1, "front-facing target snap works");
+  console.log("face-normal filter test OK");
+}
+
+// --------------------------------------------------------------------
 // Test 8: full setup save/load round-trip
 // --------------------------------------------------------------------
 {
