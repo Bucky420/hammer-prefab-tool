@@ -1416,6 +1416,10 @@ export class Viewport {
 
     const aSnaps = findCornerSnaps(freeCapA2D, capCornerScreened.capA);
     const bSnaps = findCornerSnaps(freeCapB2D, capCornerScreened.capB);
+    if (this.drag?.type === "face-extrude")
+      console.log(
+        "snap diag: aSnaps=" + aSnaps.length + " bSnaps=" + bSnaps.length,
+      );
 
     const bestCapSnap = (snaps) => {
       const capOne = snaps.find((s) => s.capMatch);
