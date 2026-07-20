@@ -1289,7 +1289,7 @@ export class Viewport {
       normal2D.y /= normalLen2D;
     }
 
-    const cornerRadius = 15;
+    const cornerRadius = 30;
     const capCornerScreened = {
       capA: this.screen({
         x: freeCapA2D.x,
@@ -1361,6 +1361,40 @@ export class Viewport {
               x: sW[axisX] + dx * tClamped,
               y: sW[axisY] + dy * tClamped,
             };
+
+            // Reject snaps where corner would be inside the target's
+            // 2D extent (strict interior) or past its facing plane.
+            var snapOk = true;
+            var tbMin = Infinity;
+            for (var tv of targetBrush.vertices) {
+              var proj =
+                tv[axisX] * sourceNormalDir.x + tv[axisY] * sourceNormalDir.y;
+              if (proj < tbMin) tbMin = proj;
+            }
+            var cornerProj =
+              snapped.x * sourceNormalDir.x + snapped.y * sourceNormalDir.y;
+            if (cornerProj > tbMin + 0.1) snapOk = false;
+
+            if (snapOk) {
+              var tbMaxX = -Infinity,
+                tbMinX = Infinity,
+                tbMaxY = -Infinity,
+                tbMinY = Infinity;
+              for (var tv of targetBrush.vertices) {
+                if (tv[axisX] < tbMinX) tbMinX = tv[axisX];
+                if (tv[axisX] > tbMaxX) tbMaxX = tv[axisX];
+                if (tv[axisY] < tbMinY) tbMinY = tv[axisY];
+                if (tv[axisY] > tbMaxY) tbMaxY = tv[axisY];
+              }
+              if (
+                snapped.x > tbMinX + 0.1 &&
+                snapped.x < tbMaxX - 0.1 &&
+                snapped.y > tbMinY + 0.1 &&
+                snapped.y < tbMaxY - 0.1
+              )
+                snapOk = false;
+            }
+            if (!snapOk) continue;
 
             results.push({
               targetBrushId: targetBrush.id,
