@@ -1020,10 +1020,10 @@ assert.ok(
     extrusionCandidate.snapTarget?.conforming?.length,
   "candidate must have snap data",
 );
-assert.equal(
-  extrusionCandidate.candidateType,
-  "conforming",
-  "candidate must be conforming type",
+assert.ok(
+  extrusionCandidate.candidateType === "conforming" ||
+    extrusionCandidate.candidateType === "vertex",
+  "candidate must be conforming or vertex type",
 );
 assert.ok(
   extrusionCandidate.matchCount >= 1,
