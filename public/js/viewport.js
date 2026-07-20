@@ -2476,15 +2476,16 @@ export class Viewport {
       // is which.
       const SOLVED = {
         sideA: "#ff4266",
-        cap: "#ffe100",
+        cap: "#19d97a",
         sideB: "#4dabf7",
         base: "#19d97a",
       };
 
-      // Draw solved SIDE and BASE edges with black outline.
-      // No cap — the preview brush outline already shows it.
+      // Draw solved CAP, SIDE, and BASE edges with black outline.
+      // Cap (the edge the mouse is dragging) and base (the source
+      // edge) are both green; base is dashed, cap is solid.
       const solved = this.extrusionSolvedDebug || {};
-      for (const key of ["sideA", "sideB", "base"]) {
+      for (const key of ["sideA", "sideB", "cap", "base"]) {
         const pair = solved[key];
         if (!pair) continue;
         const dx = pair[1].x - pair[0].x;
@@ -2514,6 +2515,7 @@ export class Viewport {
       const legend = [
         ["SIDE A", SOLVED.sideA],
         ["SIDE B", SOLVED.sideB],
+        ["CAP", SOLVED.cap],
         ["BASE", SOLVED.base],
       ];
       let legendY = 10;
