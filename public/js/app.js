@@ -348,7 +348,7 @@ dockDivider.title = "Drag to resize generator pane";
 const facePanel = document.createElement("aside");
 facePanel.className = "brush-panel";
 facePanel.hidden = true;
-facePanel.innerHTML = `<header><strong>FACE TOOLS</strong></header><label>Mode <select data-face-mode><option value="extrude">Extrude</option><option value="fill">Planar Fill</option></select><output data-face-mode-status>Live</output></label><label>Material <select data-face-material><option value="customdev/dev_measuregeneric01red">Generic Red</option><option value="customdev/dev_measuregeneric01blu">Generic Blue</option><option value="customdev/dev_measurewall01blu">Wall Blue</option><option value="customdev/dev_measurewall01red">Wall Red</option><option value="dev/dev_measuregeneric01b">Generic Gray</option><option value="dev/dev_measuregeneric01">Generic Orange</option><option value="dev/dev_measurewall01a">Wall A</option><option value="dev/dev_measurewall01d">Wall D</option><option value="dev/graygrid">Gray Grid</option><option value="tools/toolsnodraw">No Draw</option></select><output></output></label><div class="extrusion-toggles"><button type="button" class="extrusion-toggle" data-extrusion-parallel aria-pressed="false">Parallel</button><button type="button" class="extrusion-toggle" data-extrusion-snap aria-pressed="false">Snap</button></div>`;
+facePanel.innerHTML = `<header><strong>FACE TOOLS</strong></header><label>Mode <select data-face-mode><option value="extrude">Extrude</option><option value="fill">Planar Fill</option></select><output data-face-mode-status>Live</output></label><label>Material <select data-face-material><option value="customdev/dev_measuregeneric01red">Generic Red</option><option value="customdev/dev_measuregeneric01blu">Generic Blue</option><option value="customdev/dev_measurewall01blu">Wall Blue</option><option value="customdev/dev_measurewall01red">Wall Red</option><option value="dev/dev_measuregeneric01b">Generic Gray</option><option value="dev/dev_measuregeneric01">Generic Orange</option><option value="dev/dev_measurewall01a">Wall A</option><option value="dev/dev_measurewall01d">Wall D</option><option value="dev/graygrid">Gray Grid</option><option value="tools/toolsnodraw">No Draw</option></select><output></output></label><div class="extrusion-toggles"><button type="button" class="extrusion-toggle" data-extrusion-parallel aria-pressed="false">Parallel</button><button type="button" class="extrusion-toggle" data-extrusion-snap aria-pressed="false">Snap</button></div><button type="button" data-fill-selected-loop hidden>Fill Selected Loop</button><button type="button" data-apply-face-material>Apply to Selected Faces</button>`;
 facePanel.querySelector("[data-face-mode-status]")?.remove();
 const materialLabel = facePanel
   .querySelector("[data-face-material]")
@@ -453,14 +453,20 @@ function hideBrushDock() {
     }, 530);
   }
 }
-facePanel.querySelector("[data-apply-face-material]").onclick = () => {
-  if (!state.faceSelection.size)
-    return setStatus("Select one or more faces first", true);
-  const sideMaterial = facePanel.querySelector(
-    "[data-face-side-material]",
-  ).value;
-  const topMaterial = facePanel.querySelector("[data-face-top-material]").value;
-  let applied = 0;
+const applyMaterialBtn = facePanel.querySelector(
+  "[data-apply-face-material]",
+);
+if (applyMaterialBtn)
+  applyMaterialBtn.onclick = () => {
+    if (!state.faceSelection.size)
+      return setStatus("Select one or more faces first", true);
+    const sideMaterial = facePanel.querySelector(
+      "[data-face-side-material]",
+    ).value;
+    const topMaterial = facePanel.querySelector(
+      "[data-face-top-material]",
+    ).value;
+    let applied = 0;
   for (const id of state.faceSelection) {
     const match = id.match(/^(.*):f:(\d+)$/),
       brush = match && state.brushes.find((item) => item.id === match[1]),
