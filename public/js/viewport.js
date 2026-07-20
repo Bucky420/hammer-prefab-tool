@@ -1372,22 +1372,41 @@ export class Viewport {
 
     // --- Conforming candidates (direction-line constraints) ---
     // Determine which moving edge the mouse is controlling (intent)
+    // Use projection t to break ties: cap wins at shared corners
     const movingEdgesById = {
       sideA: { startScreen: baseAScreen, endScreen: freeCapAScreen },
       cap: { startScreen: freeCapAScreen, endScreen: freeCapBScreen },
       sideB: { startScreen: freeCapBScreen, endScreen: baseBScreen },
     };
-    const intentDistances = Object.entries(movingEdgesById)
-      .map(([id, edge]) => ({
+    const intentResults = Object.entries(movingEdgesById).map(([id, edge]) => {
+      const closest = closestPointOnSegment(
+        current,
+        edge.startScreen,
+        edge.endScreen,
+      );
+      return {
         id,
-        distance: pointSegmentDistance(
-          current,
-          edge.startScreen,
-          edge.endScreen,
+        distance: Math.hypot(
+          current.x - closest.point.x,
+          current.y - closest.point.y,
         ),
-      }))
-      .sort((a, b) => a.distance - b.distance);
-    const intentEdge = intentDistances[0].id;
+        t: closest.t,
+      };
+    });
+    intentResults.sort((a, b) => {
+      const delta = a.distance - b.distance;
+      if (Math.abs(delta) <= 3) {
+        // At shared corners, cap wins; side only wins in its interior
+        if (a.id === "cap") return -1;
+        if (b.id === "cap") return 1;
+        const aInterior = a.id !== "cap" ? a.t > 0.15 && a.t < 0.85 : true;
+        const bInterior = b.id !== "cap" ? b.t > 0.15 && b.t < 0.85 : true;
+        if (aInterior !== bInterior) return aInterior ? -1 : 1;
+        return 0;
+      }
+      return delta;
+    });
+    const intentEdge = intentResults[0].id;
 
     // If a lock exists, rebuild intent from solved edges
     let lockIntent = intentEdge;
