@@ -906,16 +906,25 @@ export class Viewport {
       const signedGap =
         (targetMidW.x - movingMidW.x) * moving.outwardNormal2D.x +
         (targetMidW.y - movingMidW.y) * moving.outwardNormal2D.y;
-      if (signedGap < -0.5) return null;
+      if (signedGap < -10) return null;
 
-      // Tangent overlap in screen space
+      // Tangent overlap in screen space (use screen tangent, not world tangent)
+      const movingTanScr = {
+        x: moving.endScreen.x - moving.startScreen.x,
+        y: moving.endScreen.y - moving.startScreen.y,
+      };
+      const mtsLen = Math.hypot(movingTanScr.x, movingTanScr.y);
+      const mts =
+        mtsLen > 0.000001
+          ? { x: movingTanScr.x / mtsLen, y: movingTanScr.y / mtsLen }
+          : mTu;
       const intervalOnAxis = (aScr, bScr, axis) => {
         const p = aScr.x * axis.x + aScr.y * axis.y;
         const q = bScr.x * axis.x + bScr.y * axis.y;
         return [Math.min(p, q), Math.max(p, q)];
       };
-      const mInt = intervalOnAxis(moving.startScreen, moving.endScreen, mTu);
-      const tInt = intervalOnAxis(tS, tE, mTu);
+      const mInt = intervalOnAxis(moving.startScreen, moving.endScreen, mts);
+      const tInt = intervalOnAxis(tS, tE, mts);
       const overlap = Math.min(mInt[1], tInt[1]) - Math.max(mInt[0], tInt[0]);
       if (overlap < -10) return null;
 
@@ -1239,88 +1248,6 @@ export class Viewport {
       groupB,
     });
 
-    const candidatesByEdge = { sideA: [], cap: [], sideB: [] };
-
-    for (const targetBrush of this.visibleBrushes()) {
-      if (sourceBrushIds.has(targetBrush.id)) continue;
-      for (let fi = 0; fi < targetBrush.faces.length; fi++) {
-        const tf = targetBrush.faces[fi];
-        for (let ei = 0; ei < tf.length; ei++) {
-          const vi = tf[ei],
-            otherVi = tf[(ei + 1) % tf.length],
-            startWorld = targetBrush.vertices[vi],
-            endWorld = targetBrush.vertices[otherVi],
-            tStart = this.screen(startWorld),
-            tEnd = this.screen(endWorld);
-
-          for (const moving of movingEdges) {
-            const dist = segmentDistance(
-              moving.startScreen,
-              moving.endScreen,
-              tStart,
-              tEnd,
-            );
-            if (dist > acquireRadius) continue;
-
-            const projectedKey = projectedEdgeKey(tStart, tEnd);
-            const dir2D = {
-              x: endWorld[axisX] - startWorld[axisX],
-              y: endWorld[axisY] - startWorld[axisY],
-            };
-            const dirLen = Math.hypot(dir2D.x, dir2D.y);
-            if (dirLen < 0.0001) continue;
-            const edgeDir = { x: dir2D.x / dirLen, y: dir2D.y / dirLen };
-
-            // Compute world-space point from interpolation parameter
-            const midScreen = {
-              x: (moving.startScreen.x + moving.endScreen.x) / 2,
-              y: (moving.startScreen.y + moving.endScreen.y) / 2,
-            };
-            const { point: scrPoint, t: interpT } = closestPointOnSegment(
-              midScreen,
-              tStart,
-              tEnd,
-            );
-            const worldPoint = {
-              x:
-                startWorld[axisX] +
-                (endWorld[axisX] - startWorld[axisX]) * interpT,
-              y:
-                startWorld[axisY] +
-                (endWorld[axisY] - startWorld[axisY]) * interpT,
-            };
-
-            candidatesByEdge[moving.id].push({
-              movingEdge: moving.id,
-              point: worldPoint,
-              direction: edgeDir,
-              originWorld2D: { x: startWorld[axisX], y: startWorld[axisY] },
-              targetBrushId: targetBrush.id,
-              targetFaceIndex: fi,
-              startWorld: { ...startWorld },
-              endWorld: { ...endWorld },
-              startScreen: tStart,
-              endScreen: tEnd,
-              segmentDistance: dist,
-              projectedKey,
-            });
-          }
-        }
-      }
-    }
-
-    for (const key of ["sideA", "cap", "sideB"]) {
-      const seen = new Set();
-      candidatesByEdge[key] = candidatesByEdge[key]
-        .sort((a, b) => a.segmentDistance - b.segmentDistance)
-        .filter((c) => {
-          if (seen.has(c.projectedKey)) return false;
-          seen.add(c.projectedKey);
-          return true;
-        })
-        .slice(0, 4);
-    }
-
     // Extracted candidate discovery helper (for progressive locking, Stage 3)
     const findCandidatesForMovingEdges = (
       movingEdgeList,
@@ -1369,7 +1296,8 @@ export class Viewport {
                 axY,
                 depthAxis,
               );
-              if (!magnet) continue;
+              // TODO: re-enable face-magnet filter once tuned
+              // if (!magnet) continue;
 
               const d2D = {
                 x: endW[axX] - startW[axX],
@@ -1419,6 +1347,14 @@ export class Viewport {
       }
       return byEdge;
     };
+
+    const candidatesByEdge = findCandidatesForMovingEdges(
+      movingEdges,
+      sourceBrushIds,
+      axisX,
+      axisY,
+      acquireRadius,
+    );
 
     // --- Conforming candidates (direction-line constraints) ---
     const edgeLists = {
@@ -1681,6 +1617,27 @@ export class Viewport {
         .filter((item) => item.edgeKey === candidate.edgeKey)
         .flatMap((item) => item.edges);
     this.extrusionCandidate = candidate;
+    // Acquire initial progressive lock from first one-edge conforming candidate
+    if (
+      candidate?.snapTarget?.conforming?.length === 1 &&
+      this.drag?.extrusionLocks &&
+      !locks.sideA &&
+      !locks.cap &&
+      !locks.sideB
+    ) {
+      const c = candidate.snapTarget.conforming[0];
+      const es = candidate.edges?.[0];
+      this.drag.extrusionLocks[c.movingEdge] = {
+        movingEdge: c.movingEdge,
+        projectedTargetKey: c.targetEdgeKey || "",
+        targetBrushId: c.targetBrushId,
+        directionWorld2D: c.direction,
+        originWorld2D: c.origin,
+        startScreen: es?.startScreen || { x: 0, y: 0 },
+        endScreen: es?.endScreen || { x: 0, y: 0 },
+        segmentDistance: 0,
+      };
+    }
     return candidate?.distance ?? rawDistance;
   }
   edgeViewForFace(id) {
