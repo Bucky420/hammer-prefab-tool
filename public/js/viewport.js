@@ -2477,6 +2477,9 @@ export class Viewport {
       for (const key of ["sideA", "sideB", "base"]) {
         const pair = solved[key];
         if (!pair) continue;
+        const dx = pair[1].x - pair[0].x;
+        const dy = pair[1].y - pair[0].y;
+        if (dx * dx + dy * dy < 1) continue;
         const color = SOLVED[key] || "#ffffff";
         context.strokeStyle = "#000000";
         context.lineWidth = 12;
