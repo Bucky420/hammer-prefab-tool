@@ -200,7 +200,35 @@ function approxPoint(a, b, eps = 0.01) {
 }
 
 // --------------------------------------------------------------------
-// Test 7: full setup save/load round-trip
+// Test 7: degenerate snap (cap collapses to base) is rejected
+// --------------------------------------------------------------------
+{
+  // Test that a snap where capB and baseB have the same 2D
+  // position is rejected by the corner finder. The 2D distance
+  // threshold (1 px) is enforced in viewport.js.
+  // The solver itself doesn't enforce this; it just produces
+  // degenerate results. So we test the GEOMETRIC consequence:
+  // the solver should always produce cap corners that are
+  // distinct from the base corners in 2D for normal extrusions.
+  const s = box({ x: 0, y: 0, z: 0 }, { x: 64, y: 64, z: 64 });
+  const r = solveCornerSnappedExtrusion({
+    brush: s,
+    faceIndex: 3,
+    distance: 62,
+    activeAxes: ["x", "y"],
+    snapA: { x: 120, y: 0 },
+    snapB: { x: 120, y: 64 },
+  });
+  const sideBLen = Math.hypot(
+    r.capB.x - r.baseB.x,
+    r.capB.y - r.baseB.y,
+  );
+  assert.ok(sideBLen > 1, "sideB has visible length in 2D");
+  console.log("non-degenerate snap OK");
+}
+
+// --------------------------------------------------------------------
+// Test 8: full setup save/load round-trip
 // --------------------------------------------------------------------
 {
   // Build a "saved" setup

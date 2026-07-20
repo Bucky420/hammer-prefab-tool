@@ -1328,7 +1328,7 @@ export class Viewport {
       sourceNormalDir.y *= -1;
     }
 
-    const findCornerSnaps = (corner2D, cornerScr) => {
+    const findCornerSnaps = (corner2D, cornerScr, baseCorner2D) => {
       const results = [];
       for (const targetBrush of this.visibleBrushes()) {
         if (sourceBrushIds.has(targetBrush.id)) continue;
@@ -1377,6 +1377,16 @@ export class Viewport {
               y: sW[axisY] + dy * tClamped,
             };
 
+            // Reject snap if the corner would collapse onto the base
+            // corner in 2D. The new brush would have a degenerate
+            // face (zero area in 2D top view), and the side line
+            // would be a point. This is not a valid extrusion.
+            if (baseCorner2D) {
+              const ddx = snapped.x - baseCorner2D.x;
+              const ddy = snapped.y - baseCorner2D.y;
+              if (ddx * ddx + ddy * ddy < 1) continue;
+            }
+
             // Reject snaps past the target's front-facing plane.
             var frontProj = Infinity;
             for (var tv of targetBrush.vertices) {
@@ -1413,8 +1423,8 @@ export class Viewport {
       });
     };
 
-    const aSnaps = findCornerSnaps(freeCapA2D, capCornerScreened.capA);
-    const bSnaps = findCornerSnaps(freeCapB2D, capCornerScreened.capB);
+    const aSnaps = findCornerSnaps(freeCapA2D, capCornerScreened.capA, baseA);
+    const bSnaps = findCornerSnaps(freeCapB2D, capCornerScreened.capB, baseB);
 
     const bestCapSnap = (snaps) => {
       const capOne = snaps.find((s) => s.capMatch);
