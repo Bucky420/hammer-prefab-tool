@@ -2033,12 +2033,10 @@ export class Viewport {
       }
       if (this.drag.type === "face-extrude") {
         const { selection, guideSelection, distance, faceId, snapTarget } =
-            this.drag,
-          error = this.previewErrors[0];
+          this.drag;
         this.previewBrushes = [];
         this.previewErrors = [];
-        if (error) this.onChange(`extrusion-invalid:${error}`);
-        else if (distance > 0)
+        if (distance > 0)
           this.onExtrudeFaces(
             selection,
             distance,
