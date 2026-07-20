@@ -1297,7 +1297,7 @@ export class Viewport {
       normal2D.y /= normalLen2D;
     }
 
-    const cornerRadius = 30;
+    const cornerRadius = 15;
     const capCornerScreened = {
       capA: this.screen({
         x: freeCapA2D.x,
@@ -1369,7 +1369,19 @@ export class Viewport {
               x: sW[axisX] + dx * tClamped,
               y: sW[axisY] + dy * tClamped,
             };
-
+            // Reject snaps past the target's front-facing plane.
+            // A corner should not land on a back face or on an
+            // interior edge that would put the new brush inside
+            // the target.
+            var proj =
+              snapped.x * sourceNormalDir.x + snapped.y * sourceNormalDir.y;
+            var frontProj = Infinity;
+            for (var tv of targetBrush.vertices) {
+              var p =
+                tv[axisX] * sourceNormalDir.x + tv[axisY] * sourceNormalDir.y;
+              if (p < frontProj) frontProj = p;
+            }
+            if (proj > frontProj + cornerRadius) continue;
             results.push({
               targetBrushId: targetBrush.id,
               targetFaceIndex: fi,
