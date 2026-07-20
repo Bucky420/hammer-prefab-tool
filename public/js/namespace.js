@@ -17,7 +17,7 @@ const state = {
 };
 
 let faceExtrusionMode = state.faceExtrusionMode || "normal";
-let faceSnapEnabled = state.faceSnapEnabled ?? false;
+let faceSnapEnabled = state.faceSnapEnabled ?? true;
 
 Object.defineProperty(state, "faceExtrusionMode", {
   enumerable: true,
