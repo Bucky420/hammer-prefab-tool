@@ -1,5 +1,4 @@
 import { validateBrush } from "./brush-validation.js";
-import { brushEntersOtherBrush } from "./geometry-model.js";
 
 let nextId = 30000;
 const subtract = (a, b) => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z });
@@ -1570,15 +1569,6 @@ export function extrudeSelectedFaces(
     const issues = validateBrush(result);
     if (issues.length) {
       errors.push(`${id}: ${issues[0]}`);
-      continue;
-    }
-    // No-clip rule: when snap is active, the new brush must not
-    // enter any other brush. Sliding along an edge is fine; only
-    // entering past the face planes is rejected. Without snap,
-    // the existing free-extrusion behavior is preserved (arches,
-    // rings, and other generated groups rely on overlapping pieces).
-    if (snapTarget && brushEntersOtherBrush(result, sourceBrushes, 0.01)) {
-      errors.push(`${id}: extrusion enters another brush`);
       continue;
     }
     touched.push({ brush, faceIndex });

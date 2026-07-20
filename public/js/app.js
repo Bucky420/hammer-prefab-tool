@@ -453,9 +453,7 @@ function hideBrushDock() {
     }, 530);
   }
 }
-const applyMaterialBtn = facePanel.querySelector(
-  "[data-apply-face-material]",
-);
+const applyMaterialBtn = facePanel.querySelector("[data-apply-face-material]");
 if (applyMaterialBtn)
   applyMaterialBtn.onclick = () => {
     if (!state.faceSelection.size)
@@ -467,33 +465,33 @@ if (applyMaterialBtn)
       "[data-face-top-material]",
     ).value;
     let applied = 0;
-  for (const id of state.faceSelection) {
-    const match = id.match(/^(.*):f:(\d+)$/),
-      brush = match && state.brushes.find((item) => item.id === match[1]),
-      faceIndex = Number(match?.[2]);
-    if (!brush || !brush.faces[faceIndex]) continue;
-    brush.faceMaterials ||= brush.faces.map(
-      () => brush.material || "tools/toolsnodraw",
-    );
-    const face = brush.faces[faceIndex];
-    const a = brush.vertices[face[0]],
-      b = brush.vertices[face[1]],
-      c = brush.vertices[face[2]],
-      normal = {
-        x: (b.y - a.y) * (c.z - a.z) - (b.z - a.z) * (c.y - a.y),
-        y: (b.z - a.z) * (c.x - a.x) - (b.x - a.x) * (c.z - a.z),
-        z: (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x),
-      };
-    brush.faceMaterials[faceIndex] =
-      Math.abs(normal.z) > Math.max(Math.abs(normal.x), Math.abs(normal.y))
-        ? topMaterial
-        : sideMaterial;
-    applied++;
-  }
-  if (!applied) return setStatus("Selected faces no longer exist", true);
-  changed();
-  setStatus(`Applied side/top materials to ${applied} faces`);
-};
+    for (const id of state.faceSelection) {
+      const match = id.match(/^(.*):f:(\d+)$/),
+        brush = match && state.brushes.find((item) => item.id === match[1]),
+        faceIndex = Number(match?.[2]);
+      if (!brush || !brush.faces[faceIndex]) continue;
+      brush.faceMaterials ||= brush.faces.map(
+        () => brush.material || "tools/toolsnodraw",
+      );
+      const face = brush.faces[faceIndex];
+      const a = brush.vertices[face[0]],
+        b = brush.vertices[face[1]],
+        c = brush.vertices[face[2]],
+        normal = {
+          x: (b.y - a.y) * (c.z - a.z) - (b.z - a.z) * (c.y - a.y),
+          y: (b.z - a.z) * (c.x - a.x) - (b.x - a.x) * (c.z - a.z),
+          z: (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x),
+        };
+      brush.faceMaterials[faceIndex] =
+        Math.abs(normal.z) > Math.max(Math.abs(normal.x), Math.abs(normal.y))
+          ? topMaterial
+          : sideMaterial;
+      applied++;
+    }
+    if (!applied) return setStatus("Selected faces no longer exist", true);
+    changed();
+    setStatus(`Applied side/top materials to ${applied} faces`);
+  };
 const faceModeSelect = facePanel.querySelector("[data-face-mode]");
 function updateFaceToolMode() {
   faceModeSelect.value = state.faceToolMode;
@@ -1194,7 +1192,9 @@ function run(command) {
       "Drag an Arch bounding box; press Enter to create or Escape to cancel",
     );
   }
-  if (command === "extrude-faces") commitFaceExtrusion();
+  // Preview-only: brush creation is disabled while snap math is iterated.
+  // Restore when the preview is correct.
+  // if (command === "extrude-faces") commitFaceExtrusion();
   if (command === "nodraw-hidden") {
     const count = applyNodrawToHiddenFaces(state.brushes, state.brushSelection);
     if (count) changed();
