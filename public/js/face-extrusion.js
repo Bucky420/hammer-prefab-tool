@@ -1524,6 +1524,54 @@ export function extrudeSelectedFaces(
       errors.push(`${id}: cap plane intersection failed or exceeded bounds`);
       continue;
     }
+
+    // Reject if any new-brush side passes through another brush.
+    // 2D segment vs each target brush's 2D footprint (rectangle).
+    if (selection.size === 1) {
+      const axes2 = snapTarget?.activeAxes || ["x", "y"];
+      const a0 = axes2[0],
+        a1 = axes2[1];
+      const base2D = face.map((i) => brush.vertices[i]);
+      const cap2D = cap;
+      const sides2D = [];
+      for (let i = 0; i < base2D.length; i++) {
+        sides2D.push({
+          start: { x: base2D[i][a0], y: base2D[i][a1] },
+          end: { x: cap2D[i][a0], y: cap2D[i][a1] },
+        });
+      }
+      let pierced = false;
+      outer: for (const target of sourceBrushes) {
+        if (target.id === brush.id) continue;
+        if (brush.groupId && target.groupId && target.groupId === brush.groupId)
+          continue;
+        let tMin0 = Infinity,
+          tMax0 = -Infinity,
+          tMin1 = Infinity,
+          tMax1 = -Infinity;
+        for (const v of target.vertices) {
+          if (v[a0] < tMin0) tMin0 = v[a0];
+          if (v[a0] > tMax0) tMax0 = v[a0];
+          if (v[a1] < tMin1) tMin1 = v[a1];
+          if (v[a1] > tMax1) tMax1 = v[a1];
+        }
+        for (const seg of sides2D) {
+          const mx = (seg.start.x + seg.end.x) / 2;
+          const my = (seg.start.y + seg.end.y) / 2;
+          const inX = mx > tMin0 && mx < tMax0;
+          const inY = my > tMin1 && my < tMax1;
+          if (inX && inY) {
+            pierced = true;
+            break outer;
+          }
+        }
+      }
+      if (pierced) {
+        errors.push(`${id}: extrusion pierces another brush`);
+        continue;
+      }
+    }
+
     const vertices = [...base, ...cap],
       count = base.length;
     const faces = [
