@@ -348,7 +348,7 @@ dockDivider.title = "Drag to resize generator pane";
 const facePanel = document.createElement("aside");
 facePanel.className = "brush-panel";
 facePanel.hidden = true;
-facePanel.innerHTML = `<header><strong>FACE TOOLS</strong></header><label>Mode <select data-face-mode><option value="extrude">Extrude</option><option value="fill">Planar Fill</option></select><output data-face-mode-status>Live</output></label><label>Material <select data-face-material><option value="customdev/dev_measuregeneric01red">Generic Red</option><option value="customdev/dev_measuregeneric01blu">Generic Blue</option><option value="customdev/dev_measurewall01blu">Wall Blue</option><option value="customdev/dev_measurewall01red">Wall Red</option><option value="dev/dev_measuregeneric01b">Generic Gray</option><option value="dev/dev_measuregeneric01">Generic Orange</option><option value="dev/dev_measurewall01a">Wall A</option><option value="dev/dev_measurewall01d">Wall D</option><option value="dev/graygrid">Gray Grid</option><option value="tools/toolsnodraw">No Draw</option></select><output></output></label><div class="extrusion-toggles"><button type="button" class="extrusion-toggle" data-extrusion-parallel aria-pressed="false">Parallel</button><button type="button" class="extrusion-toggle" data-extrusion-snap aria-pressed="false">Snap</button></div><button type="button" data-fill-selected-loop hidden>Fill Selected Loop</button><button type="button" data-apply-face-material>Apply to Selected Faces</button>`;
+facePanel.innerHTML = `<header><strong>FACE TOOLS</strong></header><label>Mode <select data-face-mode><option value="extrude">Extrude</option><option value="fill">Planar Fill</option></select><output data-face-mode-status>Live</output></label><label>Material <select data-face-material><option value="customdev/dev_measuregeneric01red">Generic Red</option><option value="customdev/dev_measuregeneric01blu">Generic Blue</option><option value="customdev/dev_measurewall01blu">Wall Blue</option><option value="customdev/dev_measurewall01red">Wall Red</option><option value="dev/dev_measuregeneric01b">Generic Gray</option><option value="dev/dev_measuregeneric01">Generic Orange</option><option value="dev/dev_measurewall01a">Wall A</option><option value="dev/dev_measurewall01d">Wall D</option><option value="dev/graygrid">Gray Grid</option><option value="tools/toolsnodraw">No Draw</option></select><output></output></label><div class="extrusion-toggles"><button type="button" class="extrusion-toggle" data-extrusion-parallel aria-pressed="false">Parallel</button><button type="button" class="extrusion-toggle" data-extrusion-snap aria-pressed="false">Snap</button></div><button type="button" data-fill-selected-loop hidden>Fill Selected Loop</button><button type="button" data-apply-face-material>Apply to Selected Faces</button><div class="test-setup"><button type="button" data-save-test-setup>Save Test Setup</button><button type="button" data-load-test-setup>Load Test Setup</button><input type="file" data-load-test-file accept="application/json" hidden></div>`;
 facePanel.querySelector("[data-face-mode-status]")?.remove();
 const materialLabel = facePanel
   .querySelector("[data-face-material]")
@@ -532,6 +532,91 @@ facePanel.querySelector("[data-fill-selected-loop]").onclick = () => {
     `Filled loop with ${result.brushes.length} convex brushes`,
   );
 };
+
+// Test Setup: save the current brushes + selection to a JSON file,
+// or load a previously saved JSON file. Used to share failing test
+// scenarios with the AI.
+const saveTestSetupBtn = facePanel.querySelector("[data-save-test-setup]");
+const loadTestSetupBtn = facePanel.querySelector("[data-load-test-setup]");
+const loadTestFileInput = facePanel.querySelector("[data-load-test-file]");
+if (saveTestSetupBtn) {
+  saveTestSetupBtn.onclick = () => {
+    const setup = {
+      version: 1,
+      savedAt: new Date().toISOString(),
+      state: {
+        mode: state.mode,
+        view: state.view,
+        grid: state.grid,
+        faceSelection: [...state.faceSelection],
+        brushSelection: [...state.brushSelection],
+        selection: [...state.selection],
+        faceExtrusionMode: state.faceExtrusionMode,
+        faceSnapEnabled: state.faceSnapEnabled,
+        brushes: JSON.parse(JSON.stringify(state.brushes)),
+      },
+    };
+    const blob = new Blob([JSON.stringify(setup, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `test-setup-${Date.now()}.json`;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    setStatus(
+      `Saved ${setup.state.brushes.length} brush${setup.state.brushes.length === 1 ? "" : "es"} to ${a.download}`,
+    );
+  };
+}
+if (loadTestSetupBtn && loadTestFileInput) {
+  loadTestSetupBtn.onclick = () => loadTestFileInput.click();
+  loadTestFileInput.onchange = (event) => {
+    const file = event.currentTarget.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const setup = JSON.parse(reader.result);
+        if (!setup?.state) throw new Error("Invalid test setup file");
+        const s = setup.state;
+        if (s.brushes) {
+          state.brushes = JSON.parse(JSON.stringify(s.brushes));
+        }
+        if (s.faceSelection)
+          state.faceSelection = new Set(s.faceSelection);
+        if (s.brushSelection)
+          state.brushSelection = new Set(s.brushSelection);
+        if (s.selection) state.selection = new Set(s.selection);
+        if (s.mode) state.mode = s.mode;
+        if (s.view) {
+          state.view = s.view;
+          view.kind = s.view;
+        }
+        if (s.grid) state.grid = s.grid;
+        if (s.faceExtrusionMode)
+          state.faceExtrusionMode = s.faceExtrusionMode;
+        if (typeof s.faceSnapEnabled === "boolean")
+          state.faceSnapEnabled = s.faceSnapEnabled;
+        // Reapply active pane
+        if (state.mode === "face") facePanel.hidden = false;
+        changed();
+        setStatus(
+          `Loaded ${state.brushes.length} brush${state.brushes.length === 1 ? "" : "es"} from ${file.name}`,
+        );
+      } catch (err) {
+        setStatus(`Failed to load test setup: ${err.message}`, true);
+      } finally {
+        loadTestFileInput.value = "";
+      }
+    };
+    reader.readAsText(file);
+  };
+}
+
 updateFaceToolMode();
 toolRail.addEventListener("mouseenter", () => {
   setRailExpanded(true);
