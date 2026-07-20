@@ -1352,7 +1352,6 @@ export class Viewport {
               cornerScr.x - closest.point.x,
               cornerScr.y - closest.point.y,
             );
-            if (dist > cornerRadius) continue;
 
             const capDot = Math.abs(
               tDir.x * sourceBaseDir.x + tDir.y * sourceBaseDir.y,
@@ -1363,25 +1362,31 @@ export class Viewport {
             const minDot = 0.6;
             if (capDot < minDot && sideDot < minDot) continue;
 
+            // CapMatch (front-face) edges get a much wider radius
+            // so the corner stays snapped even as the mouse moves
+            // far past the target. The snap clamps to the nearest
+            // edge endpoint, so the corner stays on the front face.
+            const effRadius =
+              capDot > sideDot ? cornerRadius * 10 : cornerRadius;
+            if (dist > effRadius) continue;
+
             // Closest point in world 2D (same t, using world deltas)
             const tClamped = Math.max(0, Math.min(1, closest.t));
             const snapped = {
               x: sW[axisX] + dx * tClamped,
               y: sW[axisY] + dy * tClamped,
             };
+
             // Reject snaps past the target's front-facing plane.
-            // A corner should not land on a back face or on an
-            // interior edge that would put the new brush inside
-            // the target.
-            var proj =
-              snapped.x * sourceNormalDir.x + snapped.y * sourceNormalDir.y;
             var frontProj = Infinity;
             for (var tv of targetBrush.vertices) {
               var p =
                 tv[axisX] * sourceNormalDir.x + tv[axisY] * sourceNormalDir.y;
               if (p < frontProj) frontProj = p;
             }
-            if (proj > frontProj + cornerRadius) continue;
+            var cornerProj =
+              snapped.x * sourceNormalDir.x + snapped.y * sourceNormalDir.y;
+            if (cornerProj > frontProj + cornerRadius) continue;
             results.push({
               targetBrushId: targetBrush.id,
               targetFaceIndex: fi,
@@ -1397,7 +1402,15 @@ export class Viewport {
           }
         }
       }
-      return results.sort((a, b) => a.distance - b.distance);
+      return results.sort((a, b) => {
+        const pa =
+          a.cornerSnap.x * sourceNormalDir.x +
+          a.cornerSnap.y * sourceNormalDir.y;
+        const pb =
+          b.cornerSnap.x * sourceNormalDir.x +
+          b.cornerSnap.y * sourceNormalDir.y;
+        return a.distance - b.distance || pa - pb;
+      });
     };
 
     const aSnaps = findCornerSnaps(freeCapA2D, capCornerScreened.capA);
