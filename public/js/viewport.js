@@ -1360,8 +1360,13 @@ export class Viewport {
             const sideDot = Math.abs(
               tDir.x * sourceNormalDir.x + tDir.y * sourceNormalDir.y,
             );
-            const minDot = 0.6;
-            if (capDot < minDot && sideDot < minDot) continue;
+            // Stricter thresholds so the cap is parallel to the base
+            // (capMatch within 0.95) and sides are parallel to the
+            // source normal (sideMatch within 0.95). The new brush
+            // has parallel cap and base, and equal-length sides.
+            const minCapDot = 0.95;
+            const minSideDot = 0.85;
+            if (capDot < minCapDot && sideDot < minSideDot) continue;
 
             // CapMatch (front-face) edges get a much wider radius
             // so the corner stays snapped even as the mouse moves
