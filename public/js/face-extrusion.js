@@ -919,20 +919,29 @@ export function solveSingleFaceExtrusion(options) {
     x: brush.vertices[groupB[0]][axisX],
     y: brush.vertices[groupB[0]][axisY],
   };
-  const srcDir = { x: baseB.x - baseA.x, y: baseB.y - baseA.y };
-  const srcLen = Math.hypot(srcDir.x, srcDir.y);
-  if (srcLen < 0.000001) return null;
-  const baseDir = { x: srcDir.x / srcLen, y: srcDir.y / srcLen };
 
+  // Derive the base direction from the face's 3D normal projected to
+  // the active 2D plane. This works for any rotation; using
+  // (baseB - baseA) only works when the face is axis-aligned in 2D.
   const sourceNormal = faceDirection(brush, face);
   if (!sourceNormal) return null;
-  const srcNormal2D = { x: -baseDir.y, y: baseDir.x };
-  const outwardSign =
-    srcNormal2D.x * sourceNormal[axisX] + srcNormal2D.y * sourceNormal[axisY];
-  if (outwardSign < 0) {
-    srcNormal2D.x *= -1;
-    srcNormal2D.y *= -1;
-  }
+  const normX = sourceNormal[axisX] || 0;
+  const normY = sourceNormal[axisY] || 0;
+  const normLen = Math.hypot(normX, normY);
+  if (normLen < 0.000001) return null;
+  const srcNormal2D = { x: normX / normLen, y: normY / normLen };
+  // The base direction is perpendicular to the face normal in 2D.
+  // Two candidates: (-y, x) and (y, -x). Pick the one that best
+  // matches (baseB - baseA) so the base corners line up.
+  const candA = { x: -srcNormal2D.y, y: srcNormal2D.x };
+  const candB = { x: srcNormal2D.y, y: -srcNormal2D.x };
+  const srcRaw = { x: baseB.x - baseA.x, y: baseB.y - baseA.y };
+  const srcRawLen = Math.hypot(srcRaw.x, srcRaw.y);
+  if (srcRawLen < 0.000001) return null;
+  const srcRawU = { x: srcRaw.x / srcRawLen, y: srcRaw.y / srcRawLen };
+  const dotA = candA.x * srcRawU.x + candA.y * srcRawU.y;
+  const dotB = candB.x * srcRawU.x + candB.y * srcRawU.y;
+  const baseDir = dotA >= dotB ? candA : candB;
 
   const freeCapA = {
     x: baseA.x + srcNormal2D.x * distance,
