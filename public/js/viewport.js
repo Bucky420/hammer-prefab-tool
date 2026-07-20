@@ -1384,8 +1384,7 @@ export class Viewport {
     const bSnaps = findCornerSnaps(freeCapB2D, capCornerScreened.capB);
 
     const bestCapSnap = (snaps) => {
-      const capOne = snaps.find((s) => s.capMatch);
-      return capOne || snaps[0] || null;
+      return snaps.find((s) => s.capMatch) || null;
     };
 
     const bestA = bestCapSnap(aSnaps);
