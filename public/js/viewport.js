@@ -1283,6 +1283,11 @@ export class Viewport {
       const byEdge = { sideA: [], cap: [], sideB: [] };
       const depthAxis =
         axX === "x" && axY === "y" ? "z" : axY === "y" ? "x" : "y";
+      const movingEdgeInRadius = (moving, tS, tE) => {
+        if (!moving.startScreen || !moving.endScreen) return Infinity;
+        if (!moving.outwardNormal2D) return Infinity;
+        return segmentDistance(moving.startScreen, moving.endScreen, tS, tE);
+      };
       for (const targetBrush of this.visibleBrushes()) {
         if (brushIds.has(targetBrush.id)) continue;
         for (let fi = 0; fi < targetBrush.faces.length; fi++) {
@@ -1295,16 +1300,7 @@ export class Viewport {
               tS = this.screen(startW),
               tE = this.screen(endW);
             for (const moving of movingEdgeList) {
-              if (!moving.startScreen || !moving.endScreen) continue;
-              if (!moving.outwardNormal2D) continue;
-
-              // Restore: require finite screen distance
-              const finiteDist = segmentDistance(
-                moving.startScreen,
-                moving.endScreen,
-                tS,
-                tE,
-              );
+              const finiteDist = movingEdgeInRadius(moving, tS, tE);
               if (finiteDist > radius) continue;
 
               // Apply face-magnet filter
@@ -1352,8 +1348,82 @@ export class Viewport {
                 endScreen: tE,
                 segmentDistance: finiteDist,
                 projectedKey: pKey,
+                source: "edge",
               });
             }
+          }
+          // Face-as-whole: if a moving edge crosses the target face's
+          // 2D polygon, the moving edge should snap to the face. Pick
+          // the two polygon vertices that bracket the moving edge's
+          // start and end as the virtual target endpoints.
+          const polygonScreen = tf.map((idx) => ({
+            x: this.screen(targetBrush.vertices[idx]).x,
+            y: this.screen(targetBrush.vertices[idx]).y,
+            world: { ...targetBrush.vertices[idx] },
+          }));
+          for (const moving of movingEdgeList) {
+            if (!moving.startScreen || !moving.endScreen) continue;
+            if (!moving.outwardNormal2D) continue;
+            const mStart = {
+              x: moving.startScreen.x,
+              y: moving.startScreen.y,
+            };
+            const mEnd = { x: moving.endScreen.x, y: moving.endScreen.y };
+            let crosses = false;
+            for (let pi = 0; pi < polygonScreen.length; pi++) {
+              const a = polygonScreen[pi];
+              const b = polygonScreen[(pi + 1) % polygonScreen.length];
+              if (segmentsIntersect(mStart, mEnd, a, b)) {
+                crosses = true;
+                break;
+              }
+            }
+            if (!crosses) continue;
+            // Pick the polygon vertex nearest each moving endpoint.
+            const nearest = (pt) => {
+              let best = polygonScreen[0];
+              let bestD = Math.hypot(pt.x - best.x, pt.y - best.y);
+              for (let i = 1; i < polygonScreen.length; i++) {
+                const d = Math.hypot(
+                  pt.x - polygonScreen[i].x,
+                  pt.y - polygonScreen[i].y,
+                );
+                if (d < bestD) {
+                  bestD = d;
+                  best = polygonScreen[i];
+                }
+              }
+              return { vertex: best, distance: bestD };
+            };
+            const a = nearest(mStart);
+            const b = nearest(mEnd);
+            const aW = a.vertex.world;
+            const bW = b.vertex.world;
+            const d2D = {
+              x: bW[axX] - aW[axX],
+              y: bW[axY] - aW[axY],
+            };
+            const dL2 = Math.hypot(d2D.x, d2D.y);
+            if (dL2 < 0.0001) continue;
+            const eDir = { x: d2D.x / dL2, y: d2D.y / dL2 };
+            byEdge[moving.id].push({
+              movingEdge: moving.id,
+              point: {
+                x: (aW[axX] + bW[axX]) / 2,
+                y: (aW[axY] + bW[axY]) / 2,
+              },
+              direction: eDir,
+              originWorld2D: { x: aW[axX], y: aW[axY] },
+              targetBrushId: targetBrush.id,
+              targetFaceIndex: fi,
+              startWorld: { ...aW },
+              endWorld: { ...bW },
+              startScreen: a.vertex,
+              endScreen: b.vertex,
+              segmentDistance: Math.max(a.distance, b.distance),
+              projectedKey: `face:${targetBrush.id}:${fi}`,
+              source: "face",
+            });
           }
         }
       }
@@ -1370,6 +1440,16 @@ export class Viewport {
       }
       return byEdge;
     };
+
+    // Snap acquisition is opt-in. The "Snap" label toggles this on.
+    // Without snap, the extrusion is the plain free face-normal extrude.
+    if (!this.state.faceSnapEnabled) {
+      this.extrusionMatchDebug = [];
+      this.extrusionSolvedDebug = null;
+      this.extrusionCandidate = null;
+      if (this.drag) this.drag.extrusionCandidate = null;
+      return rawDistance;
+    }
 
     const candidatesByEdge = findCandidatesForMovingEdges(
       movingEdges,
@@ -1612,15 +1692,16 @@ export class Viewport {
       })();
       if (!solvedCap) continue;
 
-      // Intent score: mouse distance to the generated moving edge
-      const intendedEdge = movingEdgesById[active[0].movingEdge];
-      const intentDist = intendedEdge
-        ? pointSegmentDistance(
-            current,
-            intendedEdge.startScreen,
-            intendedEdge.endScreen,
-          )
-        : 0;
+      // Intent score: mouse distance to the moving edge that contains
+      // the user's intent. For multi-edge combinations, use the closest
+      // moving edge so the cap snap doesn't lose to a far-away side.
+      const intentDists = active.map((c) => {
+        const edge = movingEdgesById[c.movingEdge];
+        return edge
+          ? pointSegmentDistance(current, edge.startScreen, edge.endScreen)
+          : Infinity;
+      });
+      const intentDist = Math.min(...intentDists);
 
       // Worst target distance (not min - one bad match must not hide)
       const worstTargetDist = Math.max(...active.map((c) => c.segmentDistance));
@@ -1768,6 +1849,9 @@ export class Viewport {
     snapCandidates.sort((a, b) => {
       if (a.mouseDistance !== b.mouseDistance)
         return a.mouseDistance - b.mouseDistance;
+      // Prefer multi-edge candidates when other scores are equal so the
+      // sides conform to the target's adjacent faces automatically.
+      if (a.matchCount !== b.matchCount) return b.matchCount - a.matchCount;
       return a.totalDist - b.totalDist;
     });
 
@@ -2823,24 +2907,10 @@ export class Viewport {
         sideB: "#4dabf7",
       };
 
-      // 1) Draw matched TARGET faces (faint fill) and TARGET edges (solid).
+      // 1) Draw matched TARGET edges only (no face fill).
       for (const match of this.extrusionMatchDebug) {
-        const target = this.state.brushes.find(
-          (brush) => brush.id === match.targetBrushId,
-        );
-        const targetFace = target?.faces[match.targetFaceIndex];
         const color = TARGET[match.movingEdge];
-        if (!target || !targetFace || !color) continue;
-        context.beginPath();
-        targetFace.forEach((vertexIndex, index) => {
-          const point = this.screen(target.vertices[vertexIndex]);
-          index
-            ? context.lineTo(point.x, point.y)
-            : context.moveTo(point.x, point.y);
-        });
-        context.closePath();
-        context.fillStyle = `${color}22`;
-        context.fill();
+        if (!color) continue;
         if (match.targetStartScreen && match.targetEndScreen) {
           context.strokeStyle = color;
           context.lineWidth = 3;
@@ -2860,18 +2930,11 @@ export class Viewport {
         const color = SOLVED[key] || "#ffffff";
         context.strokeStyle = color;
         context.lineWidth = 4;
+        context.lineCap = "round";
         context.beginPath();
         context.moveTo(pair[0].x, pair[0].y);
         context.lineTo(pair[1].x, pair[1].y);
         context.stroke();
-        // Endpoint dot
-        context.fillStyle = color;
-        context.beginPath();
-        context.arc(pair[0].x, pair[0].y, 4, 0, Math.PI * 2);
-        context.fill();
-        context.beginPath();
-        context.arc(pair[1].x, pair[1].y, 4, 0, Math.PI * 2);
-        context.fill();
       }
 
       // 3) Draw the SOURCE base edge so the user can see what did NOT move.

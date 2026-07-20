@@ -111,6 +111,68 @@ export function center(b) {
     { x: 0, y: 0, z: 0 },
   );
 }
+export function pointInsideBrush(point, brush, epsilon = 0.01) {
+  if (!brush?.faces?.length) return false;
+  for (const face of brush.faces) {
+    if (face.length < 3) continue;
+    const p0 = brush.vertices[face[0]];
+    const p1 = brush.vertices[face[1]];
+    const p2 = brush.vertices[face[2]];
+    const ex = p1.x - p0.x,
+      ey = p1.y - p0.y,
+      ez = p1.z - p0.z;
+    const fx = p2.x - p0.x,
+      fy = p2.y - p0.y,
+      fz = p2.z - p0.z;
+    const nx = ey * fz - ez * fy;
+    const ny = ez * fx - ex * fz;
+    const nz = ex * fy - ey * fx;
+    const len = Math.hypot(nx, ny, nz);
+    if (len < 1e-9) continue;
+    const ux = nx / len,
+      uy = ny / len,
+      uz = nz / len;
+    const dot =
+      (point.x - p0.x) * ux + (point.y - p0.y) * uy + (point.z - p0.z) * uz;
+    if (dot > epsilon) return false;
+  }
+  // Check that the point is not on a face surface (which would mean
+  // it's exactly on the boundary, not strictly inside).
+  for (const face of brush.faces) {
+    if (face.length < 3) continue;
+    const p0 = brush.vertices[face[0]];
+    const p1 = brush.vertices[face[1]];
+    const p2 = brush.vertices[face[2]];
+    const ex = p1.x - p0.x,
+      ey = p1.y - p0.y,
+      ez = p1.z - p0.z;
+    const fx = p2.x - p0.x,
+      fy = p2.y - p0.y,
+      fz = p2.z - p0.z;
+    const nx = ey * fz - ez * fy;
+    const ny = ez * fx - ex * fz;
+    const nz = ex * fy - ey * fx;
+    const len = Math.hypot(nx, ny, nz);
+    if (len < 1e-9) continue;
+    const ux = nx / len,
+      uy = ny / len,
+      uz = nz / len;
+    const dot =
+      (point.x - p0.x) * ux + (point.y - p0.y) * uy + (point.z - p0.z) * uz;
+    if (Math.abs(dot) <= epsilon) return false;
+  }
+  return true;
+}
+export function brushEntersOtherBrush(brush, others, epsilon = 0.01) {
+  if (!brush?.vertices?.length) return false;
+  for (const vertex of brush.vertices) {
+    for (const other of others) {
+      if (other.id === brush.id) continue;
+      if (pointInsideBrush(vertex, other, epsilon)) return true;
+    }
+  }
+  return false;
+}
 export function selectedVertexCount(brushes, selection) {
   return brushes.reduce(
     (count, brush) =>

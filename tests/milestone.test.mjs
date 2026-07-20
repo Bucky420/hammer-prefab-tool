@@ -997,6 +997,7 @@ const snapViewport = Object.create(Viewport.prototype);
 snapViewport.state = {
   brushes: [snapSource, snapTarget],
   grid: 16,
+  faceSnapEnabled: true,
 };
 snapViewport.drag = { selection: new Set([`${snapSource.id}:f:3`]) };
 snapViewport.kind = "top";

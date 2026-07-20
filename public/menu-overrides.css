@@ -290,6 +290,31 @@ header {
 .brush-panel .advanced-setting.enabled {
   opacity: 1;
 }
+.extrusion-toggles {
+  display: flex;
+  gap: 6px;
+  margin: 7px 0;
+}
+.extrusion-toggle {
+  flex: 1;
+  background: #102030;
+  color: #b7c9de;
+  border: 1px solid #2c4a64;
+  padding: 6px 10px;
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: center;
+}
+.extrusion-toggle:hover {
+  background: #173142;
+  border-color: #3a607e;
+}
+.extrusion-toggle.active {
+  background: #1f546a;
+  border-color: #66dde3;
+  color: #f0faff;
+}
 .generate-brush {
   width: 100%;
   margin-top: 5px;

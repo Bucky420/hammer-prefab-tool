@@ -17,6 +17,7 @@ const state = {
 };
 
 let faceExtrusionMode = state.faceExtrusionMode || "normal";
+let faceSnapEnabled = state.faceSnapEnabled ?? false;
 
 Object.defineProperty(state, "faceExtrusionMode", {
   enumerable: true,
@@ -29,8 +30,40 @@ Object.defineProperty(state, "faceExtrusionMode", {
 
     if (typeof document === "undefined") return;
     queueMicrotask(() => {
-      const control = document.querySelector("[data-extrusion-parallel]");
-      if (control) control.checked = faceExtrusionMode === "parallel";
+      const parallelLabel = document.querySelector("[data-extrusion-parallel]");
+      if (parallelLabel) {
+        parallelLabel.classList.toggle(
+          "active",
+          faceExtrusionMode === "parallel",
+        );
+        parallelLabel.setAttribute(
+          "aria-pressed",
+          faceExtrusionMode === "parallel" ? "true" : "false",
+        );
+      }
+    });
+  },
+});
+
+Object.defineProperty(state, "faceSnapEnabled", {
+  enumerable: true,
+  configurable: true,
+  get() {
+    return faceSnapEnabled;
+  },
+  set(value) {
+    faceSnapEnabled = Boolean(value);
+
+    if (typeof document === "undefined") return;
+    queueMicrotask(() => {
+      const snapLabel = document.querySelector("[data-extrusion-snap]");
+      if (snapLabel) {
+        snapLabel.classList.toggle("active", faceSnapEnabled);
+        snapLabel.setAttribute(
+          "aria-pressed",
+          faceSnapEnabled ? "true" : "false",
+        );
+      }
     });
   },
 });
