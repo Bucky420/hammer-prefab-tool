@@ -358,26 +358,30 @@ if (materialLabel)
     '<span>Side material</span><select data-face-side-material><option value="dev/dev_measuregeneric01">Orange</option><option value="dev/dev_measuregeneric01b">Gray</option></select><span>Top material</span><select data-face-top-material><option value="dev/dev_measuregeneric01b">Gray</option><option value="dev/dev_measuregeneric01">Orange</option></select>';
 const parallelToggle = facePanel.querySelector("[data-extrusion-parallel]");
 const snapToggle = facePanel.querySelector("[data-extrusion-snap]");
-parallelToggle.classList.toggle(
-  "active",
-  state.faceExtrusionMode === "parallel",
-);
-parallelToggle.setAttribute(
-  "aria-pressed",
-  state.faceExtrusionMode === "parallel" ? "true" : "false",
-);
-snapToggle.classList.toggle("active", Boolean(state.faceSnapEnabled));
-snapToggle.setAttribute(
-  "aria-pressed",
-  state.faceSnapEnabled ? "true" : "false",
-);
-parallelToggle.onclick = () => {
-  state.faceExtrusionMode =
-    state.faceExtrusionMode === "parallel" ? "normal" : "parallel";
-};
-snapToggle.onclick = () => {
-  state.faceSnapEnabled = !state.faceSnapEnabled;
-};
+if (parallelToggle) {
+  parallelToggle.classList.toggle(
+    "active",
+    state.faceExtrusionMode === "parallel",
+  );
+  parallelToggle.setAttribute(
+    "aria-pressed",
+    state.faceExtrusionMode === "parallel" ? "true" : "false",
+  );
+  parallelToggle.onclick = () => {
+    state.faceExtrusionMode =
+      state.faceExtrusionMode === "parallel" ? "normal" : "parallel";
+  };
+}
+if (snapToggle) {
+  snapToggle.classList.toggle("active", Boolean(state.faceSnapEnabled));
+  snapToggle.setAttribute(
+    "aria-pressed",
+    state.faceSnapEnabled ? "true" : "false",
+  );
+  snapToggle.onclick = () => {
+    state.faceSnapEnabled = !state.faceSnapEnabled;
+  };
+}
 railDock.append(dockDivider, brushPanel, facePanel);
 const railWidthGrip = document.createElement("div");
 railWidthGrip.className = "rail-width-grip";
