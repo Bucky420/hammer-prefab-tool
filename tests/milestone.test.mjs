@@ -84,7 +84,6 @@ const arch = generateArch({
   arc: 360,
   grid: 16,
 });
-arch.forEach((b) => (b.groupId = "test-arch"));
 const archSideExtrusion = extrudeSelectedFaces(
   arch,
   new Set([`${arch[0].id}:f:2`]),
@@ -915,7 +914,6 @@ const arcSnapSource = generateRing({
   segments: 8,
   grid: 16,
 });
-arcSnapSource.forEach((b) => (b.groupId = "test-arc"));
 const arcSnapId = `${arcSnapSource[0].id}:f:5`;
 const arcSnapExtrusion = extrudeSelectedFaces(
   arcSnapSource,
