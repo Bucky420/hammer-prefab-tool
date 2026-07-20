@@ -603,6 +603,8 @@ export function solveConvexConformingExtrusion(options) {
   let sideBDir = adjSideDir(groupB);
   let sideAOrigin = { x: baseA.x, y: baseA.y };
   let sideBOrigin = { x: baseB.x, y: baseB.y };
+  let capTargetStart = null;
+  let capTargetEnd = null;
 
   // Track which constraints were applied
   const applied = { sideA: false, sideB: false, base: false, cap: false };
@@ -664,6 +666,10 @@ export function solveConvexConformingExtrusion(options) {
     } else if (c.movingEdge === "cap") {
       capLineDir = c.direction;
       if (c.origin) capLineOrigin = { x: c.origin.x, y: c.origin.y };
+      if (c.targetStart && c.targetEnd) {
+        capTargetStart = { x: c.targetStart.x, y: c.targetStart.y };
+        capTargetEnd = { x: c.targetEnd.x, y: c.targetEnd.y };
+      }
       applied.cap = true;
     }
   }
@@ -706,7 +712,7 @@ export function solveConvexConformingExtrusion(options) {
     sideBDir.x,
     sideBDir.y,
   );
-  const newCapA = solvePt(
+  let newCapA = solvePt(
     capLineOrigin.x,
     capLineOrigin.y,
     capLineDir.x,
@@ -716,7 +722,7 @@ export function solveConvexConformingExtrusion(options) {
     sideADir.x,
     sideADir.y,
   );
-  const newCapB = solvePt(
+  let newCapB = solvePt(
     capLineOrigin.x,
     capLineOrigin.y,
     capLineDir.x,
@@ -728,6 +734,26 @@ export function solveConvexConformingExtrusion(options) {
   );
 
   if (!newBaseA || !newBaseB || !newCapA || !newCapB) return null;
+
+  // A finite cap match must move both corners onto the target segment.
+  // The line intersection above only guarantees alignment to an infinite
+  // support line and can leave the opposite corner at the old side line.
+  if (
+    applied.cap &&
+    !applied.sideA &&
+    !applied.sideB &&
+    capTargetStart &&
+    capTargetEnd
+  ) {
+    const targetDir = {
+      x: capTargetEnd.x - capTargetStart.x,
+      y: capTargetEnd.y - capTargetStart.y,
+    };
+    const sameWinding = srcDir.x * targetDir.x + srcDir.y * targetDir.y >= 0;
+    newCapA = sameWinding ? capTargetStart : capTargetEnd;
+    newCapB = sameWinding ? capTargetEnd : capTargetStart;
+  }
+
   if (!Number.isFinite(newBaseA.x) || !Number.isFinite(newBaseB.x)) return null;
 
   // Validate convexity
@@ -857,45 +883,259 @@ export function solveConvexConformingExtrusion(options) {
   };
 }
 
+function lineIntersection2D(originA, dirA, originB, dirB) {
+  const denominator = dirA.x * dirB.y - dirA.y * dirB.x;
+  if (Math.abs(denominator) < 0.000001) return null;
+  const t =
+    ((originB.x - originA.x) * dirB.y - (originB.y - originA.y) * dirB.x) /
+    denominator;
+  return { x: originA.x + dirA.x * t, y: originA.y + dirA.y * t };
+}
+
+export function solveSingleFaceExtrusion(options) {
+  const { brush, faceIndex, distance, activeAxes, constraints } = options;
+  const face = brush?.faces?.[faceIndex];
+  if (!brush || !face || face.length < 3) return null;
+  const axes = activeAxes || ["x", "y"];
+  const [axisX, axisY] = axes;
+  const depthAxis = axes.length > 2 ? axes[2] : "z";
+
+  const pointKey = (index) =>
+    `${brush.vertices[index][axisX].toFixed(8)},${brush.vertices[index][axisY].toFixed(8)}`;
+  const xyGroups = new Map();
+  for (const index of face) {
+    const key = pointKey(index);
+    if (!xyGroups.has(key)) xyGroups.set(key, []);
+    xyGroups.get(key).push(index);
+  }
+  const xyEntries = [...xyGroups.entries()];
+  if (xyEntries.length !== 2) return null;
+  const [groupA, groupB] = xyEntries.map(([, indices]) => indices);
+  const baseA = {
+    x: brush.vertices[groupA[0]][axisX],
+    y: brush.vertices[groupA[0]][axisY],
+  };
+  const baseB = {
+    x: brush.vertices[groupB[0]][axisX],
+    y: brush.vertices[groupB[0]][axisY],
+  };
+  const srcDir = { x: baseB.x - baseA.x, y: baseB.y - baseA.y };
+  const srcLen = Math.hypot(srcDir.x, srcDir.y);
+  if (srcLen < 0.000001) return null;
+  const baseDir = { x: srcDir.x / srcLen, y: srcDir.y / srcLen };
+
+  const sourceNormal = faceDirection(brush, face);
+  if (!sourceNormal) return null;
+  const srcNormal2D = { x: -baseDir.y, y: baseDir.x };
+  const outwardSign =
+    srcNormal2D.x * sourceNormal[axisX] + srcNormal2D.y * sourceNormal[axisY];
+  if (outwardSign < 0) {
+    srcNormal2D.x *= -1;
+    srcNormal2D.y *= -1;
+  }
+
+  const freeCapA = {
+    x: baseA.x + srcNormal2D.x * distance,
+    y: baseA.y + srcNormal2D.y * distance,
+  };
+  const freeCapB = {
+    x: baseB.x + srcNormal2D.x * distance,
+    y: baseB.y + srcNormal2D.y * distance,
+  };
+
+  const adjSideDir = (group) => {
+    for (const vi of group) {
+      const fi = face.indexOf(vi);
+      if (fi < 0) continue;
+      const prev = face[(fi + face.length - 1) % face.length];
+      const adj = adjacentFaceForEdge(brush, faceIndex, prev, vi);
+      if (adj >= 0) {
+        const adjN = faceDirection(brush, brush.faces[adj]);
+        if (adjN) {
+          const d = {
+            x: -adjN[axisY] || baseDir.x,
+            y: adjN[axisX] || baseDir.y,
+          };
+          const dl = Math.hypot(d.x, d.y);
+          if (dl > 0.0001) return { x: d.x / dl, y: d.y / dl };
+        }
+      }
+    }
+    return { x: srcNormal2D.x, y: srcNormal2D.y };
+  };
+
+  const list = Array.isArray(constraints)
+    ? constraints
+    : constraints
+      ? [constraints]
+      : [];
+  let capConstraint = null;
+  let sideAConstraint = null;
+  let sideBConstraint = null;
+  for (const c of list || []) {
+    if (!c) continue;
+    if (c.movingEdge === "cap") capConstraint = c;
+    else if (c.movingEdge === "sideA") sideAConstraint = c;
+    else if (c.movingEdge === "sideB") sideBConstraint = c;
+  }
+
+  const sideALine = {
+    origin: baseA,
+    direction: sideAConstraint?.direction || srcNormal2D,
+  };
+  const sideBLine = {
+    origin: baseB,
+    direction: sideBConstraint?.direction || srcNormal2D,
+  };
+  if (sideAConstraint && !sideBConstraint) {
+    sideBLine.direction = {
+      x: sideALine.direction.x,
+      y: sideALine.direction.y,
+    };
+  } else if (sideBConstraint && !sideAConstraint) {
+    sideALine.direction = {
+      x: sideBLine.direction.x,
+      y: sideBLine.direction.y,
+    };
+  }
+
+  let capLine;
+  if (capConstraint) {
+    capLine = {
+      origin: capConstraint.origin
+        ? { x: capConstraint.origin.x, y: capConstraint.origin.y }
+        : { x: freeCapA.x, y: freeCapA.y },
+      direction: capConstraint.direction
+        ? { x: capConstraint.direction.x, y: capConstraint.direction.y }
+        : baseDir,
+    };
+  } else {
+    capLine = { origin: freeCapA, direction: baseDir };
+  }
+  const capALen = Math.hypot(capLine.direction.x, capLine.direction.y);
+  if (capALen < 0.000001) return null;
+  const capDir = {
+    x: capLine.direction.x / capALen,
+    y: capLine.direction.y / capALen,
+  };
+
+  let capA = lineIntersection2D(
+    sideALine.origin,
+    sideALine.direction,
+    capLine.origin,
+    capDir,
+  );
+  let capB = lineIntersection2D(
+    sideBLine.origin,
+    sideBLine.direction,
+    capLine.origin,
+    capDir,
+  );
+
+  // For a cap snap with a finite target edge, clamp the cap corners to the
+  // target edge endpoints. Otherwise the line intersection can land anywhere
+  // along an infinite support line and produce the wrong geometry.
+  if (capConstraint && capConstraint.targetStart && capConstraint.targetEnd) {
+    const tStart = capConstraint.targetStart;
+    const tEnd = capConstraint.targetEnd;
+    const targetVec = {
+      x: tEnd.x - tStart.x,
+      y: tEnd.y - tStart.y,
+    };
+    const tLen = Math.hypot(targetVec.x, targetVec.y);
+    if (tLen < 0.000001) return null;
+    const tDir = { x: targetVec.x / tLen, y: targetVec.y / tLen };
+    const projectOnTarget = (point) => {
+      const rel = { x: point.x - tStart.x, y: point.y - tStart.y };
+      const dot = rel.x * tDir.x + rel.y * tDir.y;
+      return Math.max(0, Math.min(tLen, dot));
+    };
+    const aSide = projectOnTarget(baseA);
+    const bSide = projectOnTarget(baseB);
+    const projectionA = {
+      x: tStart.x + tDir.x * aSide,
+      y: tStart.y + tDir.y * aSide,
+    };
+    const projectionB = {
+      x: tStart.x + tDir.x * bSide,
+      y: tStart.y + tDir.y * bSide,
+    };
+    const orderedA = aSide <= bSide;
+    capA = orderedA ? projectionA : projectionB;
+    capB = orderedA ? projectionB : projectionA;
+  }
+  if (!capA || !capB) return null;
+  if (!Number.isFinite(capA.x) || !Number.isFinite(capB.x)) return null;
+
+  const pushedA =
+    (capA.x - baseA.x) * srcNormal2D.x + (capA.y - baseA.y) * srcNormal2D.y;
+  const pushedB =
+    (capB.x - baseB.x) * srcNormal2D.x + (capB.y - baseB.y) * srcNormal2D.y;
+  if (pushedA <= 0.0001 || pushedB <= 0.0001) return null;
+
+  if (
+    !isStrictlyConvex([baseA, baseB, capB, capA]) &&
+    !isStrictlyConvex([baseA, capA, capB, baseB])
+  )
+    return null;
+
+  const cap = [];
+  for (let i = 0; i < face.length; i++) {
+    const vertexIndex = face[i];
+    const z = brush.vertices[vertexIndex][depthAxis];
+    const isA = groupA.includes(vertexIndex);
+    const pt = isA ? capA : capB;
+    cap[i] = { x: 0, y: 0, z };
+    cap[i][axisX] = pt.x;
+    cap[i][axisY] = pt.y;
+    cap[i][depthAxis] = z;
+  }
+  return {
+    cap,
+    baseA,
+    baseB,
+    capA,
+    capB,
+    solvedEdges: {
+      base: [baseA, baseB],
+      sideA: [baseA, capA],
+      cap: [capA, capB],
+      sideB: [capB, baseB],
+    },
+    applied: {
+      cap: Boolean(capConstraint),
+      sideA: Boolean(sideAConstraint),
+      sideB: Boolean(sideBConstraint),
+    },
+  };
+}
+
 function offsetFacePlaneCap(brush, faceIndex, distance, snapTarget = null) {
   const face = brush.faces[faceIndex];
 
-  // Conforming extrusion with four support lines
-  if (snapTarget?.conforming?.length) {
-    const result = solveConvexConformingExtrusion({
-      brushes: snapTarget.brushes || [brush],
-      sourceBrushId: brush.id,
-      faceIndex,
-      distance,
-      activeAxes: snapTarget.activeAxes,
-      constraints: snapTarget.conforming,
-    });
-    if (result && result.generatedCap)
-      return {
-        cap: result.generatedCap,
-        sourceVertexMoves: result.sourceVertexMoves,
-        solvedEdges: result.solvedEdges,
-        applied: result.applied,
-      };
+  const single = solveSingleFaceExtrusion({
+    brush,
+    faceIndex,
+    distance,
+    activeAxes: snapTarget?.activeAxes,
+    constraints: snapTarget?.conforming,
+  });
+  if (single) {
+    return {
+      cap: single.cap,
+      solvedEdges: single.solvedEdges,
+      applied: single.applied,
+      brush: {
+        ...brush,
+        vertices: [
+          ...brush.vertices,
+          ...face.map((_, i) => brush.vertices[face[i]]),
+        ].slice(0, brush.vertices.length),
+      },
+    };
   }
+  if (snapTarget?.conforming?.length) return null;
 
-  if (snapTarget?.snapA || snapTarget?.snapB) {
-    const result = solveVertexSnappedExtrusion(
-      brush,
-      faceIndex,
-      distance,
-      snapTarget.snapA,
-      snapTarget.snapB,
-      snapTarget.activeAxes,
-    );
-    if (result) return result;
-  }
-
-  // Fall back to cross-section rails or plane offset
-  if (snapTarget?.railA || snapTarget?.railB) {
-    const result = solveCrossSectionCap(brush, faceIndex, distance, snapTarget);
-    if (result) return result;
-  }
   const sourcePlane = planeForFace(brush, face);
   if (!sourcePlane) return null;
   const targetPlane = snapTarget?.plane
@@ -1156,6 +1396,17 @@ export function extrudeSelectedFaces(
       ? capResult
       : capResult?.cap || capResult;
     const sourceVertexMoves = capResult?.sourceVertexMoves || [];
+    for (const move of sourceVertexMoves) {
+      const targetBrush = sourceBrushes.find((b) => b.id === move.brushId);
+      const vertex = targetBrush?.vertices[move.vertexIndex];
+      if (vertex && move.position) {
+        const axes = snapTarget?.activeAxes || ["x", "y"];
+        for (const axis of axes) {
+          if (move.position[axis] !== undefined)
+            vertex[axis] = move.position[axis];
+        }
+      }
+    }
     if (!cap || cap.some((point) => !point)) {
       errors.push(`${id}: cap plane intersection failed or exceeded bounds`);
       continue;

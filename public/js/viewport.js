@@ -10,7 +10,7 @@ import { distanceToSegment, pointInPolygon } from "./math.js";
 import {
   extrudeSelectedFaces,
   limitExtrusionDistance,
-  solveConvexConformingExtrusion,
+  solveSingleFaceExtrusion,
   solveVertexSnappedExtrusion,
 } from "./face-extrusion.js";
 import { validateBrush } from "./brush-validation.js";
@@ -115,6 +115,8 @@ export class Viewport {
     this.previewBrushes = [];
     this.previewErrors = [];
     this.extrusionCandidate = null;
+    this.extrusionMatchDebug = [];
+    this.extrusionSolvedDebug = null;
     this.hoverFaceIds = new Set();
     this.hoverFillPolygon = null;
     this.drawFrame = 0;
@@ -169,6 +171,8 @@ export class Viewport {
     this.creationPreviewBrushes = [];
     this.previewErrors = [];
     this.extrusionCandidate = null;
+    this.extrusionMatchDebug = [];
+    this.extrusionSolvedDebug = null;
     this.requestDraw();
     return true;
   }
@@ -230,6 +234,17 @@ export class Viewport {
       x: rect.width / 2 + point.x * this.scale + this.offset.x,
       y: rect.height / 2 + point.y * this.scale + this.offset.y,
     };
+  }
+  toScreenEdges(edges) {
+    const out = {};
+    for (const [k, pair] of Object.entries(edges || {})) {
+      if (!pair) continue;
+      out[k] = [
+        this.screen({ x: pair[0].x, y: pair[0].y, z: 0 }),
+        this.screen({ x: pair[1].x, y: pair[1].y, z: 0 }),
+      ];
+    }
+    return out;
   }
   visibleBrushes() {
     return this.state.brushes.filter(
@@ -972,22 +987,18 @@ export class Viewport {
         movingEdge: k,
         direction: locks[k].directionWorld2D,
         origin: locks[k].originWorld2D,
+        targetStart: locks[k].targetStartWorld2D,
+        targetEnd: locks[k].targetEndWorld2D,
         targetBrushId: locks[k].targetBrushId,
       }));
-      const sol = solveConvexConformingExtrusion({
-        brushes: [
-          {
-            ...brush,
-            vertices: brush.vertices.map((v) => ({ ...v })),
-          },
-        ],
-        sourceBrushId: brush.id,
+      const sol = solveSingleFaceExtrusion({
+        brush,
         faceIndex,
         distance: rawDistance,
         activeAxes: this.axes(),
         constraints: csts,
       });
-      if (sol?.generatedCap) {
+      if (sol?.cap) {
         // Release drifted locks
         const lockDist = 18;
         for (const k of lockedKeys) {
@@ -1008,22 +1019,18 @@ export class Viewport {
             movingEdge: k,
             direction: locks[k].directionWorld2D,
             origin: locks[k].originWorld2D,
+            targetStart: locks[k].targetStartWorld2D,
+            targetEnd: locks[k].targetEndWorld2D,
             targetBrushId: locks[k].targetBrushId,
           }));
-          const finalSol = solveConvexConformingExtrusion({
-            brushes: [
-              {
-                ...brush,
-                vertices: brush.vertices.map((v) => ({ ...v })),
-              },
-            ],
-            sourceBrushId: brush.id,
+          const finalSol = solveSingleFaceExtrusion({
+            brush,
             faceIndex,
             distance: rawDistance,
             activeAxes: this.axes(),
             constraints: finalCsts,
           });
-          if (finalSol?.generatedCap) {
+          if (finalSol?.cap) {
             const candidate = {
               distance: rawDistance,
               edgeKey: activeLocks.join("|"),
@@ -1057,6 +1064,8 @@ export class Viewport {
                     targetBrushId: c.targetBrushId,
                     directionWorld2D: c.direction,
                     originWorld2D: c.origin,
+                    targetStartWorld2D: c.targetStart,
+                    targetEndWorld2D: c.targetEnd,
                     startScreen: edgeScr?.startScreen || { x: 0, y: 0 },
                     endScreen: edgeScr?.endScreen || { x: 0, y: 0 },
                     segmentDistance: 0,
@@ -1369,6 +1378,23 @@ export class Viewport {
       axisY,
       acquireRadius,
     );
+    this.extrusionMatchDebug = Object.values(candidatesByEdge)
+      .flat()
+      .map((candidate) => ({
+        movingEdge: candidate.movingEdge,
+        targetBrushId: candidate.targetBrushId,
+        targetFaceIndex: candidate.targetFaceIndex,
+        targetEdgeKey: candidate.projectedKey,
+        segmentDistance: candidate.segmentDistance,
+        targetStartScreen: candidate.startScreen,
+        targetEndScreen: candidate.endScreen,
+        movingStartScreen: movingEdges.find(
+          (edge) => edge.id === candidate.movingEdge,
+        )?.startScreen,
+        movingEndScreen: movingEdges.find(
+          (edge) => edge.id === candidate.movingEdge,
+        )?.endScreen,
+      }));
 
     // --- Conforming candidates (direction-line constraints) ---
     // Determine which moving edge the mouse is controlling (intent)
@@ -1480,11 +1506,27 @@ export class Viewport {
         if (dot > Math.cos((70 * Math.PI) / 180)) continue;
       }
 
+      // Multi-edge auto-snap: when multiple edges of the source are within
+      // snap range of multiple edges on the same target face, combine them
+      // into one candidate so the sides conform to the target's adjacent
+      // faces. This is the "essentials any edge normal can snap" mode.
+      const targetFaceIds = new Set(
+        active.map((c) => `${c.targetBrushId}:f:${c.targetFaceIndex}`),
+      );
+      const sameTargetFace = targetFaceIds.size === 1;
+
       // Strict intent-based filtering
       if (!hasAnyLock) {
-        // No locks: only accept candidates matching the mouse-intended edge
-        if (active.length !== 1 || active[0].movingEdge !== lockIntent)
+        if (active.length === 1) {
+          if (active[0].movingEdge !== lockIntent) continue;
+        } else if (active.length === 2) {
+          // Allow cap+side only when both target the same face and the
+          // mouse is in the cap's neighborhood (most common intent).
+          if (!sameTargetFace) continue;
+          if (!active.some((c) => c.movingEdge === lockIntent)) continue;
+        } else {
           continue;
+        }
       } else {
         // Has lock: only accept the permitted adjacent partner
         if (locks.sideA && !locks.cap) {
@@ -1519,6 +1561,8 @@ export class Viewport {
         movingEdge: c.movingEdge,
         direction: c.direction,
         origin: { x: c.originWorld2D.x, y: c.originWorld2D.y },
+        targetStart: { x: c.startWorld[axisX], y: c.startWorld[axisY] },
+        targetEnd: { x: c.endWorld[axisX], y: c.endWorld[axisY] },
         targetBrushId: c.targetBrushId,
         targetEdgeKey: c.projectedKey,
         segmentDistance: c.segmentDistance,
@@ -1527,26 +1571,14 @@ export class Viewport {
       }));
 
       const solvedCap = (() => {
-        const clonedBrush = {
-          ...brush,
-          vertices: brush.vertices.map((v) => ({ ...v })),
-        };
-        const r = solveConvexConformingExtrusion({
-          brushes: [clonedBrush],
-          sourceBrushId: clonedBrush.id,
+        const r = solveSingleFaceExtrusion({
+          brush,
           faceIndex,
           distance: rawDistance,
           activeAxes,
           constraints: conforming,
         });
-        if (!r?.generatedCap) return null;
-        for (const move of r.sourceVertexMoves || []) {
-          const v = clonedBrush.vertices[move.vertexIndex];
-          if (v) {
-            v[activeAxes[0]] = move.position[activeAxes[0]];
-            v[activeAxes[1]] = move.position[activeAxes[1]];
-          }
-        }
+        if (!r?.cap) return null;
         if (r.solvedEdges) {
           const satisfied = conforming.filter((c) => {
             const edge = r.solvedEdges[c.movingEdge];
@@ -1576,7 +1608,7 @@ export class Viewport {
           });
           if (satisfied.length !== conforming.length) return null;
         }
-        return { cap: r.generatedCap, conforming, solvedEdges: r.solvedEdges };
+        return { cap: r.cap, conforming, solvedEdges: r.solvedEdges };
       })();
       if (!solvedCap) continue;
 
@@ -1606,6 +1638,7 @@ export class Viewport {
         worstTargetDist,
         matchCount: conforming.length,
         totalDist: conforming.reduce((s, c) => s + c.segmentDistance, 0),
+        solvedEdges: solvedCap.solvedEdges,
         snapTarget: {
           type: "cross-section-rails",
           activeAxes,
@@ -1618,7 +1651,12 @@ export class Viewport {
     }
 
     // --- Vertex-snapped candidates (point-snap fallback) ---
-    {
+    // Prefer a conforming face match over a competing side/vertex match.
+    if (
+      !snapCandidates.some(
+        (candidate) => candidate.candidateType === "conforming",
+      )
+    ) {
       const vertexA = candidatesByEdge.sideA.length
         ? [
             ...new Map(
@@ -1779,6 +1817,8 @@ export class Viewport {
         targetBrushId: c.targetBrushId,
         directionWorld2D: c.direction,
         originWorld2D: c.origin,
+        targetStartWorld2D: c.targetStart,
+        targetEndWorld2D: c.targetEnd,
         startScreen: es?.startScreen || { x: 0, y: 0 },
         endScreen: es?.endScreen || { x: 0, y: 0 },
         segmentDistance: 0,
@@ -2163,9 +2203,18 @@ export class Viewport {
           );
           this.previewBrushes = preview.previewBrushes || preview.brushes;
           this.previewErrors = preview.errors;
+          const candidateSolved =
+            this.drag.extrusionCandidate?.solvedEdges ||
+            this.drag.extrusionCandidate?.snapTarget?.solvedEdges;
+          if (candidateSolved) {
+            this.extrusionSolvedDebug = this.toScreenEdges(candidateSolved);
+          } else {
+            this.extrusionSolvedDebug = null;
+          }
         } else {
           this.previewBrushes = [];
           this.previewErrors = [];
+          this.extrusionSolvedDebug = null;
         }
         this.requestDraw();
         return;
@@ -2345,6 +2394,8 @@ export class Viewport {
         else this.onChange(`face-selected:${this.edgeViewForFace(faceId)}`);
         this.drag = null;
         this.extrusionCandidate = null;
+        this.extrusionMatchDebug = [];
+        this.extrusionSolvedDebug = null;
         this.extrusionLocks = null;
         this.requestDraw();
         return;
@@ -2752,6 +2803,110 @@ export class Viewport {
         context.lineWidth = 1;
         context.stroke();
       }
+    if (
+      this.state.mode === "face" &&
+      (this.drag?.type === "face-extrude" ||
+        (this.extrusionMatchDebug && this.extrusionMatchDebug.length > 0))
+    ) {
+      // Multi-color debug overlay. Each line gets a distinct color so the
+      // user can tell at a glance which solved/target/moving/base line
+      // is which.
+      const SOLVED = {
+        sideA: "#ff7a00",
+        cap: "#ff3dd0",
+        sideB: "#19d97a",
+        base: "#00d4ff",
+      };
+      const TARGET = {
+        sideA: "#ff4266",
+        cap: "#ffd166",
+        sideB: "#4dabf7",
+      };
+
+      // 1) Draw matched TARGET faces (faint fill) and TARGET edges (solid).
+      for (const match of this.extrusionMatchDebug) {
+        const target = this.state.brushes.find(
+          (brush) => brush.id === match.targetBrushId,
+        );
+        const targetFace = target?.faces[match.targetFaceIndex];
+        const color = TARGET[match.movingEdge];
+        if (!target || !targetFace || !color) continue;
+        context.beginPath();
+        targetFace.forEach((vertexIndex, index) => {
+          const point = this.screen(target.vertices[vertexIndex]);
+          index
+            ? context.lineTo(point.x, point.y)
+            : context.moveTo(point.x, point.y);
+        });
+        context.closePath();
+        context.fillStyle = `${color}22`;
+        context.fill();
+        if (match.targetStartScreen && match.targetEndScreen) {
+          context.strokeStyle = color;
+          context.lineWidth = 3;
+          context.beginPath();
+          context.moveTo(match.targetStartScreen.x, match.targetStartScreen.y);
+          context.lineTo(match.targetEndScreen.x, match.targetEndScreen.y);
+          context.stroke();
+        }
+      }
+
+      // 2) Draw the SOLVED edges (what the new brush will actually have).
+      //    These are the most important - they show whether the cap and
+      //    sides actually land where the target wants them.
+      const solved = this.extrusionSolvedDebug || {};
+      for (const [key, pair] of Object.entries(solved)) {
+        if (!pair) continue;
+        const color = SOLVED[key] || "#ffffff";
+        context.strokeStyle = color;
+        context.lineWidth = 4;
+        context.beginPath();
+        context.moveTo(pair[0].x, pair[0].y);
+        context.lineTo(pair[1].x, pair[1].y);
+        context.stroke();
+        // Endpoint dot
+        context.fillStyle = color;
+        context.beginPath();
+        context.arc(pair[0].x, pair[0].y, 4, 0, Math.PI * 2);
+        context.fill();
+        context.beginPath();
+        context.arc(pair[1].x, pair[1].y, 4, 0, Math.PI * 2);
+        context.fill();
+      }
+
+      // 3) Draw the SOURCE base edge so the user can see what did NOT move.
+      if (solved.base) {
+        context.strokeStyle = SOLVED.base;
+        context.lineWidth = 2;
+        context.setLineDash([3, 3]);
+        context.beginPath();
+        context.moveTo(solved.base[0].x, solved.base[0].y);
+        context.lineTo(solved.base[1].x, solved.base[1].y);
+        context.stroke();
+        context.setLineDash([]);
+      }
+
+      // 4) Legend
+      context.font = "12px monospace";
+      context.textBaseline = "top";
+      const legend = [
+        ["SOLVED CAP", SOLVED.cap],
+        ["SOLVED SIDE A", SOLVED.sideA],
+        ["SOLVED SIDE B", SOLVED.sideB],
+        ["BASE", SOLVED.base],
+        ["TGT CAP", TARGET.cap],
+        ["TGT SIDE A", TARGET.sideA],
+        ["TGT SIDE B", TARGET.sideB],
+      ];
+      let legendY = 10;
+      for (const [label, color] of legend) {
+        context.fillStyle = color;
+        context.fillRect(12, legendY, 10, 10);
+        context.fillStyle = "#ffffff";
+        context.fillText(label, 26, legendY);
+        legendY += 14;
+      }
+    }
     if (this.state.mode === "selection") {
       const bounds = this.objectBounds();
       if (bounds) {
