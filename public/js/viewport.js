@@ -1388,21 +1388,20 @@ export class Viewport {
               const tT =
                 (fx * -sourceNormalDir.x - fy * -sourceNormalDir.y) / det;
               if (tT < 0 || tT > 1) {
-                // Soft snap: when the projection falls past an endpoint
-                // but the corner is close to that endpoint in screen
-                // distance, accept the free projection (past the edge)
-                // instead of dropping the snap. The cap line through
-                // the free-projected corner in the edge direction lets
-                // the solver continue past the finite edge. The user
-                // can push past with further mouse movement.
+                // Soft endpoint snap: when the projection falls past an
+                // endpoint but the corner is close to it in screen
+                // distance, clamp to the endpoint so you can land right
+                // on it. Soft = magnetic within a small radius; push
+                // further past to release.
                 const endpointScr = tT < 0 ? sScr : eScr;
                 const endpointDist = Math.hypot(
                   cornerScr.x - endpointScr.x,
                   cornerScr.y - endpointScr.y,
                 );
                 if (endpointDist > cornerRadius * 3) continue;
-                snapX = sW[axisX] + dx * tT;
-                snapY = sW[axisY] + dy * tT;
+                const ep = tT < 0 ? sW : eW;
+                snapX = ep[axisX];
+                snapY = ep[axisY];
               } else {
                 snapX = sW[axisX] + dx * tT;
                 snapY = sW[axisY] + dy * tT;
