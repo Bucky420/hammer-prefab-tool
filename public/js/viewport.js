@@ -2526,10 +2526,6 @@ export class Viewport {
             : "#ffc92822";
           context.fill();
         }
-        if (this.state.mode === "face" && this.hoverFaceIds.has(id)) {
-          context.fillStyle = "#ffc92844";
-          context.fill();
-        }
         if (selectedFace) {
           context.fillStyle = "#ffff0033";
           context.fill();
