@@ -1333,15 +1333,33 @@ export class Viewport {
     // is always parallel to the base, at some perpendicular offset.
     // The snap picks a target edge parallel to the base and provides
     // a direction constraint that makes the cap parallel to the base.
-    const findCapSnap = (corner2D, cornerScr) => {
-      const endpointThreshold = 16;
-      const tryEndpointSnap = (tClamp, sWorld, eWorld, edgeLen) => {
-        if (edgeLen < 0.0001) return null;
-        const tPast = tClamp < 0 ? -tClamp : tClamp - 1;
-        const worldPast = tPast * edgeLen;
-        if (worldPast > endpointThreshold) return null;
-        const ep = tClamp < 0 ? sWorld : eWorld;
-        return { x: ep[axisX], y: ep[axisY] };
+    const findCapSnap = (corner2D, cornerScr, baseCorner) => {
+      // Forward-only endpoint magnet. Only snaps to an endpoint that is
+      // ahead of the source base corner along the extrusion normal, and
+      // only when the moving cap corner is within a small screen radius.
+      const ENDPOINT_MAGNET_RADIUS = 12;
+      const tryEndpointSnap = (sWorld, eWorld) => {
+        const candidates = [sWorld, eWorld]
+          .map((vertex) => {
+            const point = { x: vertex[axisX], y: vertex[axisY] };
+            const forwardDistance =
+              (point.x - baseCorner.x) * sourceNormalDir.x +
+              (point.y - baseCorner.y) * sourceNormalDir.y;
+            const screenPoint = this.screen({
+              [axisX]: point.x,
+              [axisY]: point.y,
+              z: 0,
+            });
+            const pointerDistance = Math.hypot(
+              cornerScr.x - screenPoint.x,
+              cornerScr.y - screenPoint.y,
+            );
+            return { point, forwardDistance, pointerDistance };
+          })
+          .filter((c) => c.forwardDistance > 0.01)
+          .filter((c) => c.pointerDistance <= ENDPOINT_MAGNET_RADIUS)
+          .sort((a, b) => a.pointerDistance - b.pointerDistance);
+        return candidates[0]?.point ?? null;
       };
       const results = [];
       for (const targetBrush of this.visibleBrushes()) {
@@ -1389,7 +1407,7 @@ export class Viewport {
                 ? (corner2D.x - sW[axisX]) / dx
                 : (corner2D.y - sW[axisY]) / dy;
               if (tClamp < 0 || tClamp > 1) {
-                const ep = tryEndpointSnap(tClamp, sW, eW, dL);
+                const ep = tryEndpointSnap(sW, eW);
                 if (!ep) continue;
                 snapX = ep.x;
                 snapY = ep.y;
@@ -1403,7 +1421,7 @@ export class Viewport {
               const tT =
                 (fx * -sourceNormalDir.x - fy * -sourceNormalDir.y) / det;
               if (tT < 0 || tT > 1) {
-                const ep = tryEndpointSnap(tT, sW, eW, dL);
+                const ep = tryEndpointSnap(sW, eW);
                 if (!ep) continue;
                 snapX = ep.x;
                 snapY = ep.y;
@@ -1416,7 +1434,7 @@ export class Viewport {
               cornerScr.x - this.screen({ x: snapX, y: snapY, z: 0 }).x,
               cornerScr.y - this.screen({ x: snapX, y: snapY, z: 0 }).y,
             );
-            if (dist > cornerRadius * 10) continue;
+            if (dist > cornerRadius * 3) continue;
             results.push({
               targetBrushId: targetBrush.id,
               targetFaceIndex: fi,
@@ -1514,7 +1532,11 @@ export class Viewport {
     };
 
     // Discover cap and side candidates
-    const capSnaps = findCapSnap(freeCapA2D, capCornerScreened.capA);
+    const capSnaps = findCapSnap(
+      freeCapA2D,
+      capCornerScreened.capA,
+      { x: baseA.x, y: baseA.y },
+    );
     const sideASnaps = findSideSnap("sideA", baseAScreen);
     const sideBSnaps = findSideSnap("sideB", baseBScreen);
 
