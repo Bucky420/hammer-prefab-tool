@@ -1600,45 +1600,57 @@ function axisProjection(brush, axis) {
   return [Math.min(...values), Math.max(...values)];
 }
 
-function separatingAxes(brush) {
+function convexBrushesOverlap(first, second, epsilon = 0.0001) {
   const axes = [];
-  for (const face of brush.faces) {
-    const a = brush.vertices[face[0]],
-      b = brush.vertices[face[1]],
-      c = brush.vertices[face[2]],
-      normal = cross(subtract(b, a), subtract(c, a)),
-      length = Math.hypot(normal.x, normal.y, normal.z);
-    if (length > 0.000001)
-      axes.push({
-        x: normal.x / length,
-        y: normal.y / length,
-        z: normal.z / length,
-      });
+  const addAxis = (n) => {
+    const l = Math.hypot(n.x, n.y, n.z);
+    if (l < 0.000001) return;
+    axes.push({ x: n.x / l, y: n.y / l, z: n.z / l });
+  };
+  // Face normals from both brushes
+  for (const brush of [first, second]) {
+    for (const face of brush.faces) {
+      const a = brush.vertices[face[0]],
+        b = brush.vertices[face[1]],
+        c = brush.vertices[face[2]],
+        normal = cross(subtract(b, a), subtract(c, a));
+      addAxis(normal);
+    }
   }
-  for (const face of brush.faces)
-    for (let index = 0; index < face.length; index++) {
-      const a = brush.vertices[face[index]],
-        b = brush.vertices[face[(index + 1) % face.length]],
-        edge = subtract(b, a);
-      for (const other of brush.faces) {
-        const c = brush.vertices[other[0]],
-          d = brush.vertices[other[1]],
-          otherEdge = subtract(d, c),
-          axis = cross(edge, otherEdge),
-          length = Math.hypot(axis.x, axis.y, axis.z);
-        if (length > 0.000001)
-          axes.push({
-            x: axis.x / length,
-            y: axis.y / length,
-            z: axis.z / length,
-          });
+  // Edge directions within each brush
+  for (const brush of [first, second]) {
+    for (const face of brush.faces) {
+      for (let index = 0; index < face.length; index++) {
+        const a = brush.vertices[face[index]],
+          b = brush.vertices[face[(index + 1) % face.length]],
+          edge = subtract(b, a);
+        addAxis(edge);
       }
     }
-  return axes;
-}
-
-export function convexBrushesOverlap(first, second, epsilon = 0.0001) {
-  for (const axis of [...separatingAxes(first), ...separatingAxes(second)]) {
+  }
+  // Edge×edge cross products between brush edges
+  const edgesOf = (brush) => {
+    const result = [];
+    for (const face of brush.faces) {
+      for (let index = 0; index < face.length; index++) {
+        const a = brush.vertices[face[index]],
+          b = brush.vertices[face[(index + 1) % face.length]];
+        result.push(subtract(b, a));
+      }
+    }
+    return result;
+  };
+  const edgesA = edgesOf(first),
+    edgesB = edgesOf(second);
+  for (const ea of edgesA)
+    for (const eb of edgesB)
+      addAxis(cross(ea, eb));
+  // Deduplicate and test
+  const seen = new Set();
+  for (const axis of axes) {
+    const key = `${axis.x.toFixed(6)},${axis.y.toFixed(6)},${axis.z.toFixed(6)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
     const a = axisProjection(first, axis),
       b = axisProjection(second, axis);
     if (a[1] <= b[0] + epsilon || b[1] <= a[0] + epsilon) return false;
@@ -1708,33 +1720,41 @@ export function limitExtrusionDistance(
       .push(constraint);
   }
 
-  // Compute baseline: which obstacles already overlap the source brush
-  // at zero extrusion. For those, only block if the candidate introduces
-  // new penetration beyond the baseline (cap vertices penetrating).
-  const baseOverlaps = new Set();
-  for (const obstacle of sourceBrushes) {
-    if (selectedBrushIds.has(obstacle.id)) continue;
-    for (const source of sourceBrushes) {
-      if (!selectedBrushIds.has(source.id)) continue;
-      if (convexBrushesOverlap(source, obstacle, CONTACT_EPSILON))
-        baseOverlaps.add(obstacle.id);
+  // Helper: shift candidate's base vertices by epsilon along the
+  // extrusion direction so pre-existing contact at the source face
+  // is not counted as collision.
+  const shiftedCandidate = (candidate, epsilon) => {
+    const baseFace = candidate.faces?.[0],
+      capFace = candidate.faces?.[1];
+    if (!baseFace?.length || !capFace?.length) return candidate;
+    // Compute the extrusion normal from base→cap centroid
+    let nx = 0, ny = 0, nz = 0;
+    for (const i of capFace) {
+      nx += candidate.vertices[i].x;
+      ny += candidate.vertices[i].y;
+      nz += candidate.vertices[i].z;
     }
-  }
-
-  // Measure penetration depth into an obstacle from any brush.
-  // Returns the most negative signed distance from any vertex to
-  // any obstacle face plane (0 means no penetration).
-  const penetrationDepth = (candidate, obstacle) => {
-    let deepest = 0;
-    for (const vertex of candidate.vertices) {
-      for (const face of obstacle.faces) {
-        const plane = planeForFace(obstacle, face);
-        if (!plane) continue;
-        const d = signedDistanceToPlane(vertex, plane);
-        if (d < deepest) deepest = d;
-      }
+    for (const i of baseFace) {
+      nx -= candidate.vertices[i].x;
+      ny -= candidate.vertices[i].y;
+      nz -= candidate.vertices[i].z;
     }
-    return deepest;
+    const nLen = Math.hypot(nx, ny, nz);
+    if (nLen < 0.000001) return candidate;
+    nx /= nLen; ny /= nLen; nz /= nLen;
+    const shifted = {
+      ...candidate,
+      vertices: candidate.vertices.map((v, i) =>
+        baseFace.includes(i)
+          ? {
+              x: v.x + nx * epsilon,
+              y: v.y + ny * epsilon,
+              z: v.z + nz * epsilon,
+            }
+          : v,
+      ),
+    };
+    return shifted;
   };
 
   const checkCollision = (previewBrushes) =>
@@ -1746,7 +1766,9 @@ export function limitExtrusionDistance(
 
         // Target brushes: SAT pass, then face plane test on cap vertices.
         if (targetConstraints?.length) {
-          if (!convexBrushesOverlap(candidate, obstacle, CONTACT_EPSILON))
+          if (
+            !convexBrushesOverlap(candidate, obstacle, CONTACT_EPSILON)
+          )
             return false;
           return targetConstraints.some((constraint) =>
             crossesTargetFace(
@@ -1758,24 +1780,11 @@ export function limitExtrusionDistance(
           );
         }
 
-        // Ordinary obstacles: SAT check, but allow pre-existing
-        // overlap up to the baseline penetration depth. Block only
-        // when the candidate penetrates deeper than the baseline.
-        if (!baseOverlaps.has(obstacle.id))
-          return convexBrushesOverlap(candidate, obstacle, CONTACT_EPSILON);
-        if (!convexBrushesOverlap(candidate, obstacle, CONTACT_EPSILON))
-          return false;
-        // Measure current penetration from cap vertices only.
-        const currentCap = { ...candidate, vertices: capVertices(candidate) };
-        const currentDepth = penetrationDepth(currentCap, obstacle);
-        // Baseline depth (from full source brush).
-        const sourceBrush = sourceBrushes.find((b) =>
-          selectedBrushIds.has(b.id),
-        );
-        const baseDepth = sourceBrush
-          ? penetrationDepth(sourceBrush, obstacle)
-          : 0;
-        return currentDepth < baseDepth - CONTACT_EPSILON;
+        // Swept-epsilon test: shift the base face outward so contact
+        // at the exact source face (inherited from the source brush)
+        // does not count as collision. Only new penetration blocks.
+        const shifted = shiftedCandidate(candidate, CONTACT_EPSILON);
+        return convexBrushesOverlap(shifted, obstacle, CONTACT_EPSILON);
       }),
     );
 

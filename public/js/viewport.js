@@ -922,15 +922,19 @@ export class Viewport {
       extNormal.y *= -1;
     }
     const freeCapAWorld = {
-      x: baseAWorld.x + extNormal.x * rawDistance,
-      y: baseAWorld.y + extNormal.y * rawDistance,
+      x: baseAWorld.x,
+      y: baseAWorld.y,
       z: baseAWorld.z,
     };
+    freeCapAWorld[axisX] += extNormal.x * rawDistance;
+    freeCapAWorld[axisY] += extNormal.y * rawDistance;
     const freeCapBWorld = {
-      x: baseBWorld.x + extNormal.x * rawDistance,
-      y: baseBWorld.y + extNormal.y * rawDistance,
+      x: baseBWorld.x,
+      y: baseBWorld.y,
       z: baseBWorld.z,
     };
+    freeCapBWorld[axisX] += extNormal.x * rawDistance;
+    freeCapBWorld[axisY] += extNormal.y * rawDistance;
     const freeCapAScreen = this.screen(freeCapAWorld);
     const freeCapBScreen = this.screen(freeCapBWorld);
 
@@ -1129,8 +1133,8 @@ export class Viewport {
     const edgeKey = (targetBrushId, fi, vi) =>
       `${targetBrushId}:f:${fi}:${vi}`;
     const findCapSnap = (corner2D, cornerScr, baseCorner) => {
-      const tryEndpointSnap = (targetBrushId, fi, sWorld, eWorld) => {
-        const key = edgeKey(targetBrushId, fi, /* vertex sentinel */ 0);
+      const tryEndpointSnap = (targetBrushId, fi, ei, sWorld, eWorld) => {
+        const key = edgeKey(targetBrushId, fi, ei);
         const wasActive = this.drag?.capEndpointMagnet?.get(key) === true;
         const candidates = [sWorld, eWorld]
           .map((vertex) => {
@@ -1160,9 +1164,13 @@ export class Viewport {
           return true;
         }
         if (!wasActive) return false;
-        return candidates.some(
+        const stillClose = candidates.some(
           (c) => c.pointerDistance <= RELEASE_RADIUS,
         );
+        if (!stillClose && this.drag?.capEndpointMagnet) {
+          this.drag.capEndpointMagnet.delete(key);
+        }
+        return stillClose;
       };
       const results = [];
       for (const targetBrush of this.visibleBrushes()) {
@@ -1210,7 +1218,7 @@ export class Viewport {
                 ? (corner2D.x - sW[axisX]) / dx
                 : (corner2D.y - sW[axisY]) / dy;
               if (tClamp < 0 || tClamp > 1) {
-                if (!tryEndpointSnap(targetBrush.id, fi, sW, eW)) continue;
+                if (!tryEndpointSnap(targetBrush.id, fi, ei, sW, eW)) continue;
                 snapX = sW[axisX] + dx * tClamp;
                 snapY = sW[axisY] + dy * tClamp;
               } else {
@@ -1223,7 +1231,7 @@ export class Viewport {
               const tT =
                 (fx * -sourceNormalDir.x - fy * -sourceNormalDir.y) / det;
               if (tT < 0 || tT > 1) {
-                if (!tryEndpointSnap(targetBrush.id, fi, sW, eW)) continue;
+                if (!tryEndpointSnap(targetBrush.id, fi, ei, sW, eW)) continue;
                 snapX = sW[axisX] + dx * tT;
                 snapY = sW[axisY] + dy * tT;
               } else {
@@ -1917,6 +1925,9 @@ export class Viewport {
           this.state.faceExtrusionMode,
           this.drag.snapTarget,
         );
+        // Mark as resolved: pointerup must commit the exact preview
+        // result without re-running collision limiting.
+        this.drag.extrusionResolved = true;
         // When the collision limiter reduced distance for snapped
         // geometry, convert to corner-snap with interpolated corners.
         if (
@@ -2131,8 +2142,8 @@ export class Viewport {
         return;
       }
       if (this.drag.type === "face-extrude") {
-        const { selection, guideSelection, distance, faceId, snapTarget } =
-          this.drag;
+        const { selection, guideSelection, distance, faceId, snapTarget,
+          extrusionResolved } = this.drag;
         this.previewBrushes = [];
         this.previewErrors = [];
         if (distance > 0)
@@ -2142,6 +2153,7 @@ export class Viewport {
             guideSelection,
             this.state.faceExtrusionMode,
             snapTarget,
+            extrusionResolved,
           );
         this.drag = null;
         this.extrusionCandidate = null;

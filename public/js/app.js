@@ -114,8 +114,8 @@ const view = new Viewport(
   (bounds) => {
     createBrushFromBounds(bounds);
   },
-  (selection, distance, guideSelection, mode, snapTarget) =>
-    commitFaceExtrusion(selection, distance, guideSelection, mode, snapTarget),
+  (selection, distance, guideSelection, mode, snapTarget, resolved) =>
+    commitFaceExtrusion(selection, distance, guideSelection, mode, snapTarget, resolved),
   (bounds) => {
     view.creationPreviewBrushes = buildBrushesFromBounds(bounds) || [];
     view.requestDraw();
@@ -1174,6 +1174,7 @@ function commitFaceExtrusion(
   guideSelection = selection,
   mode = state.faceExtrusionMode,
   snapTarget = null,
+  resolved = false,
 ) {
   state.faceSelection = new Set(selection);
   if (!state.faceSelection.size)
@@ -1187,10 +1188,9 @@ function commitFaceExtrusion(
     );
   if (!Number.isFinite(distance) || distance <= 0)
     return setStatus("Extrusion distance must be greater than zero", true);
-  // Drag commits: snapTarget is already collision-limited (corner-snap).
+  // Drag commits: distance and snapTarget are already collision-limited.
   // Do not re-limit; preview and commit must use the same resolved state.
-  const isDragCommit = snapTarget?.type === "corner-snap";
-  if (!isDragCommit) {
+  if (!resolved) {
     distance = limitExtrusionDistance(
       state.brushes,
       state.faceSelection,
