@@ -1497,6 +1497,15 @@ export class Viewport {
     const sideBPool = [...attachedBCandidates, ...sideBSnaps].slice(0, 6);
     const bestCap = capSnaps[0] || null;
 
+    // Acquire starting rails on the first drag frame. Once set, they
+    // are mandatory for all subsequent constraint combinations.
+    if (this.drag && this.drag.startRailA === undefined) {
+      this.drag.startRailA = attachedACandidates[0] || null;
+      this.drag.startRailB = attachedBCandidates[0] || null;
+    }
+    const hardSideA = this.drag?.startRailA ?? null;
+    const hardSideB = this.drag?.startRailB ?? null;
+
     // Constraint makers
     const makeCapConstraint = (snap) => ({
       movingEdge: "cap",
@@ -1543,58 +1552,81 @@ export class Viewport {
       };
     };
 
-    // Evaluate candidate combinations. For attached edges at shared
-    // corners, multiple rails may touch the same base corner (all at
-    // distance zero). Try the top candidates (cross-product) and pick
-    // the first valid result. Score unattached sides last.
+    // Evaluate candidate combinations. Starting rails (hardSideA/B)
+    // are mandatory for the entire drag and must appear in every
+    // combination. Fallback cannot drop a hard rail.
     let result = null;
     const capCon = bestCap ? [makeCapConstraint(bestCap)] : [];
 
-    // Attached+attached cross-product (both sides locked)
-    if (sideAPool.length && sideBPool.length) {
+    if (hardSideA && hardSideB) {
+      // Both hard rails exist: must include both.
+      const cA = makeSideConstraint(hardSideA);
+      const cB = makeSideConstraint(hardSideB);
+      if (capCon.length) result = tryConstraints([...capCon, cA, cB]);
+      if (!result) result = tryConstraints([cA, cB]);
+    } else if (hardSideA) {
+      // Hard sideA exists: must include it. Try with each soft sideB.
+      const cA = makeSideConstraint(hardSideA);
+      for (const sB of sideBPool) {
+        const cB = makeSideConstraint(sB);
+        if (capCon.length) result = tryConstraints([...capCon, cA, cB]);
+        if (!result) result = tryConstraints([cA, cB]);
+        if (result) break;
+      }
+      if (!result && capCon.length) result = tryConstraints([...capCon, cA]);
+      if (!result) result = tryConstraints([cA]);
+    } else if (hardSideB) {
+      // Hard sideB exists: must include it. Try with each soft sideA.
+      const cB = makeSideConstraint(hardSideB);
       for (const sA of sideAPool) {
-        for (const sB of sideBPool) {
-          const cA = [makeSideConstraint(sA)];
-          const cB = [makeSideConstraint(sB)];
-          result = tryConstraints([...capCon, ...cA, ...cB]);
-          if (result) break;
-          result = tryConstraints([...cA, ...cB]);
+        const cA = makeSideConstraint(sA);
+        if (capCon.length) result = tryConstraints([...capCon, cA, cB]);
+        if (!result) result = tryConstraints([cA, cB]);
+        if (result) break;
+      }
+      if (!result && capCon.length) result = tryConstraints([...capCon, cB]);
+      if (!result) result = tryConstraints([cB]);
+    } else {
+      // No hard rails: free cross-product fallback.
+      if (sideAPool.length && sideBPool.length) {
+        for (const sA of sideAPool) {
+          for (const sB of sideBPool) {
+            const cA = [makeSideConstraint(sA)];
+            const cB = [makeSideConstraint(sB)];
+            result = tryConstraints([...capCon, ...cA, ...cB]);
+            if (result) break;
+            result = tryConstraints([...cA, ...cB]);
+            if (result) break;
+          }
           if (result) break;
         }
-        if (result) break;
       }
-    }
-
-    // Cap + single side (each candidate)
-    if (!result && capCon.length) {
-      for (const sA of sideAPool) {
-        result = tryConstraints([...capCon, makeSideConstraint(sA)]);
-        if (result) break;
+      if (!result && capCon.length) {
+        for (const sA of sideAPool) {
+          result = tryConstraints([...capCon, makeSideConstraint(sA)]);
+          if (result) break;
+        }
       }
-    }
-    if (!result && capCon.length) {
-      for (const sB of sideBPool) {
-        result = tryConstraints([...capCon, makeSideConstraint(sB)]);
-        if (result) break;
+      if (!result && capCon.length) {
+        for (const sB of sideBPool) {
+          result = tryConstraints([...capCon, makeSideConstraint(sB)]);
+          if (result) break;
+        }
       }
-    }
-
-    // Single side (each candidate)
-    if (!result) {
-      for (const sA of sideAPool) {
-        result = tryConstraints([makeSideConstraint(sA)]);
-        if (result) break;
+      if (!result) {
+        for (const sA of sideAPool) {
+          result = tryConstraints([makeSideConstraint(sA)]);
+          if (result) break;
+        }
       }
-    }
-    if (!result) {
-      for (const sB of sideBPool) {
-        result = tryConstraints([makeSideConstraint(sB)]);
-        if (result) break;
+      if (!result) {
+        for (const sB of sideBPool) {
+          result = tryConstraints([makeSideConstraint(sB)]);
+          if (result) break;
+        }
       }
+      if (!result && capCon.length) result = tryConstraints(capCon);
     }
-
-    // Cap only
-    if (!result && capCon.length) result = tryConstraints(capCon);
 
     this.extrusionCandidate = result
       ? {
@@ -2655,6 +2687,30 @@ export class Viewport {
         context.lineTo(pair[1].x, pair[1].y);
         context.stroke();
         context.setLineDash([]);
+      }
+
+      // Draw persistent start rail target edges when hard rails
+      // exist and the solver didn't already draw them.
+      const [axX, axY] = this.axes();
+      for (const rail of [this.drag?.startRailA, this.drag?.startRailB]) {
+        if (!rail) continue;
+        const already = rail.movingEdge === "sideA" ? solved.sideA : solved.sideB;
+        if (already) continue;
+        const color = rail.movingEdge === "sideA" ? "#ff426680" : "#4dabf780";
+        const aPt = { x: 0, y: 0, z: 0 };
+        aPt[axX] = rail.targetStartWorld[axX];
+        aPt[axY] = rail.targetStartWorld[axY];
+        const bPt = { x: 0, y: 0, z: 0 };
+        bPt[axX] = rail.targetEndWorld[axX];
+        bPt[axY] = rail.targetEndWorld[axY];
+        const s0 = this.screen(aPt);
+        const s1 = this.screen(bPt);
+        context.strokeStyle = "#000000";
+        context.lineWidth = 12; context.lineCap = "round"; context.setLineDash([]);
+        context.beginPath(); context.moveTo(s0.x, s0.y); context.lineTo(s1.x, s1.y); context.stroke();
+        context.strokeStyle = color;
+        context.lineWidth = 8;
+        context.beginPath(); context.moveTo(s0.x, s0.y); context.lineTo(s1.x, s1.y); context.stroke();
       }
 
       // 4) Legend
