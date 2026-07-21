@@ -238,13 +238,17 @@ export class Viewport {
     };
   }
   toScreenEdges(edges) {
+    const [axX, axY] = this.axes();
     const out = {};
     for (const [k, pair] of Object.entries(edges || {})) {
       if (!pair) continue;
-      out[k] = [
-        this.screen({ x: pair[0].x, y: pair[0].y, z: 0 }),
-        this.screen({ x: pair[1].x, y: pair[1].y, z: 0 }),
-      ];
+      const aPt = { x: 0, y: 0, z: 0 };
+      aPt[axX] = pair[0].x;
+      aPt[axY] = pair[0].y;
+      const bPt = { x: 0, y: 0, z: 0 };
+      bPt[axX] = pair[1].x;
+      bPt[axY] = pair[1].y;
+      out[k] = [this.screen(aPt), this.screen(bPt)];
     }
     return out;
   }
