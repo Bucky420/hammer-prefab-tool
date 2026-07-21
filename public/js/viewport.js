@@ -854,104 +854,6 @@ export class Viewport {
       );
     };
 
-    // --- Face-magnet evaluation (Stage 5) ---
-    const evaluateFaceMagnet = (
-      moving,
-      targetBrush,
-      targetFaceIndex,
-      targetStartW,
-      targetEndW,
-      tS,
-      tE,
-      axX,
-      axY,
-      depthAxis,
-    ) => {
-      const targetFace = targetBrush.faces[targetFaceIndex];
-      if (!targetFace) return null;
-
-      // Target face normal (3D outward) using active axes
-      const targetNormal3D = this.faceNormal(targetBrush, targetFace);
-      const tNL = Math.hypot(
-        targetNormal3D.x,
-        targetNormal3D.y,
-        targetNormal3D.z,
-      );
-      if (tNL < 0.000001) return null;
-
-      // Reject horizontal (top/bottom) faces in active view
-      if (Math.abs(targetNormal3D[depthAxis]) > 0.1) return null;
-
-      // Project to active 2D plane
-      const targetNormal2D = {
-        x: targetNormal3D[axX] / tNL,
-        y: targetNormal3D[axY] / tNL,
-      };
-
-      // Normals must oppose (dot near -1)
-      const normalDot =
-        moving.outwardNormal2D.x * targetNormal2D.x +
-        moving.outwardNormal2D.y * targetNormal2D.y;
-      if (normalDot > -Math.cos((20 * Math.PI) / 180)) return null;
-
-      // Tangents must be parallel (world-space)
-      const movingTanW = {
-        x: moving.endWorld2D.x - moving.startWorld2D.x,
-        y: moving.endWorld2D.y - moving.startWorld2D.y,
-      };
-      const targetTanW = {
-        x: targetEndW[axX] - targetStartW[axX],
-        y: targetEndW[axY] - targetStartW[axY],
-      };
-      const mtLen = Math.hypot(movingTanW.x, movingTanW.y);
-      const ttLen = Math.hypot(targetTanW.x, targetTanW.y);
-      if (mtLen < 0.000001 || ttLen < 0.000001) return null;
-      const mTu = { x: movingTanW.x / mtLen, y: movingTanW.y / mtLen };
-      const tTu = { x: targetTanW.x / ttLen, y: targetTanW.y / ttLen };
-      const tangentDot = Math.abs(mTu.x * tTu.x + mTu.y * tTu.y);
-      if (tangentDot < Math.cos((20 * Math.PI) / 180)) return null;
-
-      // Target must be on the face's magnetic side (not behind) — world-space
-      const movingMidW = {
-        x: (moving.startWorld2D.x + moving.endWorld2D.x) / 2,
-        y: (moving.startWorld2D.y + moving.endWorld2D.y) / 2,
-      };
-      const targetMidW = {
-        x: targetStartW[axX] + (targetEndW[axX] - targetStartW[axX]) / 2,
-        y: targetStartW[axY] + (targetEndW[axY] - targetStartW[axY]) / 2,
-      };
-      const signedGap =
-        (targetMidW.x - movingMidW.x) * moving.outwardNormal2D.x +
-        (targetMidW.y - movingMidW.y) * moving.outwardNormal2D.y;
-      if (signedGap < -10) return null;
-
-      // Tangent overlap in screen space (use screen tangent, not world tangent)
-      const movingTanScr = {
-        x: moving.endScreen.x - moving.startScreen.x,
-        y: moving.endScreen.y - moving.startScreen.y,
-      };
-      const mtsLen = Math.hypot(movingTanScr.x, movingTanScr.y);
-      const mts =
-        mtsLen > 0.000001
-          ? { x: movingTanScr.x / mtsLen, y: movingTanScr.y / mtsLen }
-          : mTu;
-      const intervalOnAxis = (aScr, bScr, axis) => {
-        const p = aScr.x * axis.x + aScr.y * axis.y;
-        const q = bScr.x * axis.x + bScr.y * axis.y;
-        return [Math.min(p, q), Math.max(p, q)];
-      };
-      const mInt = intervalOnAxis(moving.startScreen, moving.endScreen, mts);
-      const tInt = intervalOnAxis(tS, tE, mts);
-      const overlap = Math.min(mInt[1], tInt[1]) - Math.max(mInt[0], tInt[0]);
-      if (overlap < -10) return null;
-
-      const angleError = Math.acos(Math.min(1, tangentDot)) * (180 / Math.PI);
-      const score =
-        Math.max(0, signedGap) * 10 + angleError * 2 - Math.max(0, overlap);
-
-      return { normalDot, tangentDot, signedGap, overlap, score };
-    };
-
     const segmentDistance = (aStart, aEnd, bStart, bEnd) => {
       if (segmentsIntersect(aStart, aEnd, bStart, bEnd)) return 0;
       return Math.min(
@@ -1120,7 +1022,7 @@ export class Viewport {
       ),
     ].filter(Boolean);
 
-    // Extracted geometry setup helper (for progressive locking, Stage 2)
+    // Extracted geometry setup helper
     const buildExtrusionFrame = () => ({
       activeAxes,
       axisX,
