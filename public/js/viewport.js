@@ -1124,10 +1124,14 @@ export class Viewport {
     // a direction constraint that makes the cap parallel to the base.
     const ACQUIRE_RADIUS = 12;
     const RELEASE_RADIUS = 18;
+    // Stable key: identifies the target edge (brush, face, and
+    // vertex index) so endpoint magnet state persists across frames.
+    const edgeKey = (targetBrushId, fi, vi) =>
+      `${targetBrushId}:f:${fi}:${vi}`;
     const findCapSnap = (corner2D, cornerScr, baseCorner) => {
-      const magnetState =
-        this.drag?.capEndpointMagnet?.get(`${corner2D.x},${corner2D.y}`);
-      const tryEndpointSnap = (sWorld, eWorld) => {
+      const tryEndpointSnap = (targetBrushId, fi, sWorld, eWorld) => {
+        const key = edgeKey(targetBrushId, fi, /* vertex sentinel */ 0);
+        const wasActive = this.drag?.capEndpointMagnet?.get(key) === true;
         const candidates = [sWorld, eWorld]
           .map((vertex) => {
             const worldPt = { x: 0, y: 0, z: 0 };
@@ -1145,13 +1149,17 @@ export class Viewport {
             return { point, forwardDistance, pointerDistance };
           })
           .filter((c) => c.forwardDistance > 0.01);
-        const acquireCandidates = candidates.filter(
+        const acquire = candidates.filter(
           (c) => c.pointerDistance <= ACQUIRE_RADIUS,
         );
-        if (acquireCandidates.length) {
+        if (acquire.length) {
+          if (this.drag) {
+            this.drag.capEndpointMagnet ||= new Map();
+            this.drag.capEndpointMagnet.set(key, true);
+          }
           return true;
         }
-        if (!magnetState) return false;
+        if (!wasActive) return false;
         return candidates.some(
           (c) => c.pointerDistance <= RELEASE_RADIUS,
         );
@@ -1202,7 +1210,7 @@ export class Viewport {
                 ? (corner2D.x - sW[axisX]) / dx
                 : (corner2D.y - sW[axisY]) / dy;
               if (tClamp < 0 || tClamp > 1) {
-                if (!tryEndpointSnap(sW, eW)) continue;
+                if (!tryEndpointSnap(targetBrush.id, fi, sW, eW)) continue;
                 snapX = sW[axisX] + dx * tClamp;
                 snapY = sW[axisY] + dy * tClamp;
               } else {
@@ -1215,7 +1223,7 @@ export class Viewport {
               const tT =
                 (fx * -sourceNormalDir.x - fy * -sourceNormalDir.y) / det;
               if (tT < 0 || tT > 1) {
-                if (!tryEndpointSnap(sW, eW)) continue;
+                if (!tryEndpointSnap(targetBrush.id, fi, sW, eW)) continue;
                 snapX = sW[axisX] + dx * tT;
                 snapY = sW[axisY] + dy * tT;
               } else {
@@ -1330,10 +1338,20 @@ export class Viewport {
     // Attached-edge snapping: detects if a source base corner physically
     // lies on a compatible target edge in world space. The caller provides
     // the movingEdge label so the side identity is always correct.
+    // Collects all candidates and ranks by:
+    // 1. exact attachment distance
+    // 2. target-face normal compatibility (outward face normal)
+    // 3. direction angular error
+    // 4. stable brush/face/edge index tie-breaker
     const EPSILON_ATTACH = 0.5;
     const findAttachedEdge = (movingEdge, baseCornerWorld) => {
+      const sideOutward =
+        movingEdge === "sideA"
+          ? { x: -sourceBaseDir.x, y: -sourceBaseDir.y }
+          : { x: sourceBaseDir.x, y: sourceBaseDir.y };
       const expectedDirX = sourceNormalDir.x;
       const expectedDirY = sourceNormalDir.y;
+      const candidates = [];
       for (const targetBrush of this.visibleBrushes()) {
         if (sourceBrushIds.has(targetBrush.id)) continue;
         for (let fi = 0; fi < targetBrush.faces.length; fi++) {
@@ -1344,6 +1362,11 @@ export class Viewport {
           const tfnY = tfNormal[axisY] || 0;
           const tfnLen = Math.hypot(tfnX, tfnY);
           if (tfnLen < 0.0001) continue;
+          const tfnDX = tfnX / tfnLen;
+          const tfnDY = tfnY / tfnLen;
+          // Target face must oppose the generated side face outward normal.
+          const faceDot = tfnDX * sideOutward.x + tfnDY * sideOutward.y;
+          if (faceDot > -0.3) continue;
           for (let ei = 0; ei < tf.length; ei++) {
             const vi = tf[ei];
             const otherVi = tf[(ei + 1) % tf.length];
@@ -1368,19 +1391,48 @@ export class Viewport {
               tDir.x * expectedDirX + tDir.y * expectedDirY,
             );
             if (sideDot < 0.85) continue;
-            return {
+            // Angular error: 0 = perfectly parallel to extrusion direction
+            const angularError = Math.acos(Math.min(1, sideDot));
+            candidates.push({
               movingEdge,
               targetBrushId: targetBrush.id,
               targetFaceIndex: fi,
+              targetEdgeIndex: ei,
               targetDirection: tDir,
               targetStartWorld: { ...sW },
               targetEndWorld: { ...eW },
-              distancePx: 0,
-            };
+              distancePx: dist,
+              angularError,
+              faceNormalDot: faceDot,
+            });
           }
         }
       }
-      return null;
+      if (!candidates.length) return null;
+      // Rank: tighter attachment, stronger face-normal opposition, lower
+      // angular error, stable brush/face/edge index tie-breaker.
+      candidates.sort((a, b) => {
+        if (a.distancePx !== b.distancePx) return a.distancePx - b.distancePx;
+        if (a.faceNormalDot !== b.faceNormalDot)
+          return a.faceNormalDot - b.faceNormalDot;
+        if (a.angularError !== b.angularError)
+          return a.angularError - b.angularError;
+        if (a.targetBrushId !== b.targetBrushId)
+          return a.targetBrushId < b.targetBrushId ? -1 : 1;
+        if (a.targetFaceIndex !== b.targetFaceIndex)
+          return a.targetFaceIndex - b.targetFaceIndex;
+        return a.targetEdgeIndex - b.targetEdgeIndex;
+      });
+      const winner = candidates[0];
+      return {
+        movingEdge: winner.movingEdge,
+        targetBrushId: winner.targetBrushId,
+        targetFaceIndex: winner.targetFaceIndex,
+        targetDirection: winner.targetDirection,
+        targetStartWorld: winner.targetStartWorld,
+        targetEndWorld: winner.targetEndWorld,
+        distancePx: winner.distancePx,
+      };
     };
 
     // Discover cap and side candidates from both cap corners.
@@ -1399,51 +1451,26 @@ export class Viewport {
     );
     const attachedA = findAttachedEdge("sideA", { x: baseA.x, y: baseA.y });
     const attachedB = findAttachedEdge("sideB", { x: baseB.x, y: baseB.y });
-    const sideASnaps =
-      baseAScreen && !attachedA ? findSideSnap("sideA", baseAScreen) : [];
-    const sideBSnaps =
-      baseBScreen && !attachedB ? findSideSnap("sideB", baseBScreen) : [];
+    // Attached edges take priority; magnetic search is the fallback.
+    const sideASnaps = attachedA
+      ? []
+      : baseAScreen
+        ? findSideSnap("sideA", baseAScreen)
+        : [];
+    const sideBSnaps = attachedB
+      ? []
+      : baseBScreen
+        ? findSideSnap("sideB", baseBScreen)
+        : [];
 
-    // Store endpoint magnet state on drag so it persists across frames.
-    if (this.drag) {
-      this.drag.capEndpointMagnet ||= new Map();
-      for (const c of [...capSnapsA, ...capSnapsB]) {
-        const key = `${c.startWorld[axisX]},${c.startWorld[axisY]}:${c.endWorld[axisX]},${c.endWorld[axisY]}`;
-        this.drag.capEndpointMagnet.set(key, true);
-      }
-    }
-
-    // Build debug data
+    // Build debug data (extrusionMatchDebug is no longer rendered; only
+    // extrusionSolvedDebug is used for the overlay lines).
     this.extrusionMatchDebug = [];
-    for (const snap of capSnaps) {
-      this.extrusionMatchDebug.push({
-        movingEdge: "cap",
-        targetBrushId: snap.targetBrushId,
-        targetFaceIndex: snap.targetFaceIndex,
-        segmentDistance: snap.distance,
-      });
-    }
-    for (const snap of sideASnaps) {
-      this.extrusionMatchDebug.push({
-        movingEdge: "sideA",
-        targetBrushId: snap.targetBrushId,
-        targetFaceIndex: snap.targetFaceIndex,
-        segmentDistance: snap.distancePx,
-      });
-    }
-    for (const snap of sideBSnaps) {
-      this.extrusionMatchDebug.push({
-        movingEdge: "sideB",
-        targetBrushId: snap.targetBrushId,
-        targetFaceIndex: snap.targetFaceIndex,
-        segmentDistance: snap.distancePx,
-      });
-    }
 
-    // Best candidates from discovery
+    // Best candidates: attached edges win, magnetic search is fallback.
     const bestCap = capSnaps[0] || null;
-    const bestSideA = sideASnaps[0] || null;
-    const bestSideB = sideBSnaps[0] || null;
+    const bestSideA = attachedA ?? sideASnaps[0] ?? null;
+    const bestSideB = attachedB ?? sideBSnaps[0] ?? null;
 
     // Constraint makers
     const makeCapConstraint = (snap) => ({
@@ -1463,10 +1490,11 @@ export class Viewport {
 
     // Try constraint combinations in priority order (most→least constrained).
     // Accept the first that produces valid convex forward-facing geometry.
+    const allActiveAxes = this.axes();
     const tryConstraints = (candidates) => {
       const sol = solveSingleFaceExtrusion({
         brush, faceIndex, distance: rawDistance,
-        activeAxes: [axisX, axisY],
+        activeAxes: allActiveAxes,
         constraints: candidates,
       });
       if (!sol?.cap) return null;
@@ -1479,7 +1507,7 @@ export class Viewport {
         solvedEdges: sol.solvedEdges,
         snapTarget: {
           type: "cross-section-rails",
-          activeAxes: [axisX, axisY],
+          activeAxes: allActiveAxes,
           conforming: candidates,
           finalCorners,
           targetBrushIds: [...new Set(candidates.map((c) => c.targetBrushId))],
@@ -2640,18 +2668,6 @@ export class Viewport {
         context.lineTo(edge.endScreen.x, edge.endScreen.y);
         context.stroke();
       }
-    if (this.state.mode === "face" && this.extrusionCandidate?.edge) {
-      context.strokeStyle = "#43e8ff";
-      context.lineWidth = 5;
-      for (const edge of this.extrusionCandidate.edges || [
-        this.extrusionCandidate.edge,
-      ]) {
-        context.beginPath();
-        context.moveTo(edge.startScreen.x, edge.startScreen.y);
-        context.lineTo(edge.endScreen.x, edge.endScreen.y);
-        context.stroke();
-      }
-    }
     if (this.state.mode === "face" && this.state.faceSelection.size) {
       context.strokeStyle = COLORS.selected;
       context.lineWidth = 4;

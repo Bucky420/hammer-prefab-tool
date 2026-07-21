@@ -1187,37 +1187,40 @@ function commitFaceExtrusion(
     );
   if (!Number.isFinite(distance) || distance <= 0)
     return setStatus("Extrusion distance must be greater than zero", true);
-  distance = limitExtrusionDistance(
-    state.brushes,
-    state.faceSelection,
-    distance,
-    state.grid,
-    guideSelection,
-    mode,
-    snapTarget,
-  );
-  if (distance <= 0.0001)
-    return setStatus("Extrusion blocked by an adjacent brush", true);
-  // When the collision limiter reduced distance for snapped geometry,
-  // convert snapTarget to corner-snap with interpolated corners.
-  if (snapTarget?.finalCorners && distance < snapTarget.distance) {
-    const alpha =
-      snapTarget.distance > 0 ? distance / snapTarget.distance : 0;
-    const { baseA, baseB, capA, capB } = snapTarget.finalCorners;
-    snapTarget = {
-      type: "corner-snap",
-      activeAxes: snapTarget.activeAxes,
-      snapA: {
-        x: baseA.x + (capA.x - baseA.x) * alpha,
-        y: baseA.y + (capA.y - baseA.y) * alpha,
-      },
-      snapB: {
-        x: baseB.x + (capB.x - baseB.x) * alpha,
-        y: baseB.y + (capB.y - baseB.y) * alpha,
-      },
-      brushes: state.brushes,
+  // Drag commits: snapTarget is already collision-limited (corner-snap).
+  // Do not re-limit; preview and commit must use the same resolved state.
+  const isDragCommit = snapTarget?.type === "corner-snap";
+  if (!isDragCommit) {
+    distance = limitExtrusionDistance(
+      state.brushes,
+      state.faceSelection,
       distance,
-    };
+      state.grid,
+      guideSelection,
+      mode,
+      snapTarget,
+    );
+    if (distance <= 0.0001)
+      return setStatus("Extrusion blocked by an adjacent brush", true);
+    if (snapTarget?.finalCorners && distance < snapTarget.distance) {
+      const alpha =
+        snapTarget.distance > 0 ? distance / snapTarget.distance : 0;
+      const { baseA, baseB, capA, capB } = snapTarget.finalCorners;
+      snapTarget = {
+        type: "corner-snap",
+        activeAxes: snapTarget.activeAxes,
+        snapA: {
+          x: baseA.x + (capA.x - baseA.x) * alpha,
+          y: baseA.y + (capA.y - baseA.y) * alpha,
+        },
+        snapB: {
+          x: baseB.x + (capB.x - baseB.x) * alpha,
+          y: baseB.y + (capB.y - baseB.y) * alpha,
+        },
+        brushes: state.brushes,
+        distance,
+      };
+    }
   }
   const result = extrudeSelectedFaces(
     state.brushes,

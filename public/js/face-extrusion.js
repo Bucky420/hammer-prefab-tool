@@ -1708,67 +1708,74 @@ export function limitExtrusionDistance(
       .push(constraint);
   }
 
-  // Compute baseline: which obstacles already overlap the source face
-  // at zero extrusion. Pre-existing contact/overlap must not count as
-  // newly increased penetration, otherwise every alpha is classified as
-  // colliding and the distance collapses to zero.
+  // Compute baseline: which obstacles already overlap the source brush
+  // at zero extrusion. For those, only block if the candidate introduces
+  // new penetration beyond the baseline (cap vertices penetrating).
   const baseOverlaps = new Set();
-  if (snapTarget?.finalCorners) {
-    for (const brush of sourceBrushes) {
-      if (selectedBrushIds.has(brush.id)) continue;
-      for (const candidate of sourceBrushes) {
-        if (!selectedBrushIds.has(candidate.id)) continue;
-        if (convexBrushesOverlap(candidate, brush, CONTACT_EPSILON))
-          baseOverlaps.add(brush.id);
-      }
+  for (const obstacle of sourceBrushes) {
+    if (selectedBrushIds.has(obstacle.id)) continue;
+    for (const source of sourceBrushes) {
+      if (!selectedBrushIds.has(source.id)) continue;
+      if (convexBrushesOverlap(source, obstacle, CONTACT_EPSILON))
+        baseOverlaps.add(obstacle.id);
     }
   }
+
+  // Measure penetration depth into an obstacle from any brush.
+  // Returns the most negative signed distance from any vertex to
+  // any obstacle face plane (0 means no penetration).
+  const penetrationDepth = (candidate, obstacle) => {
+    let deepest = 0;
+    for (const vertex of candidate.vertices) {
+      for (const face of obstacle.faces) {
+        const plane = planeForFace(obstacle, face);
+        if (!plane) continue;
+        const d = signedDistanceToPlane(vertex, plane);
+        if (d < deepest) deepest = d;
+      }
+    }
+    return deepest;
+  };
 
   const checkCollision = (previewBrushes) =>
     previewBrushes.some((candidate) =>
       sourceBrushes.some((obstacle) => {
         if (selectedBrushIds.has(obstacle.id)) return false;
 
-        // Pre-existing overlap at the source base is not a new collision.
-        if (baseOverlaps.has(obstacle.id)) {
-          // Still check target-face penetration for target brushes.
-          const targetConstraints = constraintsByTargetBrush.get(obstacle.id);
-          if (targetConstraints?.length) {
-            return targetConstraints.some((constraint) =>
-              crossesTargetFace(
-                candidate,
-                obstacle,
-                constraint.targetFaceIndex,
-                TARGET_CONTACT_EPSILON,
-              ),
-            );
-          }
-          return false;
-        }
-
         const targetConstraints = constraintsByTargetBrush.get(obstacle.id);
 
-        // Ordinary obstacles (no target-face constraints) use normal SAT.
-        if (!targetConstraints?.length)
+        // Target brushes: SAT pass, then face plane test on cap vertices.
+        if (targetConstraints?.length) {
+          if (!convexBrushesOverlap(candidate, obstacle, CONTACT_EPSILON))
+            return false;
+          return targetConstraints.some((constraint) =>
+            crossesTargetFace(
+              candidate,
+              obstacle,
+              constraint.targetFaceIndex,
+              TARGET_CONTACT_EPSILON,
+            ),
+          );
+        }
+
+        // Ordinary obstacles: SAT check, but allow pre-existing
+        // overlap up to the baseline penetration depth. Block only
+        // when the candidate penetrates deeper than the baseline.
+        if (!baseOverlaps.has(obstacle.id))
           return convexBrushesOverlap(candidate, obstacle, CONTACT_EPSILON);
-
-        // No SAT overlap at all → no collision even for target brushes.
-        if (
-          !convexBrushesOverlap(candidate, obstacle, CONTACT_EPSILON)
-        )
+        if (!convexBrushesOverlap(candidate, obstacle, CONTACT_EPSILON))
           return false;
-
-        // SAT overlap with an intended target face.
-        // Allow exact contact; block only if a candidate vertex
-        // crosses behind the target face plane.
-        return targetConstraints.some((constraint) =>
-          crossesTargetFace(
-            candidate,
-            obstacle,
-            constraint.targetFaceIndex,
-            TARGET_CONTACT_EPSILON,
-          ),
+        // Measure current penetration from cap vertices only.
+        const currentCap = { ...candidate, vertices: capVertices(candidate) };
+        const currentDepth = penetrationDepth(currentCap, obstacle);
+        // Baseline depth (from full source brush).
+        const sourceBrush = sourceBrushes.find((b) =>
+          selectedBrushIds.has(b.id),
         );
+        const baseDepth = sourceBrush
+          ? penetrationDepth(sourceBrush, obstacle)
+          : 0;
+        return currentDepth < baseDepth - CONTACT_EPSILON;
       }),
     );
 
@@ -1796,8 +1803,11 @@ export function limitExtrusionDistance(
         brushes: sourceBrushes,
         distance,
       };
+      // Pure probe: deep-copy brushes so the source is not mutated
+      // by faceMaterials changes during binary search.
+      const probeSource = JSON.parse(JSON.stringify(sourceBrushes));
       const result = extrudeSelectedFaces(
-        sourceBrushes,
+        probeSource,
         selection,
         distance,
         grid,
@@ -1837,8 +1847,9 @@ export function limitExtrusionDistance(
 
   // Non-snapped: binary search on distance.
   const collides = (amount) => {
+    const probeSource = JSON.parse(JSON.stringify(sourceBrushes));
     const result = extrudeSelectedFaces(
-      sourceBrushes,
+      probeSource,
       selection,
       amount,
       grid,
