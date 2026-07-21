@@ -1708,10 +1708,44 @@ export function limitExtrusionDistance(
       .push(constraint);
   }
 
+  // Compute baseline: which obstacles already overlap the source face
+  // at zero extrusion. Pre-existing contact/overlap must not count as
+  // newly increased penetration, otherwise every alpha is classified as
+  // colliding and the distance collapses to zero.
+  const baseOverlaps = new Set();
+  if (snapTarget?.finalCorners) {
+    for (const brush of sourceBrushes) {
+      if (selectedBrushIds.has(brush.id)) continue;
+      for (const candidate of sourceBrushes) {
+        if (!selectedBrushIds.has(candidate.id)) continue;
+        if (convexBrushesOverlap(candidate, brush, CONTACT_EPSILON))
+          baseOverlaps.add(brush.id);
+      }
+    }
+  }
+
   const checkCollision = (previewBrushes) =>
     previewBrushes.some((candidate) =>
       sourceBrushes.some((obstacle) => {
         if (selectedBrushIds.has(obstacle.id)) return false;
+
+        // Pre-existing overlap at the source base is not a new collision.
+        if (baseOverlaps.has(obstacle.id)) {
+          // Still check target-face penetration for target brushes.
+          const targetConstraints = constraintsByTargetBrush.get(obstacle.id);
+          if (targetConstraints?.length) {
+            return targetConstraints.some((constraint) =>
+              crossesTargetFace(
+                candidate,
+                obstacle,
+                constraint.targetFaceIndex,
+                TARGET_CONTACT_EPSILON,
+              ),
+            );
+          }
+          return false;
+        }
+
         const targetConstraints = constraintsByTargetBrush.get(obstacle.id);
 
         // Ordinary obstacles (no target-face constraints) use normal SAT.
