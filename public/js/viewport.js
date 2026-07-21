@@ -962,128 +962,7 @@ export class Viewport {
       );
     };
 
-    // --- Progressive lock logic (Stage 4) ---
-    const locks = this.drag?.extrusionLocks || {
-      sideA: null,
-      cap: null,
-      sideB: null,
-    };
-    const lockedKeys = ["sideA", "cap", "sideB"].filter((k) => locks[k]);
-    // Sticky lock: never allow sideA+sideB simultaneously
-    if (locks.sideA && locks.sideB) {
-      locks.sideB = null;
-    }
-    // Cap at 2 locks
-    const lockCount = Object.values(locks).filter(Boolean).length;
-    if (lockedKeys.length) {
-      // Enforce: side locked -> only cap can join; cap locked -> mouse picks side
-      if (locks.sideA && !locks.cap) {
-        // Only cap can be added now
-      } else if (locks.sideB && !locks.cap) {
-        // Only cap can be added now
-      }
-      if (lockCount >= 2 && this.drag?.extrusionLocks) {
-        // Skip adding more; just solve with existing two
-      }
-      const csts = lockedKeys.map((k) => ({
-        movingEdge: k,
-        direction: locks[k].directionWorld2D,
-        origin: locks[k].originWorld2D,
-        targetStart: locks[k].targetStartWorld2D,
-        targetEnd: locks[k].targetEndWorld2D,
-        targetBrushId: locks[k].targetBrushId,
-      }));
-      const sol = solveSingleFaceExtrusion({
-        brush,
-        faceIndex,
-        distance: rawDistance,
-        activeAxes: this.axes(),
-        constraints: csts,
-      });
-      if (sol?.cap) {
-        // Release drifted locks
-        const lockDist = 18;
-        for (const k of lockedKeys) {
-          if (!locks[k] || !sol.solvedEdges?.[k]) continue;
-          const [p1, p2] = sol.solvedEdges[k];
-          const s1 = this.screen({ x: p1.x, y: p1.y, z: 0 });
-          const s2 = this.screen({ x: p2.x, y: p2.y, z: 0 });
-          if (
-            segmentDistance(s1, s2, locks[k].startScreen, locks[k].endScreen) >
-            lockDist
-          )
-            locks[k] = null;
-        }
-        // If locks still valid, return lock-based result
-        const activeLocks = lockedKeys.filter((k) => locks[k]);
-        if (activeLocks.length) {
-          const finalCsts = activeLocks.map((k) => ({
-            movingEdge: k,
-            direction: locks[k].directionWorld2D,
-            origin: locks[k].originWorld2D,
-            targetStart: locks[k].targetStartWorld2D,
-            targetEnd: locks[k].targetEndWorld2D,
-            targetBrushId: locks[k].targetBrushId,
-          }));
-          const finalSol = solveSingleFaceExtrusion({
-            brush,
-            faceIndex,
-            distance: rawDistance,
-            activeAxes: this.axes(),
-            constraints: finalCsts,
-          });
-          if (finalSol?.cap) {
-            const candidate = {
-              distance: rawDistance,
-              edgeKey: activeLocks.join("|"),
-              edges: activeLocks.map((k) => ({
-                startScreen: locks[k].startScreen,
-                endScreen: locks[k].endScreen,
-              })),
-              matchCount: activeLocks.length,
-              snapTarget: {
-                type: "cross-section-rails",
-                activeAxes: this.axes(),
-                conforming: finalCsts,
-                brushes: this.state.brushes,
-                distance: rawDistance,
-                targetBrushIds: [
-                  ...new Set(finalCsts.map((c) => c.targetBrushId)),
-                ],
-              },
-            };
-            this.extrusionCandidate = candidate;
-            if (this.drag) this.drag.extrusionCandidate = candidate;
-            // Convert selected conforming constraints to progressive locks
-            const conformingList = candidate?.snapTarget?.conforming;
-            if (conformingList && this.drag?.extrusionLocks) {
-              conformingList.forEach((c, i) => {
-                if (!this.drag.extrusionLocks[c.movingEdge]) {
-                  const edgeScr = candidate.edges?.[i];
-                  this.drag.extrusionLocks[c.movingEdge] = {
-                    movingEdge: c.movingEdge,
-                    projectedTargetKey: c.targetEdgeKey || "",
-                    targetBrushId: c.targetBrushId,
-                    directionWorld2D: c.direction,
-                    originWorld2D: c.origin,
-                    targetStartWorld2D: c.targetStart,
-                    targetEndWorld2D: c.targetEnd,
-                    startScreen: edgeScr?.startScreen || { x: 0, y: 0 },
-                    endScreen: edgeScr?.endScreen || { x: 0, y: 0 },
-                    segmentDistance: 0,
-                  };
-                }
-              });
-            }
-            return rawDistance;
-          }
-        }
-      }
-    }
-
-    const snapCandidates = [],
-      acquireRadius = 10,
-      activeAxes = this.axes(),
+    const activeAxes = this.axes(),
       [axisX, axisY] = activeAxes;
 
     // Group face vertices into the two unique 2D endpoints (baseA, baseB)
@@ -1334,32 +1213,54 @@ export class Viewport {
     // The snap picks a target edge parallel to the base and provides
     // a direction constraint that makes the cap parallel to the base.
     const findCapSnap = (corner2D, cornerScr, baseCorner) => {
-      // Forward-only endpoint magnet. Only snaps to an endpoint that is
-      // ahead of the source base corner along the extrusion normal, and
-      // only when the moving cap corner is within a small screen radius.
-      const ENDPOINT_MAGNET_RADIUS = 12;
+      // Endpoint magnet: only applies to forward endpoints (ahead of the
+      // source base corner along the extrusion normal). Separate acquire
+      // and release radii for hysteresis so the snap does not flicker.
+      const ACQUIRE_RADIUS = 12;
+      const RELEASE_RADIUS = 18;
+      let endpointMagnetActive = false;
+      let lastAcquiredEndpoint = null;
       const tryEndpointSnap = (sWorld, eWorld) => {
         const candidates = [sWorld, eWorld]
           .map((vertex) => {
+            const worldPt = { x: 0, y: 0, z: 0 };
+            worldPt[axisX] = vertex[axisX];
+            worldPt[axisY] = vertex[axisY];
             const point = { x: vertex[axisX], y: vertex[axisY] };
             const forwardDistance =
               (point.x - baseCorner.x) * sourceNormalDir.x +
               (point.y - baseCorner.y) * sourceNormalDir.y;
-            const screenPoint = this.screen({
-              [axisX]: point.x,
-              [axisY]: point.y,
-              z: 0,
-            });
+            const screenPoint = this.screen(worldPt);
             const pointerDistance = Math.hypot(
               cornerScr.x - screenPoint.x,
               cornerScr.y - screenPoint.y,
             );
             return { point, forwardDistance, pointerDistance };
           })
-          .filter((c) => c.forwardDistance > 0.01)
-          .filter((c) => c.pointerDistance <= ENDPOINT_MAGNET_RADIUS)
-          .sort((a, b) => a.pointerDistance - b.pointerDistance);
-        return candidates[0]?.point ?? null;
+          .filter((c) => c.forwardDistance > 0.01);
+        const acquireCandidates = candidates.filter(
+          (c) => c.pointerDistance <= ACQUIRE_RADIUS,
+        );
+        if (acquireCandidates.length) {
+          const best = acquireCandidates.sort(
+            (a, b) => a.pointerDistance - b.pointerDistance,
+          )[0];
+          endpointMagnetActive = true;
+          lastAcquiredEndpoint = best.point;
+          return true;
+        }
+        // Release: only if active and past RELEASE_RADIUS
+        if (!endpointMagnetActive) return false;
+        const stillClose = candidates.some(
+          (c) => c.pointerDistance <= RELEASE_RADIUS,
+        );
+        if (!stillClose) {
+          endpointMagnetActive = false;
+          lastAcquiredEndpoint = null;
+          return false;
+        }
+        // Hysteresis: keep the snap active even beyond acquire radius
+        return true;
       };
       const results = [];
       for (const targetBrush of this.visibleBrushes()) {
@@ -1407,10 +1308,9 @@ export class Viewport {
                 ? (corner2D.x - sW[axisX]) / dx
                 : (corner2D.y - sW[axisY]) / dy;
               if (tClamp < 0 || tClamp > 1) {
-                const ep = tryEndpointSnap(sW, eW);
-                if (!ep) continue;
-                snapX = ep.x;
-                snapY = ep.y;
+                if (!tryEndpointSnap(sW, eW)) continue;
+                snapX = sW[axisX] + dx * tClamp;
+                snapY = sW[axisY] + dy * tClamp;
               } else {
                 snapX = sW[axisX] + dx * tClamp;
                 snapY = sW[axisY] + dy * tClamp;
@@ -1421,18 +1321,20 @@ export class Viewport {
               const tT =
                 (fx * -sourceNormalDir.x - fy * -sourceNormalDir.y) / det;
               if (tT < 0 || tT > 1) {
-                const ep = tryEndpointSnap(sW, eW);
-                if (!ep) continue;
-                snapX = ep.x;
-                snapY = ep.y;
+                if (!tryEndpointSnap(sW, eW)) continue;
+                snapX = sW[axisX] + dx * tT;
+                snapY = sW[axisY] + dy * tT;
               } else {
                 snapX = sW[axisX] + dx * tT;
                 snapY = sW[axisY] + dy * tT;
               }
             }
+            const worldSnapPt = { x: 0, y: 0, z: 0 };
+            worldSnapPt[axisX] = snapX;
+            worldSnapPt[axisY] = snapY;
             const dist = Math.hypot(
-              cornerScr.x - this.screen({ x: snapX, y: snapY, z: 0 }).x,
-              cornerScr.y - this.screen({ x: snapX, y: snapY, z: 0 }).y,
+              cornerScr.x - this.screen(worldSnapPt).x,
+              cornerScr.y - this.screen(worldSnapPt).y,
             );
             if (dist > cornerRadius * 3) continue;
             results.push({
@@ -1531,28 +1433,102 @@ export class Viewport {
       return results.sort((a, b) => a.distancePx - b.distancePx);
     };
 
+    // Attached-edge snapping: before the screen-radius side search,
+    // detect if baseA or baseB physically lies on a compatible target
+    // edge in world space. This captures geometry touching the source.
+    const EPSILON_ATTACH = 0.5;
+    const findAttachedEdge = (baseCornerWorld) => {
+      for (const targetBrush of this.visibleBrushes()) {
+        if (sourceBrushIds.has(targetBrush.id)) continue;
+        for (let fi = 0; fi < targetBrush.faces.length; fi++) {
+          const tf = targetBrush.faces[fi];
+          const tfNormal = faceDirection(targetBrush, tf);
+          if (!tfNormal) continue;
+          const tfnX = tfNormal[axisX] || 0;
+          const tfnY = tfNormal[axisY] || 0;
+          const tfnLen = Math.hypot(tfnX, tfnY);
+          if (tfnLen < 0.0001) continue;
+          const tfnDX = tfnX / tfnLen;
+          const tfnDY = tfnY / tfnLen;
+          const expectedDirX = sourceNormalDir.x;
+          const expectedDirY = sourceNormalDir.y;
+          const sideAOutward = { x: -sourceBaseDir.x, y: -sourceBaseDir.y };
+          const sideBOutward = { x: sourceBaseDir.x, y: sourceBaseDir.y };
+          for (let ei = 0; ei < tf.length; ei++) {
+            const vi = tf[ei];
+            const otherVi = tf[(ei + 1) % tf.length];
+            const sW = targetBrush.vertices[vi];
+            const eW = targetBrush.vertices[otherVi];
+            const dx = eW[axisX] - sW[axisX];
+            const dy = eW[axisY] - sW[axisY];
+            const dL = Math.hypot(dx, dy);
+            if (dL < 0.0001) continue;
+            const closest = closestPointOnSegment(
+              { x: baseCornerWorld.x, y: baseCornerWorld.y },
+              { x: sW[axisX], y: sW[axisY] },
+              { x: eW[axisX], y: eW[axisY] },
+            );
+            const dist = Math.hypot(
+              baseCornerWorld.x - closest.point.x,
+              baseCornerWorld.y - closest.point.y,
+            );
+            if (dist > EPSILON_ATTACH) continue;
+            const tDir = { x: dx / dL, y: dy / dL };
+            const sideDot = Math.abs(
+              tDir.x * expectedDirX + tDir.y * expectedDirY,
+            );
+            if (sideDot < 0.85) continue;
+            // Determine which side this is based on face normal
+            const isSideA =
+              tfnDX * sideAOutward.x + tfnDY * sideAOutward.y <=
+              tfnDX * sideBOutward.x + tfnDY * sideBOutward.y;
+            return {
+              movingEdge: isSideA ? "sideA" : "sideB",
+              targetBrushId: targetBrush.id,
+              targetFaceIndex: fi,
+              targetDirection: tDir,
+              targetStartWorld: { ...sW },
+              targetEndWorld: { ...eW },
+              distancePx: 0,
+            };
+          }
+        }
+      }
+      return null;
+    };
+    const attachedA = findAttachedEdge({ x: baseA.x, y: baseA.y });
+    const attachedB = findAttachedEdge({ x: baseB.x, y: baseB.y });
+
     // Discover cap and side candidates
     const capSnaps = findCapSnap(
       freeCapA2D,
       capCornerScreened.capA,
       { x: baseA.x, y: baseA.y },
     );
-    const sideASnaps = findSideSnap("sideA", baseAScreen);
-    const sideBSnaps = findSideSnap("sideB", baseBScreen);
+    const sideASnaps =
+      baseAScreen && !attachedA ? findSideSnap("sideA", baseAScreen) : [];
+    const sideBSnaps =
+      baseBScreen && !attachedB ? findSideSnap("sideB", baseBScreen) : [];
 
-    // Persistent side snap locks for the entire drag.
-    // Once acquired from the base corner, the side direction stays
-    // even when the far cap endpoint passes the finite target segment.
+    // Persistent side snap locks: attached edges take priority,
+    // then screen-radius snaps, locked for the entire drag.
     if (this.drag) {
       this.drag.sideSnapLocks ||= { sideA: null, sideB: null };
-      if (!this.drag.sideSnapLocks.sideA && sideASnaps[0])
-        this.drag.sideSnapLocks.sideA = sideASnaps[0];
-      if (!this.drag.sideSnapLocks.sideB && sideBSnaps[0])
-        this.drag.sideSnapLocks.sideB = sideBSnaps[0];
+      if (!this.drag.sideSnapLocks.sideA) {
+        if (attachedA)
+          this.drag.sideSnapLocks.sideA = attachedA;
+        else if (sideASnaps[0])
+          this.drag.sideSnapLocks.sideA = sideASnaps[0];
+      }
+      if (!this.drag.sideSnapLocks.sideB) {
+        if (attachedB)
+          this.drag.sideSnapLocks.sideB = attachedB;
+        else if (sideBSnaps[0])
+          this.drag.sideSnapLocks.sideB = sideBSnaps[0];
+      }
     }
 
-    // Use locked snaps if available; the far-corner-fresh snap is only
-    // used when no lock exists yet.
+    // Use locked snaps if available.
     const bestCap = capSnaps[0] || null;
     const bestSideA =
       this.drag?.sideSnapLocks?.sideA || sideASnaps[0] || null;
@@ -1587,38 +1563,34 @@ export class Viewport {
     }
 
     // Build constraints: max 2, never sideA+sideB.
+    const makeCapConstraint = (snap) => ({
+      movingEdge: "cap",
+      direction: snap.direction,
+      origin: snap.cornerSnap,
+      targetBrushId: snap.targetBrushId,
+      targetFaceIndex: snap.targetFaceIndex,
+    });
+    const makeSideConstraint = (snap, baseCorner) => ({
+      movingEdge: snap.movingEdge,
+      direction: snap.targetDirection,
+      origin: { x: baseCorner.x, y: baseCorner.y },
+      targetBrushId: snap.targetBrushId,
+      targetFaceIndex: snap.targetFaceIndex,
+    });
     const constraints = [];
-    if (bestCap) {
-      constraints.push({
-        movingEdge: "cap",
-        direction: bestCap.direction,
-        origin: bestCap.cornerSnap,
-        targetBrushId: bestCap.targetBrushId,
-        targetFaceIndex: bestCap.targetFaceIndex,
-      });
+    if (bestCap) constraints.push(makeCapConstraint(bestCap));
+    // Pick the best side: never sideA+sideB together.
+    const bestSide =
+      bestSideA && bestSideB
+        ? bestSideA.distancePx <= bestSideB.distancePx
+          ? bestSideA
+          : bestSideB
+        : bestSideA || bestSideB;
+    if (bestSide) {
+      const baseCorner =
+        bestSide.movingEdge === "sideA" ? baseA : baseB;
+      constraints.push(makeSideConstraint(bestSide, baseCorner));
     }
-    if (bestSideA && !bestCap) {
-      constraints.push({
-        movingEdge: "sideA",
-        direction: bestSideA.targetDirection,
-        origin: { x: baseA.x, y: baseA.y },
-        targetBrushId: bestSideA.targetBrushId,
-        targetFaceIndex: bestSideA.targetFaceIndex,
-      });
-    } else if (bestSideB && !bestCap && constraints.length === 0) {
-      constraints.push({
-        movingEdge: "sideB",
-        direction: bestSideB.targetDirection,
-        origin: { x: baseB.x, y: baseB.y },
-        targetBrushId: bestSideB.targetBrushId,
-        targetFaceIndex: bestSideB.targetFaceIndex,
-      });
-    }
-    // One-side snap copies direction to the opposite side.
-    let sideADir = bestSideA?.targetDirection || sourceNormalDir;
-    let sideBDir = bestSideB?.targetDirection || sourceNormalDir;
-    if (bestSideA && !bestSideB) sideBDir = sideADir;
-    else if (bestSideB && !bestSideA) sideADir = sideBDir;
 
     const hasSnap = constraints.length > 0;
 
@@ -1872,7 +1844,6 @@ export class Viewport {
             this.canvas.setPointerCapture(event.pointerId);
             this.drag = {
               type: "face-extrude",
-              extrusionLocks: { sideA: null, cap: null, sideB: null },
               faceId: hit.id,
               selection: new Set(this.state.faceSelection),
               guideSelection: new Set(this.state.faceSelection),
