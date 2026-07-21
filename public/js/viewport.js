@@ -1264,11 +1264,16 @@ export class Viewport {
 
     // Find side-snap candidates. Treats target edges as undirected
     // lines: orients each edge forward (toward the extrusion) then
-    // accepts any forward-pointing direction. Inward and outward
-    // bends are both considered; geometry validation decides
-    // whether each candidate produces a legal quadrilateral.
+    // accepts any forward-pointing direction. Collects all qualifying
+    // edges, deduplicated by canonical world endpoint key.
+    const canonicalEdgeKey = (a, b) => {
+      const ka = `${a.x.toFixed(5)},${a.y.toFixed(5)},${a.z.toFixed(5)}`;
+      const kb = `${b.x.toFixed(5)},${b.y.toFixed(5)},${b.z.toFixed(5)}`;
+      return ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`;
+    };
     const findSideSnap = (movingEdge, baseCornerScreen) => {
       const results = [];
+      const seenEdgeKeys = new Set();
       const snapRadius = 10;
       const expectedDirX = sourceNormalDir.x;
       const expectedDirY = sourceNormalDir.y;
@@ -1277,7 +1282,6 @@ export class Viewport {
         for (let fi = 0; fi < targetBrush.faces.length; fi++) {
           const tf = targetBrush.faces[fi];
           const tfNormal = faceDirection(targetBrush, tf);
-          // Only rank by face normal, never hard-reject.
           let faceScore = 0;
           if (tfNormal) {
             const tfnX = tfNormal[axisX] || 0;
@@ -1298,13 +1302,14 @@ export class Viewport {
             const otherVi = tf[(ei + 1) % tf.length];
             const sW = targetBrush.vertices[vi];
             const eW = targetBrush.vertices[otherVi];
+            const key = canonicalEdgeKey(sW, eW);
+            if (seenEdgeKeys.has(key)) continue;
             const sScr = this.screen(sW);
             const eScr = this.screen(eW);
             const dx = eW[axisX] - sW[axisX];
             const dy = eW[axisY] - sW[axisY];
             const dL = Math.hypot(dx, dy);
             if (dL < 0.0001) continue;
-            // Orient direction forward: flip if it points backward.
             let tDir = { x: dx / dL, y: dy / dL };
             let forwardDot =
               tDir.x * expectedDirX + tDir.y * expectedDirY;
@@ -1313,7 +1318,6 @@ export class Viewport {
               forwardDot = -forwardDot;
             }
             if (forwardDot <= 0.05) continue;
-            // Distance from the fixed base corner to this edge.
             const closest = closestPointOnSegment(
               baseCornerScreen,
               sScr,
@@ -1324,39 +1328,38 @@ export class Viewport {
               baseCornerScreen.y - closest.point.y,
             );
             if (dist > snapRadius) continue;
+            seenEdgeKeys.add(key);
             results.push({
               movingEdge,
               targetBrushId: targetBrush.id,
               targetFaceIndex: fi,
+              targetEdgeIndex: ei,
               targetDirection: tDir,
               targetStartWorld: { ...sW },
               targetEndWorld: { ...eW },
               distancePx: dist,
               faceScore,
-              forwardDot,
+              canonicalKey: key,
             });
-            break;
           }
         }
       }
-      // Rank: closer attachment first, stronger face-score tie-breaker
       return results.sort(
         (a, b) =>
           a.distancePx - b.distancePx || a.faceScore - b.faceScore,
       );
     };
 
-    // Attached-edge snapping: detects if a source base corner physically
-    // lies on a compatible target edge in world space. The caller provides
-    // the movingEdge label so the side identity is always correct.
-    // Treats target edges as undirected lines: orients forward.
-    // Only rejects backward-pointing edges; inward/outward bends
-    // are both collected and ranked.
+    // Attached-edge snapping: returns all deduplicated candidates
+    // whose target edges physically touch the source base corner.
+    // Scored by perpendicular distance from the free cap corner to
+    // the rail line, not by forwardDot (which biases toward straight).
     const EPSILON_ATTACH = 0.5;
-    const findAttachedEdge = (movingEdge, baseCornerWorld) => {
+    const findAttachedEdges = (movingEdge, baseCornerWorld, freeCap2D) => {
       const expectedDirX = sourceNormalDir.x;
       const expectedDirY = sourceNormalDir.y;
       const candidates = [];
+      const seenEdgeKeys = new Set();
       for (const targetBrush of this.visibleBrushes()) {
         if (sourceBrushIds.has(targetBrush.id)) continue;
         for (let fi = 0; fi < targetBrush.faces.length; fi++) {
@@ -1382,6 +1385,8 @@ export class Viewport {
             const otherVi = tf[(ei + 1) % tf.length];
             const sW = targetBrush.vertices[vi];
             const eW = targetBrush.vertices[otherVi];
+            const key = canonicalEdgeKey(sW, eW);
+            if (seenEdgeKeys.has(key)) continue;
             const dx = eW[axisX] - sW[axisX];
             const dy = eW[axisY] - sW[axisY];
             const dL = Math.hypot(dx, dy);
@@ -1396,7 +1401,6 @@ export class Viewport {
               baseCornerWorld.y - closest.point.y,
             );
             if (dist > EPSILON_ATTACH) continue;
-            // Orient direction forward. Only reject backward.
             let tDir = { x: dx / dL, y: dy / dL };
             let forwardDot =
               tDir.x * expectedDirX + tDir.y * expectedDirY;
@@ -1405,6 +1409,25 @@ export class Viewport {
               forwardDot = -forwardDot;
             }
             if (forwardDot <= 0.05) continue;
+            seenEdgeKeys.add(key);
+            // Score: perpendicular distance from freeCap to the
+            // infinite line through baseCorner in tDir direction.
+            // Closer cap → higher rank (lower score is better).
+            const capDelta = {
+              x: freeCap2D.x - baseCornerWorld.x,
+              y: freeCap2D.y - baseCornerWorld.y,
+            };
+            const projection =
+              capDelta.x * tDir.x + capDelta.y * tDir.y;
+            if (projection <= 0.01) continue;
+            const projected = {
+              x: baseCornerWorld.x + tDir.x * projection,
+              y: baseCornerWorld.y + tDir.y * projection,
+            };
+            const capLineDist = Math.hypot(
+              freeCap2D.x - projected.x,
+              freeCap2D.y - projected.y,
+            );
             candidates.push({
               movingEdge,
               targetBrushId: targetBrush.id,
@@ -1413,36 +1436,19 @@ export class Viewport {
               targetDirection: tDir,
               targetStartWorld: { ...sW },
               targetEndWorld: { ...eW },
-              distancePx: dist,
-              forwardDot,
+              distancePx: capLineDist,
               faceScore,
+              canonicalKey: key,
             });
           }
         }
       }
-      if (!candidates.length) return null;
-      // Rank: tighter attachment, higher forward component,
-      // better face-score, stable brush/face/edge tie-breaker.
-      candidates.sort((a, b) => {
-        if (a.distancePx !== b.distancePx) return a.distancePx - b.distancePx;
-        if (a.forwardDot !== b.forwardDot) return b.forwardDot - a.forwardDot;
-        if (a.faceScore !== b.faceScore) return a.faceScore - b.faceScore;
-        if (a.targetBrushId !== b.targetBrushId)
-          return a.targetBrushId < b.targetBrushId ? -1 : 1;
-        if (a.targetFaceIndex !== b.targetFaceIndex)
-          return a.targetFaceIndex - b.targetFaceIndex;
-        return a.targetEdgeIndex - b.targetEdgeIndex;
-      });
-      const winner = candidates[0];
-      return {
-        movingEdge: winner.movingEdge,
-        targetBrushId: winner.targetBrushId,
-        targetFaceIndex: winner.targetFaceIndex,
-        targetDirection: winner.targetDirection,
-        targetStartWorld: winner.targetStartWorld,
-        targetEndWorld: winner.targetEndWorld,
-        distancePx: winner.distancePx,
-      };
+      // Rank by cap-line distance (ascending): closer cap = better fit.
+      candidates.sort(
+        (a, b) =>
+          a.distancePx - b.distancePx || a.faceScore - b.faceScore,
+      );
+      return candidates;
     };
 
     // Discover cap and side candidates from both cap corners.
@@ -1459,15 +1465,23 @@ export class Viewport {
     const capSnaps = [...capSnapsA, ...capSnapsB].sort(
       (a, b) => a.distance - b.distance,
     );
-    const attachedA = findAttachedEdge("sideA", { x: baseA.x, y: baseA.y });
-    const attachedB = findAttachedEdge("sideB", { x: baseB.x, y: baseB.y });
+    const attachedACandidates = findAttachedEdges(
+      "sideA",
+      { x: baseA.x, y: baseA.y },
+      freeCapA2D,
+    );
+    const attachedBCandidates = findAttachedEdges(
+      "sideB",
+      { x: baseB.x, y: baseB.y },
+      freeCapB2D,
+    );
     // Attached edges take priority; magnetic search is the fallback.
-    const sideASnaps = attachedA
+    const sideASnaps = attachedACandidates.length
       ? []
       : baseAScreen
         ? findSideSnap("sideA", baseAScreen)
         : [];
-    const sideBSnaps = attachedB
+    const sideBSnaps = attachedBCandidates.length
       ? []
       : baseBScreen
         ? findSideSnap("sideB", baseBScreen)
@@ -1477,10 +1491,11 @@ export class Viewport {
     // extrusionSolvedDebug is used for the overlay lines).
     this.extrusionMatchDebug = [];
 
-    // Best candidates: attached edges win, magnetic search is fallback.
+    // Candidate pools: collect top candidates per side (attached first,
+    // then magnetic). Use up to 6 per side to explore branch options.
+    const sideAPool = [...attachedACandidates, ...sideASnaps].slice(0, 6);
+    const sideBPool = [...attachedBCandidates, ...sideBSnaps].slice(0, 6);
     const bestCap = capSnaps[0] || null;
-    const bestSideA = attachedA ?? sideASnaps[0] ?? null;
-    const bestSideB = attachedB ?? sideBSnaps[0] ?? null;
 
     // Constraint makers
     const makeCapConstraint = (snap) => ({
@@ -1493,13 +1508,15 @@ export class Viewport {
     const makeSideConstraint = (snap) => ({
       movingEdge: snap.movingEdge,
       direction: snap.targetDirection,
-      origin: { x: snap.movingEdge === "sideA" ? baseA.x : baseB.x, y: snap.movingEdge === "sideA" ? baseA.y : baseB.y },
+      origin: {
+        x: snap.movingEdge === "sideA" ? baseA.x : baseB.x,
+        y: snap.movingEdge === "sideA" ? baseA.y : baseB.y,
+      },
       targetBrushId: snap.targetBrushId,
       targetFaceIndex: snap.targetFaceIndex,
     });
 
     // Try constraint combinations in priority order (most→least constrained).
-    // Accept the first that produces valid convex forward-facing geometry.
     const allActiveAxes = this.axes();
     const tryConstraints = (candidates) => {
       const sol = solveSingleFaceExtrusion({
@@ -1526,25 +1543,58 @@ export class Viewport {
       };
     };
 
+    // Evaluate candidate combinations. For attached edges at shared
+    // corners, multiple rails may touch the same base corner (all at
+    // distance zero). Try the top candidates (cross-product) and pick
+    // the first valid result. Score unattached sides last.
     let result = null;
-    const cC = bestCap ? [makeCapConstraint(bestCap)] : null;
-    const cA = bestSideA ? [makeSideConstraint(bestSideA)] : null;
-    const cB = bestSideB ? [makeSideConstraint(bestSideB)] : null;
+    const capCon = bestCap ? [makeCapConstraint(bestCap)] : [];
 
-    // Priority 1: cap + sideA + sideB
-    if (cC && cA && cB) result = tryConstraints([...cC, ...cA, ...cB]);
-    // Priority 2: sideA + sideB
-    if (!result && cA && cB) result = tryConstraints([...cA, ...cB]);
-    // Priority 3: cap + sideA
-    if (!result && cC && cA) result = tryConstraints([...cC, ...cA]);
-    // Priority 4: cap + sideB
-    if (!result && cC && cB) result = tryConstraints([...cC, ...cB]);
-    // Priority 5: sideA only
-    if (!result && cA) result = tryConstraints(cA);
-    // Priority 6: sideB only
-    if (!result && cB) result = tryConstraints(cB);
-    // Priority 7: cap only
-    if (!result && cC) result = tryConstraints(cC);
+    // Attached+attached cross-product (both sides locked)
+    if (sideAPool.length && sideBPool.length) {
+      for (const sA of sideAPool) {
+        for (const sB of sideBPool) {
+          const cA = [makeSideConstraint(sA)];
+          const cB = [makeSideConstraint(sB)];
+          result = tryConstraints([...capCon, ...cA, ...cB]);
+          if (result) break;
+          result = tryConstraints([...cA, ...cB]);
+          if (result) break;
+        }
+        if (result) break;
+      }
+    }
+
+    // Cap + single side (each candidate)
+    if (!result && capCon.length) {
+      for (const sA of sideAPool) {
+        result = tryConstraints([...capCon, makeSideConstraint(sA)]);
+        if (result) break;
+      }
+    }
+    if (!result && capCon.length) {
+      for (const sB of sideBPool) {
+        result = tryConstraints([...capCon, makeSideConstraint(sB)]);
+        if (result) break;
+      }
+    }
+
+    // Single side (each candidate)
+    if (!result) {
+      for (const sA of sideAPool) {
+        result = tryConstraints([makeSideConstraint(sA)]);
+        if (result) break;
+      }
+    }
+    if (!result) {
+      for (const sB of sideBPool) {
+        result = tryConstraints([makeSideConstraint(sB)]);
+        if (result) break;
+      }
+    }
+
+    // Cap only
+    if (!result && capCon.length) result = tryConstraints(capCon);
 
     this.extrusionCandidate = result
       ? {
