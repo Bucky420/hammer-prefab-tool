@@ -1262,11 +1262,11 @@ export class Viewport {
       return results.sort((a, b) => a.distance - b.distance);
     };
 
-    // Find side-snap candidates. The side edge follows the extrusion
-    // direction; the target edge must be roughly parallel to that.
-    // Discovery uses the fixed base corner (not the moving cap corner)
-    // so the snap is not released when the far endpoint passes the
-    // finite target segment.
+    // Find side-snap candidates. Treats target edges as undirected
+    // lines: orients each edge forward (toward the extrusion) then
+    // accepts any forward-pointing direction. Inward and outward
+    // bends are both considered; geometry validation decides
+    // whether each candidate produces a legal quadrilateral.
     const findSideSnap = (movingEdge, baseCornerScreen) => {
       const results = [];
       const snapRadius = 10;
@@ -1277,28 +1277,22 @@ export class Viewport {
         for (let fi = 0; fi < targetBrush.faces.length; fi++) {
           const tf = targetBrush.faces[fi];
           const tfNormal = faceDirection(targetBrush, tf);
-          if (!tfNormal) continue;
-          const tfnX = tfNormal[axisX] || 0;
-          const tfnY = tfNormal[axisY] || 0;
-          const tfnLen = Math.hypot(tfnX, tfnY);
-          if (tfnLen < 0.0001) continue;
-          const tfnDX = tfnX / tfnLen;
-          const tfnDY = tfnY / tfnLen;
-          // The generated side faces have opposite outward normals.
-          // sideA's outward normal points in (-sourceBaseDir),
-          // sideB's outward normal points in (+sourceBaseDir).
-          const sideAOutward = {
-            x: -sourceBaseDir.x,
-            y: -sourceBaseDir.y,
-          };
-          const sideBOutward = {
-            x: sourceBaseDir.x,
-            y: sourceBaseDir.y,
-          };
-          const movingOutward =
-            movingEdge === "sideA" ? sideAOutward : sideBOutward;
-          const faceDot = tfnDX * movingOutward.x + tfnDY * movingOutward.y;
-          if (faceDot > -0.3) continue;
+          // Only rank by face normal, never hard-reject.
+          let faceScore = 0;
+          if (tfNormal) {
+            const tfnX = tfNormal[axisX] || 0;
+            const tfnY = tfNormal[axisY] || 0;
+            const tfnLen = Math.hypot(tfnX, tfnY);
+            if (tfnLen > 0.0001) {
+              const sideAOutward = { x: -sourceBaseDir.x, y: -sourceBaseDir.y };
+              const sideBOutward = { x: sourceBaseDir.x, y: sourceBaseDir.y };
+              const movingOutward =
+                movingEdge === "sideA" ? sideAOutward : sideBOutward;
+              faceScore =
+                (tfnX / tfnLen) * movingOutward.x +
+                (tfnY / tfnLen) * movingOutward.y;
+            }
+          }
           for (let ei = 0; ei < tf.length; ei++) {
             const vi = tf[ei];
             const otherVi = tf[(ei + 1) % tf.length];
@@ -1310,12 +1304,15 @@ export class Viewport {
             const dy = eW[axisY] - sW[axisY];
             const dL = Math.hypot(dx, dy);
             if (dL < 0.0001) continue;
-            const tDir = { x: dx / dL, y: dy / dL };
-            // Edge direction must be parallel to the extrusion direction.
-            const sideDot = Math.abs(
-              tDir.x * expectedDirX + tDir.y * expectedDirY,
-            );
-            if (sideDot < 0.85) continue;
+            // Orient direction forward: flip if it points backward.
+            let tDir = { x: dx / dL, y: dy / dL };
+            let forwardDot =
+              tDir.x * expectedDirX + tDir.y * expectedDirY;
+            if (forwardDot < 0) {
+              tDir = { x: -tDir.x, y: -tDir.y };
+              forwardDot = -forwardDot;
+            }
+            if (forwardDot <= 0.05) continue;
             // Distance from the fixed base corner to this edge.
             const closest = closestPointOnSegment(
               baseCornerScreen,
@@ -1335,28 +1332,28 @@ export class Viewport {
               targetStartWorld: { ...sW },
               targetEndWorld: { ...eW },
               distancePx: dist,
+              faceScore,
+              forwardDot,
             });
             break;
           }
         }
       }
-      return results.sort((a, b) => a.distancePx - b.distancePx);
+      // Rank: closer attachment first, stronger face-score tie-breaker
+      return results.sort(
+        (a, b) =>
+          a.distancePx - b.distancePx || a.faceScore - b.faceScore,
+      );
     };
 
     // Attached-edge snapping: detects if a source base corner physically
     // lies on a compatible target edge in world space. The caller provides
     // the movingEdge label so the side identity is always correct.
-    // Collects all candidates and ranks by:
-    // 1. exact attachment distance
-    // 2. target-face normal compatibility (outward face normal)
-    // 3. direction angular error
-    // 4. stable brush/face/edge index tie-breaker
+    // Treats target edges as undirected lines: orients forward.
+    // Only rejects backward-pointing edges; inward/outward bends
+    // are both collected and ranked.
     const EPSILON_ATTACH = 0.5;
     const findAttachedEdge = (movingEdge, baseCornerWorld) => {
-      const sideOutward =
-        movingEdge === "sideA"
-          ? { x: -sourceBaseDir.x, y: -sourceBaseDir.y }
-          : { x: sourceBaseDir.x, y: sourceBaseDir.y };
       const expectedDirX = sourceNormalDir.x;
       const expectedDirY = sourceNormalDir.y;
       const candidates = [];
@@ -1364,17 +1361,22 @@ export class Viewport {
         if (sourceBrushIds.has(targetBrush.id)) continue;
         for (let fi = 0; fi < targetBrush.faces.length; fi++) {
           const tf = targetBrush.faces[fi];
+          let faceScore = 0;
           const tfNormal = faceDirection(targetBrush, tf);
-          if (!tfNormal) continue;
-          const tfnX = tfNormal[axisX] || 0;
-          const tfnY = tfNormal[axisY] || 0;
-          const tfnLen = Math.hypot(tfnX, tfnY);
-          if (tfnLen < 0.0001) continue;
-          const tfnDX = tfnX / tfnLen;
-          const tfnDY = tfnY / tfnLen;
-          // Target face must oppose the generated side face outward normal.
-          const faceDot = tfnDX * sideOutward.x + tfnDY * sideOutward.y;
-          if (faceDot > -0.3) continue;
+          if (tfNormal) {
+            const tfnX = tfNormal[axisX] || 0;
+            const tfnY = tfNormal[axisY] || 0;
+            const tfnLen = Math.hypot(tfnX, tfnY);
+            if (tfnLen > 0.0001) {
+              const sideAOutward = { x: -sourceBaseDir.x, y: -sourceBaseDir.y };
+              const sideBOutward = { x: sourceBaseDir.x, y: sourceBaseDir.y };
+              const movingOutward =
+                movingEdge === "sideA" ? sideAOutward : sideBOutward;
+              faceScore =
+                (tfnX / tfnLen) * movingOutward.x +
+                (tfnY / tfnLen) * movingOutward.y;
+            }
+          }
           for (let ei = 0; ei < tf.length; ei++) {
             const vi = tf[ei];
             const otherVi = tf[(ei + 1) % tf.length];
@@ -1394,13 +1396,15 @@ export class Viewport {
               baseCornerWorld.y - closest.point.y,
             );
             if (dist > EPSILON_ATTACH) continue;
-            const tDir = { x: dx / dL, y: dy / dL };
-            const sideDot = Math.abs(
-              tDir.x * expectedDirX + tDir.y * expectedDirY,
-            );
-            if (sideDot < 0.85) continue;
-            // Angular error: 0 = perfectly parallel to extrusion direction
-            const angularError = Math.acos(Math.min(1, sideDot));
+            // Orient direction forward. Only reject backward.
+            let tDir = { x: dx / dL, y: dy / dL };
+            let forwardDot =
+              tDir.x * expectedDirX + tDir.y * expectedDirY;
+            if (forwardDot < 0) {
+              tDir = { x: -tDir.x, y: -tDir.y };
+              forwardDot = -forwardDot;
+            }
+            if (forwardDot <= 0.05) continue;
             candidates.push({
               movingEdge,
               targetBrushId: targetBrush.id,
@@ -1410,21 +1414,19 @@ export class Viewport {
               targetStartWorld: { ...sW },
               targetEndWorld: { ...eW },
               distancePx: dist,
-              angularError,
-              faceNormalDot: faceDot,
+              forwardDot,
+              faceScore,
             });
           }
         }
       }
       if (!candidates.length) return null;
-      // Rank: tighter attachment, stronger face-normal opposition, lower
-      // angular error, stable brush/face/edge index tie-breaker.
+      // Rank: tighter attachment, higher forward component,
+      // better face-score, stable brush/face/edge tie-breaker.
       candidates.sort((a, b) => {
         if (a.distancePx !== b.distancePx) return a.distancePx - b.distancePx;
-        if (a.faceNormalDot !== b.faceNormalDot)
-          return a.faceNormalDot - b.faceNormalDot;
-        if (a.angularError !== b.angularError)
-          return a.angularError - b.angularError;
+        if (a.forwardDot !== b.forwardDot) return b.forwardDot - a.forwardDot;
+        if (a.faceScore !== b.faceScore) return a.faceScore - b.faceScore;
         if (a.targetBrushId !== b.targetBrushId)
           return a.targetBrushId < b.targetBrushId ? -1 : 1;
         if (a.targetFaceIndex !== b.targetFaceIndex)
