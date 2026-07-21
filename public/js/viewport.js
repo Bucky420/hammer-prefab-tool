@@ -1388,20 +1388,26 @@ export class Viewport {
               const tT =
                 (fx * -sourceNormalDir.x - fy * -sourceNormalDir.y) / det;
               if (tT < 0 || tT > 1) {
-                // Soft endpoint snap: when the projection falls past an
-                // endpoint but the corner is close to it in screen
-                // distance, clamp to the endpoint so you can land right
-                // on it. Soft = magnetic within a small radius; push
-                // further past to release.
-                const endpointScr = tT < 0 ? sScr : eScr;
-                const endpointDist = Math.hypot(
-                  cornerScr.x - endpointScr.x,
-                  cornerScr.y - endpointScr.y,
-                );
-                if (endpointDist > cornerRadius * 3) continue;
-                const ep = tT < 0 ? sW : eW;
-                snapX = ep[axisX];
-                snapY = ep[axisY];
+                // Soft endpoint snap, like grid snap: when the projected
+                // corner lands within ENDPOINT_SNAP_UNITS world units of
+                // an endpoint (measured along the edge line), round tT
+                // to 0 or 1 so the corner lands exactly on the endpoint.
+                // The mouse keeps moving freely; the geometry snaps to
+                // the endpoint and releases when pushed further past.
+                if (dL > 0.0001) {
+                  const endpointThreshold = 16;
+                  const tPast = tT < 0 ? -tT : tT - 1;
+                  const worldPast = tPast * dL;
+                  if (worldPast <= endpointThreshold) {
+                    const ep = tT < 0 ? sW : eW;
+                    snapX = ep[axisX];
+                    snapY = ep[axisY];
+                  } else {
+                    continue;
+                  }
+                } else {
+                  continue;
+                }
               } else {
                 snapX = sW[axisX] + dx * tT;
                 snapY = sW[axisY] + dy * tT;
