@@ -1655,12 +1655,24 @@ function signedDistanceToPlane(point, plane) {
   );
 }
 
+function capVertices(candidate) {
+  const capFace = candidate.faces?.[1];
+  if (!capFace?.length) return [];
+  return capFace.map((index) => candidate.vertices[index]);
+}
+
 function crossesTargetFace(candidate, targetBrush, targetFaceIndex, epsilon) {
   const face = targetBrush.faces[targetFaceIndex];
   if (!face) return true;
   const plane = planeForFace(targetBrush, face);
   if (!plane) return true;
-  return candidate.vertices.some(
+  // Only test the newly extruded cap vertices, not the fixed base
+  // (candidate.faces[0]). Base vertices are copied from the source
+  // face and may already sit on or slightly behind the target plane
+  // when the source shares a corner with the target brush.
+  const movingVertices = capVertices(candidate);
+  if (!movingVertices.length) return true;
+  return movingVertices.some(
     (vertex) => signedDistanceToPlane(vertex, plane) < -epsilon,
   );
 }
@@ -1775,12 +1787,18 @@ export function limitExtrusionDistance(
     if (distance <= 0 || !collidesAtAlpha(1)) return distance;
     let low = 0;
     let high = 1;
+    let bestAlpha = null;
     for (let iteration = 0; iteration < 24; iteration++) {
       const mid = (low + high) / 2;
-      if (collidesAtAlpha(mid)) high = mid;
-      else low = mid;
+      if (collidesAtAlpha(mid)) {
+        high = mid;
+      } else {
+        bestAlpha = mid;
+        low = mid;
+      }
     }
-    return distance * low;
+    if (bestAlpha == null) return 0;
+    return distance * bestAlpha;
   }
 
   // Non-snapped: binary search on distance.

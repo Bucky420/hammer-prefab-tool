@@ -1430,12 +1430,22 @@ export class Viewport {
           if (tfnLen < 0.0001) continue;
           const tfnDX = tfnX / tfnLen;
           const tfnDY = tfnY / tfnLen;
-          // The generated side face outward normal is perpendicular
-          // to the extrusion direction (rotated 90 CCW).
-          const sideFaceNX = -expectedDirY;
-          const sideFaceNY = expectedDirX;
-          const faceDot = tfnDX * sideFaceNX + tfnDY * sideFaceNY;
-          if (faceDot < 0.3) continue;
+          // The generated side faces have opposite outward normals.
+          // sideA's outward normal points in (-sourceBaseDir),
+          // sideB's outward normal points in (+sourceBaseDir).
+          // The target face should oppose the generated face (dot < -0.3).
+          const sideAOutward = {
+            x: -sourceBaseDir.x,
+            y: -sourceBaseDir.y,
+          };
+          const sideBOutward = {
+            x: sourceBaseDir.x,
+            y: sourceBaseDir.y,
+          };
+          const movingOutward =
+            movingEdge === "sideA" ? sideAOutward : sideBOutward;
+          const faceDot = tfnDX * movingOutward.x + tfnDY * movingOutward.y;
+          if (faceDot > -0.3) continue;
           for (let ei = 0; ei < tf.length; ei++) {
             const vi = tf[ei];
             const otherVi = tf[(ei + 1) % tf.length];
