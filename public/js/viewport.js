@@ -1271,12 +1271,13 @@ export class Viewport {
       const kb = `${b.x.toFixed(5)},${b.y.toFixed(5)},${b.z.toFixed(5)}`;
       return ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`;
     };
-    const findSideSnap = (movingEdge, baseCornerScreen) => {
+    const findSideSnap = (movingEdge, baseCornerScreen, baseCornerWorld) => {
       const results = [];
       const seenEdgeKeys = new Set();
       const snapRadius = 10;
       const expectedDirX = sourceNormalDir.x;
       const expectedDirY = sourceNormalDir.y;
+      const endpointEpsilon = 0.01;
       for (const targetBrush of this.visibleBrushes()) {
         if (sourceBrushIds.has(targetBrush.id)) continue;
         for (let fi = 0; fi < targetBrush.faces.length; fi++) {
@@ -1310,14 +1311,6 @@ export class Viewport {
             const dy = eW[axisY] - sW[axisY];
             const dL = Math.hypot(dx, dy);
             if (dL < 0.0001) continue;
-            let tDir = { x: dx / dL, y: dy / dL };
-            let forwardDot =
-              tDir.x * expectedDirX + tDir.y * expectedDirY;
-            if (forwardDot < 0) {
-              tDir = { x: -tDir.x, y: -tDir.y };
-              forwardDot = -forwardDot;
-            }
-            if (forwardDot <= 0.05) continue;
             const closest = closestPointOnSegment(
               baseCornerScreen,
               sScr,
@@ -1329,18 +1322,53 @@ export class Viewport {
             );
             if (dist > snapRadius) continue;
             seenEdgeKeys.add(key);
-            results.push({
-              movingEdge,
-              targetBrushId: targetBrush.id,
-              targetFaceIndex: fi,
-              targetEdgeIndex: ei,
-              targetDirection: tDir,
-              targetStartWorld: { ...sW },
-              targetEndWorld: { ...eW },
-              distancePx: dist,
-              faceScore,
-              canonicalKey: key,
-            });
+            // Determine attach point and far endpoint from closest.t
+            const attachT = closest.t;
+            const rays = [];
+            if (attachT <= endpointEpsilon) {
+              rays.push({ attachPt: sW, farPt: eW });
+            } else if (attachT >= 1 - endpointEpsilon) {
+              rays.push({ attachPt: eW, farPt: sW });
+            } else {
+              // Interior attach: try both directions
+              rays.push({ attachPt: sW, farPt: eW });
+              rays.push({ attachPt: eW, farPt: sW });
+            }
+            for (const ray of rays) {
+              const rx = ray.farPt[axisX] - ray.attachPt[axisX];
+              const ry = ray.farPt[axisY] - ray.attachPt[axisY];
+              const rL = Math.hypot(rx, ry);
+              if (rL < 0.0001) continue;
+              const railDir = { x: rx / rL, y: ry / rL };
+              // Check cap projects forward along this rail
+              const capDelta = {
+                x: baseCornerWorld.x - ray.attachPt.x,
+                y: baseCornerWorld.y - ray.attachPt.y,
+              };
+              // Use the world-space attach point for ray test
+              const attachW = { x: ray.attachPt[axisX], y: ray.attachPt[axisY] };
+              const capW = {
+                x: baseCornerWorld.x + sourceNormalDir.x * 100,
+                y: baseCornerWorld.y + sourceNormalDir.y * 100,
+              };
+              const toCap = { x: capW.x - attachW.x, y: capW.y - attachW.y };
+              const capProj = toCap.x * railDir.x + toCap.y * railDir.y;
+              if (capProj <= 0.01) continue;
+              results.push({
+                movingEdge,
+                targetBrushId: targetBrush.id,
+                targetFaceIndex: fi,
+                targetEdgeIndex: ei,
+                railDirection: railDir,
+                attachmentPoint: { ...ray.attachPt },
+                farPoint: { ...ray.farPt },
+                targetStartWorld: { ...sW },
+                targetEndWorld: { ...eW },
+                distancePx: dist,
+                faceScore,
+                canonicalKey: key,
+              });
+            }
           }
         }
       }
@@ -1355,9 +1383,15 @@ export class Viewport {
     // Scored by perpendicular distance from the free cap corner to
     // the rail line, not by forwardDot (which biases toward straight).
     const EPSILON_ATTACH = 0.5;
+    const endpointEpsilon = 0.01;
+    const directedRayDistance = (point, origin, dir) => {
+      const delta = { x: point.x - origin.x, y: point.y - origin.y };
+      const t = delta.x * dir.x + delta.y * dir.y;
+      if (t < 0) return Infinity;
+      const proj = { x: origin.x + dir.x * t, y: origin.y + dir.y * t };
+      return Math.hypot(point.x - proj.x, point.y - proj.y);
+    };
     const findAttachedEdges = (movingEdge, baseCornerWorld, freeCap2D) => {
-      const expectedDirX = sourceNormalDir.x;
-      const expectedDirY = sourceNormalDir.y;
       const candidates = [];
       const seenEdgeKeys = new Set();
       for (const targetBrush of this.visibleBrushes()) {
@@ -1401,49 +1435,47 @@ export class Viewport {
               baseCornerWorld.y - closest.point.y,
             );
             if (dist > EPSILON_ATTACH) continue;
-            let tDir = { x: dx / dL, y: dy / dL };
-            let forwardDot =
-              tDir.x * expectedDirX + tDir.y * expectedDirY;
-            if (forwardDot < 0) {
-              tDir = { x: -tDir.x, y: -tDir.y };
-              forwardDot = -forwardDot;
-            }
-            if (forwardDot <= 0.05) continue;
             seenEdgeKeys.add(key);
-            // Score: perpendicular distance from freeCap to the
-            // infinite line through baseCorner in tDir direction.
-            // Closer cap → higher rank (lower score is better).
-            const capDelta = {
-              x: freeCap2D.x - baseCornerWorld.x,
-              y: freeCap2D.y - baseCornerWorld.y,
-            };
-            const projection =
-              capDelta.x * tDir.x + capDelta.y * tDir.y;
-            if (projection <= 0.01) continue;
-            const projected = {
-              x: baseCornerWorld.x + tDir.x * projection,
-              y: baseCornerWorld.y + tDir.y * projection,
-            };
-            const capLineDist = Math.hypot(
-              freeCap2D.x - projected.x,
-              freeCap2D.y - projected.y,
-            );
-            candidates.push({
-              movingEdge,
-              targetBrushId: targetBrush.id,
-              targetFaceIndex: fi,
-              targetEdgeIndex: ei,
-              targetDirection: tDir,
-              targetStartWorld: { ...sW },
-              targetEndWorld: { ...eW },
-              distancePx: capLineDist,
-              faceScore,
-              canonicalKey: key,
-            });
+            const attachT = closest.t;
+            const rays = [];
+            if (attachT <= endpointEpsilon) {
+              rays.push({ attachPt: [sW[axisX], sW[axisY]], farPt: [eW[axisX], eW[axisY]] });
+            } else if (attachT >= 1 - endpointEpsilon) {
+              rays.push({ attachPt: [eW[axisX], eW[axisY]], farPt: [sW[axisX], sW[axisY]] });
+            } else {
+              rays.push({ attachPt: [sW[axisX], sW[axisY]], farPt: [eW[axisX], eW[axisY]] });
+              rays.push({ attachPt: [eW[axisX], eW[axisY]], farPt: [sW[axisX], sW[axisY]] });
+            }
+            for (const ray of rays) {
+              const rx = ray.farPt[0] - ray.attachPt[0];
+              const ry = ray.farPt[1] - ray.attachPt[1];
+              const rL = Math.hypot(rx, ry);
+              if (rL < 0.0001) continue;
+              const railDir = { x: rx / rL, y: ry / rL };
+              // Check cap projects forward along this directed ray
+              const attachW = { x: ray.attachPt[0], y: ray.attachPt[1] };
+              const capProj = (freeCap2D.x - attachW.x) * railDir.x +
+                (freeCap2D.y - attachW.y) * railDir.y;
+              if (capProj <= 0.01) continue;
+              const score = directedRayDistance(freeCap2D, baseCornerWorld, railDir);
+              candidates.push({
+                movingEdge,
+                targetBrushId: targetBrush.id,
+                targetFaceIndex: fi,
+                targetEdgeIndex: ei,
+                railDirection: railDir,
+                attachmentPoint: attachW,
+                farPoint: { x: ray.farPt[0], y: ray.farPt[1] },
+                targetStartWorld: { ...sW },
+                targetEndWorld: { ...eW },
+                distancePx: score,
+                faceScore,
+                canonicalKey: key,
+              });
+            }
           }
         }
       }
-      // Rank by cap-line distance (ascending): closer cap = better fit.
       candidates.sort(
         (a, b) =>
           a.distancePx - b.distancePx || a.faceScore - b.faceScore,
@@ -1479,12 +1511,12 @@ export class Viewport {
     const sideASnaps = attachedACandidates.length
       ? []
       : baseAScreen
-        ? findSideSnap("sideA", baseAScreen)
+        ? findSideSnap("sideA", baseAScreen, { x: baseA.x, y: baseA.y })
         : [];
     const sideBSnaps = attachedBCandidates.length
       ? []
       : baseBScreen
-        ? findSideSnap("sideB", baseBScreen)
+        ? findSideSnap("sideB", baseBScreen, { x: baseB.x, y: baseB.y })
         : [];
 
     // Build debug data (extrusionMatchDebug is no longer rendered; only
@@ -1506,7 +1538,7 @@ export class Viewport {
     });
     const makeSideConstraint = (snap) => ({
       movingEdge: snap.movingEdge,
-      direction: snap.targetDirection,
+      direction: snap.railDirection,
       origin: {
         x: snap.movingEdge === "sideA" ? baseA.x : baseB.x,
         y: snap.movingEdge === "sideA" ? baseA.y : baseB.y,
@@ -1514,17 +1546,6 @@ export class Viewport {
       targetBrushId: snap.targetBrushId,
       targetFaceIndex: snap.targetFaceIndex,
     });
-
-    // Perpendicular distance from freeCap to the line through baseCorner in direction dir.
-    const capLineDistance = (freeCap, baseCorner, dir) => {
-      const dx = freeCap.x - baseCorner.x;
-      const dy = freeCap.y - baseCorner.y;
-      const proj = dx * dir.x + dy * dir.y;
-      if (proj <= 0.01) return 10000;
-      const px = baseCorner.x + dir.x * proj;
-      const py = baseCorner.y + dir.y * proj;
-      return Math.hypot(freeCap.x - px, freeCap.y - py);
-    };
 
     // Starting rail state: evaluates cross-product of attached
     // candidates after the drag moves a few pixels, locks the best
@@ -1561,11 +1582,11 @@ export class Viewport {
             // Score: perpendicular distance from each free cap to its rail
             let score = 0;
             if (pair.sideA) {
-              const d = capLineDistance(freeCapA2D, baseA, pair.sideA.targetDirection);
+              const d = directedRayDistance(freeCapA2D, baseA, pair.sideA.railDirection);
               score += d;
             }
             if (pair.sideB) {
-              const d = capLineDistance(freeCapB2D, baseB, pair.sideB.targetDirection);
+              const d = directedRayDistance(freeCapB2D, baseB, pair.sideB.railDirection);
               score += d;
             }
             if (score < bestScore) {
