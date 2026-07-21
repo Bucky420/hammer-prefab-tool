@@ -1646,6 +1646,25 @@ export function convexBrushesOverlap(first, second, epsilon = 0.0001) {
   return true;
 }
 
+function signedDistanceToPlane(point, plane) {
+  return (
+    plane.normal.x * point.x +
+    plane.normal.y * point.y +
+    plane.normal.z * point.z -
+    plane.distance
+  );
+}
+
+function crossesTargetFace(candidate, targetBrush, targetFaceIndex, epsilon) {
+  const face = targetBrush.faces[targetFaceIndex];
+  if (!face) return true;
+  const plane = planeForFace(targetBrush, face);
+  if (!plane) return true;
+  return candidate.vertices.some(
+    (vertex) => signedDistanceToPlane(vertex, plane) < -epsilon,
+  );
+}
+
 export function limitExtrusionDistance(
   sourceBrushes,
   selection,
@@ -1656,24 +1675,53 @@ export function limitExtrusionDistance(
   snapTarget = null,
 ) {
   const CONTACT_EPSILON = 0.01;
+  const TARGET_CONTACT_EPSILON = 0.01;
   const selectedBrushIds = new Set(
     [...selection].map((id) => id.match(/^(.*):f:/)?.[1]).filter(Boolean),
   );
-  const targetBrushIds = snapTarget?.targetBrushIds?.length
-    ? snapTarget.targetBrushIds
-    : snapTarget?.targetBrushId
-      ? [snapTarget.targetBrushId]
-      : [];
+
+  // Build per-brush target-face constraints from the snapTarget's
+  // conforming constraint list (cap, sideA, sideB).
+  const constraintsByTargetBrush = new Map();
+  for (const constraint of snapTarget?.conforming ?? []) {
+    if (
+      !constraint.targetBrushId ||
+      !Number.isInteger(constraint.targetFaceIndex)
+    )
+      continue;
+    if (!constraintsByTargetBrush.has(constraint.targetBrushId))
+      constraintsByTargetBrush.set(constraint.targetBrushId, []);
+    constraintsByTargetBrush
+      .get(constraint.targetBrushId)
+      .push(constraint);
+  }
 
   const checkCollision = (previewBrushes) =>
     previewBrushes.some((candidate) =>
       sourceBrushes.some((obstacle) => {
         if (selectedBrushIds.has(obstacle.id)) return false;
-        const isTarget = targetBrushIds.includes(obstacle.id);
-        return convexBrushesOverlap(
-          candidate,
-          obstacle,
-          isTarget ? 0.05 : CONTACT_EPSILON,
+        const targetConstraints = constraintsByTargetBrush.get(obstacle.id);
+
+        // Ordinary obstacles (no target-face constraints) use normal SAT.
+        if (!targetConstraints?.length)
+          return convexBrushesOverlap(candidate, obstacle, CONTACT_EPSILON);
+
+        // No SAT overlap at all → no collision even for target brushes.
+        if (
+          !convexBrushesOverlap(candidate, obstacle, CONTACT_EPSILON)
+        )
+          return false;
+
+        // SAT overlap with an intended target face.
+        // Allow exact contact; block only if a candidate vertex
+        // crosses behind the target face plane.
+        return targetConstraints.some((constraint) =>
+          crossesTargetFace(
+            candidate,
+            obstacle,
+            constraint.targetFaceIndex,
+            TARGET_CONTACT_EPSILON,
+          ),
         );
       }),
     );
