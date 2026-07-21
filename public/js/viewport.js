@@ -1413,7 +1413,10 @@ export class Viewport {
 
     // Find side-snap candidates. The side edge follows the extrusion
     // direction; the target edge must be roughly parallel to that.
-    const findSideSnap = (movingEdge, freeCornerScr) => {
+    // Discovery uses the fixed base corner (not the moving cap corner)
+    // so the snap is not released when the far endpoint passes the
+    // finite target segment.
+    const findSideSnap = (movingEdge, baseCornerScreen) => {
       const results = [];
       const snapRadius = 10;
       const expectedDirX = sourceNormalDir.x;
@@ -1433,7 +1436,6 @@ export class Viewport {
           // The generated side faces have opposite outward normals.
           // sideA's outward normal points in (-sourceBaseDir),
           // sideB's outward normal points in (+sourceBaseDir).
-          // The target face should oppose the generated face (dot < -0.3).
           const sideAOutward = {
             x: -sourceBaseDir.x,
             y: -sourceBaseDir.y,
@@ -1463,11 +1465,15 @@ export class Viewport {
               tDir.x * expectedDirX + tDir.y * expectedDirY,
             );
             if (sideDot < 0.85) continue;
-            // Distance from free corner to this edge.
-            const closest = closestPointOnSegment(freeCornerScr, sScr, eScr);
+            // Distance from the fixed base corner to this edge.
+            const closest = closestPointOnSegment(
+              baseCornerScreen,
+              sScr,
+              eScr,
+            );
             const dist = Math.hypot(
-              freeCornerScr.x - closest.point.x,
-              freeCornerScr.y - closest.point.y,
+              baseCornerScreen.x - closest.point.x,
+              baseCornerScreen.y - closest.point.y,
             );
             if (dist > snapRadius) continue;
             results.push({
@@ -1488,8 +1494,27 @@ export class Viewport {
 
     // Discover cap and side candidates
     const capSnaps = findCapSnap(freeCapA2D, capCornerScreened.capA);
-    const sideASnaps = findSideSnap("sideA", capCornerScreened.capA);
-    const sideBSnaps = findSideSnap("sideB", capCornerScreened.capB);
+    const sideASnaps = findSideSnap("sideA", baseAScreen);
+    const sideBSnaps = findSideSnap("sideB", baseBScreen);
+
+    // Persistent side snap locks for the entire drag.
+    // Once acquired from the base corner, the side direction stays
+    // even when the far cap endpoint passes the finite target segment.
+    if (this.drag) {
+      this.drag.sideSnapLocks ||= { sideA: null, sideB: null };
+      if (!this.drag.sideSnapLocks.sideA && sideASnaps[0])
+        this.drag.sideSnapLocks.sideA = sideASnaps[0];
+      if (!this.drag.sideSnapLocks.sideB && sideBSnaps[0])
+        this.drag.sideSnapLocks.sideB = sideBSnaps[0];
+    }
+
+    // Use locked snaps if available; the far-corner-fresh snap is only
+    // used when no lock exists yet.
+    const bestCap = capSnaps[0] || null;
+    const bestSideA =
+      this.drag?.sideSnapLocks?.sideA || sideASnaps[0] || null;
+    const bestSideB =
+      this.drag?.sideSnapLocks?.sideB || sideBSnaps[0] || null;
 
     // Build debug data
     this.extrusionMatchDebug = [];
@@ -1517,10 +1542,6 @@ export class Viewport {
         segmentDistance: snap.distancePx,
       });
     }
-
-    const bestCap = capSnaps[0] || null;
-    const bestSideA = sideASnaps[0] || null;
-    const bestSideB = sideBSnaps[0] || null;
 
     // Build constraints: max 2, never sideA+sideB.
     const constraints = [];
