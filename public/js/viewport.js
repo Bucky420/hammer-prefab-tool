@@ -1334,6 +1334,15 @@ export class Viewport {
     // The snap picks a target edge parallel to the base and provides
     // a direction constraint that makes the cap parallel to the base.
     const findCapSnap = (corner2D, cornerScr) => {
+      const endpointThreshold = 16;
+      const tryEndpointSnap = (tClamp, sWorld, eWorld, edgeLen) => {
+        if (edgeLen < 0.0001) return null;
+        const tPast = tClamp < 0 ? -tClamp : tClamp - 1;
+        const worldPast = tPast * edgeLen;
+        if (worldPast > endpointThreshold) return null;
+        const ep = tClamp < 0 ? sWorld : eWorld;
+        return { x: ep[axisX], y: ep[axisY] };
+      };
       const results = [];
       for (const targetBrush of this.visibleBrushes()) {
         if (sourceBrushIds.has(targetBrush.id)) continue;
@@ -1379,35 +1388,25 @@ export class Viewport {
               const tClamp = dx !== 0
                 ? (corner2D.x - sW[axisX]) / dx
                 : (corner2D.y - sW[axisY]) / dy;
-              const tT = Math.max(0, Math.min(1, tClamp));
-              snapX = sW[axisX] + dx * tT;
-              snapY = sW[axisY] + dy * tT;
+              if (tClamp < 0 || tClamp > 1) {
+                const ep = tryEndpointSnap(tClamp, sW, eW, dL);
+                if (!ep) continue;
+                snapX = ep.x;
+                snapY = ep.y;
+              } else {
+                snapX = sW[axisX] + dx * tClamp;
+                snapY = sW[axisY] + dy * tClamp;
+              }
             } else {
               const fx = corner2D.x - sW[axisX];
               const fy = corner2D.y - sW[axisY];
               const tT =
                 (fx * -sourceNormalDir.x - fy * -sourceNormalDir.y) / det;
               if (tT < 0 || tT > 1) {
-                // Soft endpoint snap, like grid snap: when the projected
-                // corner lands within ENDPOINT_SNAP_UNITS world units of
-                // an endpoint (measured along the edge line), round tT
-                // to 0 or 1 so the corner lands exactly on the endpoint.
-                // The mouse keeps moving freely; the geometry snaps to
-                // the endpoint and releases when pushed further past.
-                if (dL > 0.0001) {
-                  const endpointThreshold = 16;
-                  const tPast = tT < 0 ? -tT : tT - 1;
-                  const worldPast = tPast * dL;
-                  if (worldPast <= endpointThreshold) {
-                    const ep = tT < 0 ? sW : eW;
-                    snapX = ep[axisX];
-                    snapY = ep[axisY];
-                  } else {
-                    continue;
-                  }
-                } else {
-                  continue;
-                }
+                const ep = tryEndpointSnap(tT, sW, eW, dL);
+                if (!ep) continue;
+                snapX = ep.x;
+                snapY = ep.y;
               } else {
                 snapX = sW[axisX] + dx * tT;
                 snapY = sW[axisY] + dy * tT;
