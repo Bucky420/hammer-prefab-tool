@@ -1387,9 +1387,26 @@ export class Viewport {
               const fy = corner2D.y - sW[axisY];
               const tT =
                 (fx * -sourceNormalDir.x - fy * -sourceNormalDir.y) / det;
-              if (tT < 0 || tT > 1) continue;
-              snapX = sW[axisX] + dx * tT;
-              snapY = sW[axisY] + dy * tT;
+              if (tT < 0 || tT > 1) {
+                // Soft snap: when the projection falls past an endpoint
+                // but the corner is close to that endpoint in screen
+                // distance, accept the free projection (past the edge)
+                // instead of dropping the snap. The cap line through
+                // the free-projected corner in the edge direction lets
+                // the solver continue past the finite edge. The user
+                // can push past with further mouse movement.
+                const endpointScr = tT < 0 ? sScr : eScr;
+                const endpointDist = Math.hypot(
+                  cornerScr.x - endpointScr.x,
+                  cornerScr.y - endpointScr.y,
+                );
+                if (endpointDist > cornerRadius * 3) continue;
+                snapX = sW[axisX] + dx * tT;
+                snapY = sW[axisY] + dy * tT;
+              } else {
+                snapX = sW[axisX] + dx * tT;
+                snapY = sW[axisY] + dy * tT;
+              }
             }
             const dist = Math.hypot(
               cornerScr.x - this.screen({ x: snapX, y: snapY, z: 0 }).x,
