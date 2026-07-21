@@ -1496,17 +1496,7 @@ export class Viewport {
     const sideAPool = [...attachedACandidates, ...sideASnaps].slice(0, 6);
     const sideBPool = [...attachedBCandidates, ...sideBSnaps].slice(0, 6);
     const bestCap = capSnaps[0] || null;
-
-    // Acquire starting rails on the first drag frame. Once set, they
-    // are mandatory for all subsequent constraint combinations.
-    if (this.drag && this.drag.startRailA === undefined) {
-      this.drag.startRailA = attachedACandidates[0] || null;
-      this.drag.startRailB = attachedBCandidates[0] || null;
-    }
-    const hardSideA = this.drag?.startRailA ?? null;
-    const hardSideB = this.drag?.startRailB ?? null;
-
-    // Constraint makers
+    const allActiveAxes = this.axes();
     const makeCapConstraint = (snap) => ({
       movingEdge: "cap",
       direction: snap.direction,
@@ -1525,8 +1515,78 @@ export class Viewport {
       targetFaceIndex: snap.targetFaceIndex,
     });
 
+    // Perpendicular distance from freeCap to the line through baseCorner in direction dir.
+    const capLineDistance = (freeCap, baseCorner, dir) => {
+      const dx = freeCap.x - baseCorner.x;
+      const dy = freeCap.y - baseCorner.y;
+      const proj = dx * dir.x + dy * dir.y;
+      if (proj <= 0.01) return 10000;
+      const px = baseCorner.x + dir.x * proj;
+      const py = baseCorner.y + dir.y * proj;
+      return Math.hypot(freeCap.x - px, freeCap.y - py);
+    };
+
+    // Starting rail state: evaluates cross-product of attached
+    // candidates after the drag moves a few pixels, locks the best
+    // valid pair together. Once locked, hard rails are mandatory.
+    const screenDist = Math.hypot(current.x - start.x, current.y - start.y);
+    if (this.drag) {
+      this.drag.startRailState ||= "pending";
+      if (this.drag.startRailState === "pending") {
+        if (screenDist > 3 && (attachedACandidates.length || attachedBCandidates.length)) {
+          // Evaluate cross-product, pick best valid pair
+          let bestPair = null;
+          let bestScore = Infinity;
+          const evalSet = attachedACandidates.length && attachedBCandidates.length
+            ? attachedACandidates.flatMap(sA =>
+                attachedBCandidates.map(sB => ({ sideA: sA, sideB: sB })))
+            : [];
+          if (!evalSet.length && attachedACandidates.length) {
+            for (const sA of attachedACandidates)
+              evalSet.push({ sideA: sA, sideB: null });
+          }
+          if (!evalSet.length && attachedBCandidates.length) {
+            for (const sB of attachedBCandidates)
+              evalSet.push({ sideA: null, sideB: sB });
+          }
+          for (const pair of evalSet) {
+            const cands = [];
+            if (pair.sideA) cands.push(makeSideConstraint(pair.sideA));
+            if (pair.sideB) cands.push(makeSideConstraint(pair.sideB));
+            const sol = solveSingleFaceExtrusion({
+              brush, faceIndex, distance: rawDistance,
+              activeAxes: allActiveAxes, constraints: cands,
+            });
+            if (!sol?.cap) continue;
+            // Score: perpendicular distance from each free cap to its rail
+            let score = 0;
+            if (pair.sideA) {
+              const d = capLineDistance(freeCapA2D, baseA, pair.sideA.targetDirection);
+              score += d;
+            }
+            if (pair.sideB) {
+              const d = capLineDistance(freeCapB2D, baseB, pair.sideB.targetDirection);
+              score += d;
+            }
+            if (score < bestScore) {
+              bestScore = score;
+              bestPair = pair;
+            }
+          }
+          if (bestPair) {
+            this.drag.startRailPair = bestPair;
+            this.drag.startRailState = "locked";
+          } else if (!attachedACandidates.length && !attachedBCandidates.length) {
+            this.drag.startRailState = "none";
+          }
+        }
+      }
+    }
+    const hardPair = this.drag?.startRailPair || null;
+    const hardSideA = hardPair?.sideA || null;
+    const hardSideB = hardPair?.sideB || null;
+
     // Try constraint combinations in priority order (most→least constrained).
-    const allActiveAxes = this.axes();
     const tryConstraints = (candidates) => {
       const sol = solveSingleFaceExtrusion({
         brush, faceIndex, distance: rawDistance,
@@ -1626,6 +1686,12 @@ export class Viewport {
         }
       }
       if (!result && capCon.length) result = tryConstraints(capCon);
+    }
+
+    // When hard rails are locked but no valid result, mark blocked so
+    // the outer pipeline does not fall through to free extrusion.
+    if (!result && (hardSideA || hardSideB) && this.drag) {
+      this.drag.startRailState = "blocked";
     }
 
     this.extrusionCandidate = result
@@ -2000,6 +2066,11 @@ export class Viewport {
           this.drag.current,
         );
         this.drag.snapTarget = this.drag.extrusionCandidate?.snapTarget || null;
+        // When hard rails are locked and no valid constrained geometry
+        // exists, block preview instead of falling back to free extrusion.
+        if (this.drag.startRailState === "blocked") {
+          this.drag.distance = 0;
+        }
         this.drag.distance = limitExtrusionDistance(
           this.state.brushes,
           this.drag.selection,
@@ -2692,10 +2763,11 @@ export class Viewport {
       // Draw persistent start rail target edges when hard rails
       // exist and the solver didn't already draw them.
       const [axX, axY] = this.axes();
-      for (const rail of [this.drag?.startRailA, this.drag?.startRailB]) {
+      for (const rail of [
+        this.drag?.startRailPair?.sideA,
+        this.drag?.startRailPair?.sideB,
+      ]) {
         if (!rail) continue;
-        const already = rail.movingEdge === "sideA" ? solved.sideA : solved.sideB;
-        if (already) continue;
         const color = rail.movingEdge === "sideA" ? "#ff426680" : "#4dabf780";
         const aPt = { x: 0, y: 0, z: 0 };
         aPt[axX] = rail.targetStartWorld[axX];
