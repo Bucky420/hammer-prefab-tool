@@ -483,6 +483,10 @@ export class Viewport {
         faceIndex--
       ) {
         const face = brush.faces[faceIndex];
+        const normal = this.faceNormal(brush, face),
+          nLen = Math.hypot(normal.x, normal.y, normal.z),
+          depth = this.axes()[2];
+        if (nLen && Math.abs(normal[depth]) / nLen > 0.05) continue;
         const polygon = face.map((index) => this.screen(brush.vertices[index]));
         if (
           pointInPolygon(point, polygon) ||
