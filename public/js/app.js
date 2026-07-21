@@ -84,15 +84,6 @@ const view = new Viewport(
       );
     } else if (changeType === "brush-created") {
       redraw();
-    } else if (
-      typeof changeType === "string" &&
-      changeType.startsWith("face-selected:")
-    ) {
-      activeView = changeType.slice("face-selected:".length);
-      state.view = activeView;
-      view.kind = activeView;
-      redraw();
-      setStatus("Face selected; switched to an edge-on view for extrusion");
     } else if (changeType === "face-incompatible") {
       redraw();
       setStatus(

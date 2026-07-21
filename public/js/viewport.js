@@ -2131,7 +2131,6 @@ export class Viewport {
             this.state.faceExtrusionMode,
             snapTarget,
           );
-        else this.onChange(`face-selected:${this.edgeViewForFace(faceId)}`);
         this.drag = null;
         this.extrusionCandidate = null;
         this.extrusionMatchDebug = [];
