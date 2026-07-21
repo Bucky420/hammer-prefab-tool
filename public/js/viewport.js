@@ -1518,6 +1518,11 @@ export class Viewport {
         }
       : null;
     if (this.drag) this.drag.extrusionCandidate = this.extrusionCandidate;
+    if (result?.solvedEdges) {
+      this.extrusionSolvedDebug = this.toScreenEdges(result.solvedEdges);
+    } else {
+      this.extrusionSolvedDebug = null;
+    }
 
     return rawDistance;
   }
