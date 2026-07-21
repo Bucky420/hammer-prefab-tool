@@ -2526,6 +2526,10 @@ export class Viewport {
             : "#ffc92822";
           context.fill();
         }
+        if (this.state.mode === "face" && this.hoverFaceIds.has(id)) {
+          context.fillStyle = "#ffc92844";
+          context.fill();
+        }
         if (selectedFace) {
           context.fillStyle = "#ffff0033";
           context.fill();
@@ -2640,13 +2644,18 @@ export class Viewport {
     }
     if (this.state.mode === "face")
       for (const edge of this.exposedEdges()) {
-        const selected = [...edge.faceIds].some((id) =>
-          this.state.faceSelection.has(id),
-        );
-        context.strokeStyle = selected
-          ? COLORS.selected
-          : COLORS.line;
-        context.lineWidth = 3;
+        const hovered = [...edge.faceIds].some((id) =>
+            this.hoverFaceIds.has(id),
+          ),
+          selected = [...edge.faceIds].some((id) =>
+            this.state.faceSelection.has(id),
+          );
+        context.strokeStyle = hovered
+          ? COLORS.faceHover
+          : selected
+            ? COLORS.selected
+            : COLORS.line;
+        context.lineWidth = hovered ? 4 : 3;
         context.beginPath();
         context.moveTo(edge.startScreen.x, edge.startScreen.y);
         context.lineTo(edge.endScreen.x, edge.endScreen.y);
