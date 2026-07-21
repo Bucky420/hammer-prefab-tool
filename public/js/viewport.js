@@ -2640,18 +2640,13 @@ export class Viewport {
     }
     if (this.state.mode === "face")
       for (const edge of this.exposedEdges()) {
-        const hovered = [...edge.faceIds].some((id) =>
-            this.hoverFaceIds.has(id),
-          ),
-          selected = [...edge.faceIds].some((id) =>
-            this.state.faceSelection.has(id),
-          );
-        context.strokeStyle = hovered
-          ? COLORS.faceHover
-          : selected
-            ? COLORS.selected
-            : COLORS.line;
-        context.lineWidth = hovered ? 4 : 3;
+        const selected = [...edge.faceIds].some((id) =>
+          this.state.faceSelection.has(id),
+        );
+        context.strokeStyle = selected
+          ? COLORS.selected
+          : COLORS.line;
+        context.lineWidth = 3;
         context.beginPath();
         context.moveTo(edge.startScreen.x, edge.startScreen.y);
         context.lineTo(edge.endScreen.x, edge.endScreen.y);
