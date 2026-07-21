@@ -1331,16 +1331,14 @@ export class Viewport {
 
     // Find the best target edge for the cap to lie on. The cap
     // is always parallel to the base, at some perpendicular offset.
-    // The snap picks a target edge parallel to the base and sets
-    // the offset so the cap lies on that edge. The new brush is
-    // always a proper rectangle.
+    // The snap picks a target edge parallel to the base and provides
+    // a direction constraint that makes the cap parallel to the base.
     const findCapSnap = (corner2D, cornerScr) => {
       const results = [];
       for (const targetBrush of this.visibleBrushes()) {
         if (sourceBrushIds.has(targetBrush.id)) continue;
         for (let fi = 0; fi < targetBrush.faces.length; fi++) {
           const tf = targetBrush.faces[fi];
-          // Reject faces whose normal points away from the source.
           const tfNormal = faceDirection(targetBrush, tf);
           if (tfNormal) {
             var tfnX = tfNormal[axisX] || 0;
@@ -1367,33 +1365,17 @@ export class Viewport {
             if (dL < 0.0001) continue;
             const tDir = { x: dx / dL, y: dy / dL };
 
-            // The target edge must be parallel to the source base
-            // direction. This is the cap-match filter.
+            // The target edge must be parallel to the source base direction.
             const capDot = Math.abs(
               tDir.x * sourceBaseDir.x + tDir.y * sourceBaseDir.y,
             );
             if (capDot < 0.95) continue;
 
-            // Project the free cap corner onto the target edge
-            // line. The free cap corner is at baseCorner + normal*dist.
-            // The intersection of this ray with the target edge line
-            // gives the snap position. Both cap corners project
-            // onto the same line, so the cap is parallel to base.
-            // Edge line: s + t * d, s = (sW.x, sW.y), d = (dx, dy)
-            // Ray: freeCap + s * n, n = sourceNormalDir
-            // Solve: s + t * d = freeCap + s' * n
-            //   t * dx - s' * n.x = freeCap.x - s.x
-            //   t * dy - s' * n.y = freeCap.y - s.y
-            // 2x2 system. Solve for t and s'.
-            // (s' is the cap offset along normal.)
-            // Using Cramer's rule:
+            // Project the free cap corner onto the target edge line.
             const det = dx * -sourceNormalDir.x - dy * -sourceNormalDir.y;
-            // det = -dx*n.x + dy*n.y; want it nonzero
             const dAbs = Math.abs(det);
             let snapX, snapY;
             if (dAbs < 0.0001) {
-              // Edge is parallel to the cap normal. Project corner
-              // onto the edge by clamping to the segment.
               const tClamp = dx !== 0
                 ? (corner2D.x - sW[axisX]) / dx
                 : (corner2D.y - sW[axisY]) / dy;
@@ -1409,7 +1391,6 @@ export class Viewport {
               snapX = sW[axisX] + dx * tT;
               snapY = sW[axisY] + dy * tT;
             }
-            // Screen distance from mouse to snap
             const dist = Math.hypot(
               cornerScr.x - this.screen({ x: snapX, y: snapY, z: 0 }).x,
               cornerScr.y - this.screen({ x: snapX, y: snapY, z: 0 }).y,
@@ -1420,12 +1401,9 @@ export class Viewport {
               targetFaceIndex: fi,
               startWorld: { ...sW },
               endWorld: { ...eW },
-              startScreen: sScr,
-              endScreen: eScr,
               direction: tDir,
               cornerSnap: { x: snapX, y: snapY },
               distance: dist,
-              capMatch: true,
             });
           }
         }
@@ -1433,98 +1411,181 @@ export class Viewport {
       return results.sort((a, b) => a.distance - b.distance);
     };
 
+    // Find side-snap candidates. The side edge follows the extrusion
+    // direction; the target edge must be roughly parallel to that.
+    const findSideSnap = (movingEdge, freeCornerScr) => {
+      const results = [];
+      const snapRadius = 10;
+      const expectedDirX = sourceNormalDir.x;
+      const expectedDirY = sourceNormalDir.y;
+      for (const targetBrush of this.visibleBrushes()) {
+        if (sourceBrushIds.has(targetBrush.id)) continue;
+        for (let fi = 0; fi < targetBrush.faces.length; fi++) {
+          const tf = targetBrush.faces[fi];
+          const tfNormal = faceDirection(targetBrush, tf);
+          if (!tfNormal) continue;
+          const tfnX = tfNormal[axisX] || 0;
+          const tfnY = tfNormal[axisY] || 0;
+          const tfnLen = Math.hypot(tfnX, tfnY);
+          if (tfnLen < 0.0001) continue;
+          const tfnDX = tfnX / tfnLen;
+          const tfnDY = tfnY / tfnLen;
+          // The generated side face outward normal is perpendicular
+          // to the extrusion direction (rotated 90 CCW).
+          const sideFaceNX = -expectedDirY;
+          const sideFaceNY = expectedDirX;
+          const faceDot = tfnDX * sideFaceNX + tfnDY * sideFaceNY;
+          if (faceDot < 0.3) continue;
+          for (let ei = 0; ei < tf.length; ei++) {
+            const vi = tf[ei];
+            const otherVi = tf[(ei + 1) % tf.length];
+            const sW = targetBrush.vertices[vi];
+            const eW = targetBrush.vertices[otherVi];
+            const sScr = this.screen(sW);
+            const eScr = this.screen(eW);
+            const dx = eW[axisX] - sW[axisX];
+            const dy = eW[axisY] - sW[axisY];
+            const dL = Math.hypot(dx, dy);
+            if (dL < 0.0001) continue;
+            const tDir = { x: dx / dL, y: dy / dL };
+            // Edge direction must be parallel to the extrusion direction.
+            const sideDot = Math.abs(
+              tDir.x * expectedDirX + tDir.y * expectedDirY,
+            );
+            if (sideDot < 0.85) continue;
+            // Distance from free corner to this edge.
+            const closest = closestPointOnSegment(freeCornerScr, sScr, eScr);
+            const dist = Math.hypot(
+              freeCornerScr.x - closest.point.x,
+              freeCornerScr.y - closest.point.y,
+            );
+            if (dist > snapRadius) continue;
+            results.push({
+              movingEdge,
+              targetBrushId: targetBrush.id,
+              targetFaceIndex: fi,
+              targetDirection: tDir,
+              targetStartWorld: { ...sW },
+              targetEndWorld: { ...eW },
+              distancePx: dist,
+            });
+            break;
+          }
+        }
+      }
+      return results.sort((a, b) => a.distancePx - b.distancePx);
+    };
+
+    // Discover cap and side candidates
     const capSnaps = findCapSnap(freeCapA2D, capCornerScreened.capA);
+    const sideASnaps = findSideSnap("sideA", capCornerScreened.capA);
+    const sideBSnaps = findSideSnap("sideB", capCornerScreened.capB);
 
     // Build debug data
     this.extrusionMatchDebug = [];
-    const addDebug = (snap) => {
+    for (const snap of capSnaps) {
       this.extrusionMatchDebug.push({
         movingEdge: "cap",
         targetBrushId: snap.targetBrushId,
         targetFaceIndex: snap.targetFaceIndex,
-        targetEdgeKey: "",
         segmentDistance: snap.distance,
-        targetStartScreen: snap.startScreen,
-        targetEndScreen: snap.endScreen,
-        movingStartScreen: { x: 0, y: 0 },
-        movingEndScreen: { x: 0, y: 0 },
       });
-    };
-    capSnaps.forEach(addDebug);
-
-    // The cap is on the target edge. Both cap corners are the
-    // projections of the source base corners onto the cap line
-    // (parallel to base, on the target edge). This guarantees
-    // the cap is parallel to the base, the new brush is a proper
-    // rectangle, and the sides are equal length.
-    const bestCap = capSnaps[0] || null;
-    let snapA = null;
-    let snapB = null;
-    if (bestCap) {
-      // The snap point is the perpendicular projection of baseA
-      // onto the target edge along sourceNormalDir. No tangential
-      // adjustment needed — the 2x2/fallback solver already finds
-      // the correct capA position on the edge.
-      snapA = {
-        x: bestCap.cornerSnap.x,
-        y: bestCap.cornerSnap.y,
-      };
-      // Mirror for baseB: capA and capB are parallel to base, so
-      // capB = baseB + (capA - baseA)
-      snapB = {
-        x: baseB.x + (snapA.x - baseA.x),
-        y: baseB.y + (snapA.y - baseA.y),
-      };
-      // Clamp both cap corners to the target edge segment
-      const tClamp = (snap) => {
-        const tx = snap.x - bestCap.startWorld[axisX];
-        const ty = snap.y - bestCap.startWorld[axisY];
-        const dxc = bestCap.endWorld[axisX] - bestCap.startWorld[axisX];
-        const dyc = bestCap.endWorld[axisY] - bestCap.startWorld[axisY];
-        const dlc = Math.hypot(dxc, dyc);
-        if (dlc < 0.0001) return snap;
-        const t = (tx * dxc + ty * dyc) / (dlc * dlc);
-        const tt = Math.max(0, Math.min(1, t));
-        return {
-          x: bestCap.startWorld[axisX] + dxc * tt,
-          y: bestCap.startWorld[axisY] + dyc * tt,
-        };
-      };
-      snapA = tClamp(snapA);
-      snapB = tClamp(snapB);
+    }
+    for (const snap of sideASnaps) {
+      this.extrusionMatchDebug.push({
+        movingEdge: "sideA",
+        targetBrushId: snap.targetBrushId,
+        targetFaceIndex: snap.targetFaceIndex,
+        segmentDistance: snap.distancePx,
+      });
+    }
+    for (const snap of sideBSnaps) {
+      this.extrusionMatchDebug.push({
+        movingEdge: "sideB",
+        targetBrushId: snap.targetBrushId,
+        targetFaceIndex: snap.targetFaceIndex,
+        segmentDistance: snap.distancePx,
+      });
     }
 
-    const hasSnap = bestCap !== null;
+    const bestCap = capSnaps[0] || null;
+    const bestSideA = sideASnaps[0] || null;
+    const bestSideB = sideBSnaps[0] || null;
 
-    const snapTarget = hasSnap
-      ? {
-          type: "corner-snap",
-          activeAxes: [axisX, axisY],
-          snapA,
-          snapB,
-          brushes: this.state.brushes,
-          distance: rawDistance,
-        }
-      : null;
+    // Build constraints: max 2, never sideA+sideB.
+    const constraints = [];
+    if (bestCap) {
+      constraints.push({
+        movingEdge: "cap",
+        direction: bestCap.direction,
+        origin: bestCap.cornerSnap,
+        targetBrushId: bestCap.targetBrushId,
+        targetFaceIndex: bestCap.targetFaceIndex,
+      });
+    }
+    if (bestSideA && !bestCap) {
+      constraints.push({
+        movingEdge: "sideA",
+        direction: bestSideA.targetDirection,
+        origin: { x: baseA.x, y: baseA.y },
+        targetBrushId: bestSideA.targetBrushId,
+        targetFaceIndex: bestSideA.targetFaceIndex,
+      });
+    } else if (bestSideB && !bestCap && constraints.length === 0) {
+      constraints.push({
+        movingEdge: "sideB",
+        direction: bestSideB.targetDirection,
+        origin: { x: baseB.x, y: baseB.y },
+        targetBrushId: bestSideB.targetBrushId,
+        targetFaceIndex: bestSideB.targetFaceIndex,
+      });
+    }
+    // One-side snap copies direction to the opposite side.
+    let sideADir = bestSideA?.targetDirection || sourceNormalDir;
+    let sideBDir = bestSideB?.targetDirection || sourceNormalDir;
+    if (bestSideA && !bestSideB) sideBDir = sideADir;
+    else if (bestSideB && !bestSideA) sideADir = sideBDir;
+
+    const hasSnap = constraints.length > 0;
 
     let solvedEdges = null;
+    let finalCorners = null;
+    let snapTarget = null;
+
     if (hasSnap) {
-      const r = solveCornerSnappedExtrusion({
+      const sol = solveSingleFaceExtrusion({
         brush,
         faceIndex,
         distance: rawDistance,
         activeAxes: [axisX, axisY],
-        snapA,
-        snapB,
+        constraints,
       });
-      if (r?.solvedEdges) solvedEdges = r.solvedEdges;
+      if (sol?.cap) {
+        solvedEdges = sol.solvedEdges;
+        finalCorners = {
+          baseA: sol.baseA,
+          baseB: sol.baseB,
+          capA: sol.capA,
+          capB: sol.capB,
+        };
+        snapTarget = {
+          type: "cross-section-rails",
+          activeAxes: [axisX, axisY],
+          conforming: constraints,
+          finalCorners,
+          targetBrushIds: [
+            ...new Set(constraints.map((c) => c.targetBrushId)),
+          ],
+          distance: rawDistance,
+        };
+      }
     }
 
-    this.extrusionCandidate = hasSnap
+    this.extrusionCandidate = snapTarget
       ? {
           candidateType: "conforming",
           distance: rawDistance,
-          matchCount: bestCap ? 1 : 0,
+          matchCount: constraints.length,
           snapTarget,
           solvedEdges,
         }
@@ -1897,6 +1958,33 @@ export class Viewport {
           this.state.faceExtrusionMode,
           this.drag.snapTarget,
         );
+        // When the collision limiter reduced distance for snapped
+        // geometry, convert to corner-snap with interpolated corners.
+        if (
+          this.drag.snapTarget?.finalCorners &&
+          this.drag.distance < this.drag.snapTarget.distance
+        ) {
+          const alpha =
+            this.drag.snapTarget.distance > 0
+              ? this.drag.distance / this.drag.snapTarget.distance
+              : 0;
+          const { baseA, baseB, capA, capB } =
+            this.drag.snapTarget.finalCorners;
+          this.drag.snapTarget = {
+            type: "corner-snap",
+            activeAxes: this.drag.snapTarget.activeAxes,
+            snapA: {
+              x: baseA.x + (capA.x - baseA.x) * alpha,
+              y: baseA.y + (capA.y - baseA.y) * alpha,
+            },
+            snapB: {
+              x: baseB.x + (capB.x - baseB.x) * alpha,
+              y: baseB.y + (capB.y - baseB.y) * alpha,
+            },
+            brushes: this.state.brushes,
+            distance: this.drag.distance,
+          };
+        }
         if (this.drag.distance > 0) {
           const previewSource = JSON.parse(JSON.stringify(this.state.brushes));
           const preview = extrudeSelectedFaces(

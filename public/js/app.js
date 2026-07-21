@@ -1207,6 +1207,27 @@ function commitFaceExtrusion(
   );
   if (distance <= 0.0001)
     return setStatus("Extrusion blocked by an adjacent brush", true);
+  // When the collision limiter reduced distance for snapped geometry,
+  // convert snapTarget to corner-snap with interpolated corners.
+  if (snapTarget?.finalCorners && distance < snapTarget.distance) {
+    const alpha =
+      snapTarget.distance > 0 ? distance / snapTarget.distance : 0;
+    const { baseA, baseB, capA, capB } = snapTarget.finalCorners;
+    snapTarget = {
+      type: "corner-snap",
+      activeAxes: snapTarget.activeAxes,
+      snapA: {
+        x: baseA.x + (capA.x - baseA.x) * alpha,
+        y: baseA.y + (capA.y - baseA.y) * alpha,
+      },
+      snapB: {
+        x: baseB.x + (capB.x - baseB.x) * alpha,
+        y: baseB.y + (capB.y - baseB.y) * alpha,
+      },
+      brushes: state.brushes,
+      distance,
+    };
+  }
   const result = extrudeSelectedFaces(
     state.brushes,
     state.faceSelection,

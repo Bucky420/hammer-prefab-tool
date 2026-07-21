@@ -1659,6 +1659,83 @@ export function limitExtrusionDistance(
   const selectedBrushIds = new Set(
     [...selection].map((id) => id.match(/^(.*):f:/)?.[1]).filter(Boolean),
   );
+  const targetBrushIds = snapTarget?.targetBrushIds?.length
+    ? snapTarget.targetBrushIds
+    : snapTarget?.targetBrushId
+      ? [snapTarget.targetBrushId]
+      : [];
+
+  const checkCollision = (previewBrushes) =>
+    previewBrushes.some((candidate) =>
+      sourceBrushes.some((obstacle) => {
+        if (selectedBrushIds.has(obstacle.id)) return false;
+        const isTarget = targetBrushIds.includes(obstacle.id);
+        return convexBrushesOverlap(
+          candidate,
+          obstacle,
+          isTarget ? 0.05 : CONTACT_EPSILON,
+        );
+      }),
+    );
+
+  // solveAt(alpha) for snapped geometry with finalCorners.
+  // Interpolate between base and final solved shape instead of
+  // binary-searching distance (which would not move fixed snap points).
+  if (snapTarget?.finalCorners) {
+    const { baseA, baseB, capA: finalCapA, capB: finalCapB } =
+      snapTarget.finalCorners;
+    const collidesAtAlpha = (alpha) => {
+      const interpA = {
+        x: baseA.x + (finalCapA.x - baseA.x) * alpha,
+        y: baseA.y + (finalCapA.y - baseA.y) * alpha,
+      };
+      const interpB = {
+        x: baseB.x + (finalCapB.x - baseB.x) * alpha,
+        y: baseB.y + (finalCapB.y - baseB.y) * alpha,
+      };
+      const modifiedTarget = {
+        ...snapTarget,
+        type: "corner-snap",
+        activeAxes: snapTarget.activeAxes || ["x", "y"],
+        snapA: interpA,
+        snapB: interpB,
+        brushes: sourceBrushes,
+        distance,
+      };
+      const result = extrudeSelectedFaces(
+        sourceBrushes,
+        selection,
+        distance,
+        grid,
+        guideSelection,
+        mode,
+        modifiedTarget,
+      );
+      if (!result.previewBrushes.length || result.errors.length) {
+        result.extrusionCollisionDebug = {
+          reason: result.errors.length ? "invalid brush" : "no preview geometry",
+          errors: result.errors,
+        };
+        return true;
+      }
+      const collisionDebug = checkCollision(result.previewBrushes);
+      result.extrusionCollisionDebug = collisionDebug
+        ? { reason: "overlap with obstacle brush" }
+        : null;
+      return collisionDebug;
+    };
+    if (distance <= 0 || !collidesAtAlpha(1)) return distance;
+    let low = 0;
+    let high = 1;
+    for (let iteration = 0; iteration < 24; iteration++) {
+      const mid = (low + high) / 2;
+      if (collidesAtAlpha(mid)) high = mid;
+      else low = mid;
+    }
+    return distance * low;
+  }
+
+  // Non-snapped: binary search on distance.
   const collides = (amount) => {
     const result = extrudeSelectedFaces(
       sourceBrushes,
@@ -1670,25 +1747,7 @@ export function limitExtrusionDistance(
       snapTarget,
     );
     if (!result.previewBrushes.length || result.errors.length) return false;
-    const targetBrushIds = snapTarget?.targetBrushIds?.length
-      ? snapTarget.targetBrushIds
-      : snapTarget?.targetBrushId
-        ? [snapTarget.targetBrushId]
-        : [];
-    const targetEpsilon = targetBrushIds.length ? 0.05 : CONTACT_EPSILON;
-    return result.previewBrushes.some((candidate) =>
-      sourceBrushes.some(
-        (obstacle) =>
-          !selectedBrushIds.has(obstacle.id) &&
-          convexBrushesOverlap(
-            candidate,
-            obstacle,
-            targetBrushIds.includes(obstacle.id)
-              ? targetEpsilon
-              : CONTACT_EPSILON,
-          ),
-      ),
-    );
+    return checkCollision(result.previewBrushes);
   };
   if (distance <= 0 || !collides(distance)) return distance;
   let low = 0;
