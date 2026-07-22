@@ -1696,10 +1696,12 @@ export function limitExtrusionDistance(
     [...selection].map((id) => id.match(/^(.*):f:/)?.[1]).filter(Boolean),
   );
 
-  // Build per-brush target-face constraints from the snapTarget's
-  // conforming constraint list (cap, sideA, sideB).
+  // Only a cap constraint represents contact with a target face plane.
+  // Side rails align generated sides to support lines and must use ordinary
+  // contact-tolerant SAT instead of an arbitrary adjacent target face.
   const constraintsByTargetBrush = new Map();
   for (const constraint of snapTarget?.conforming ?? []) {
+    if (constraint.movingEdge !== "cap") continue;
     if (
       !constraint.targetBrushId ||
       !Number.isInteger(constraint.targetFaceIndex)

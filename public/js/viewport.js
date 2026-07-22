@@ -1330,8 +1330,13 @@ export class Viewport {
           for (let ei = 0; ei < tf.length; ei++) {
             const sW = targetBrush.vertices[tf[ei]];
             const eW = targetBrush.vertices[tf[(ei + 1) % tf.length]];
-            const key = canonicalEdgeKey(sW, eW);
-            if (seenEdgeKeys.has(key)) continue;
+            const key = `${targetBrush.id}:${canonicalEdgeKey(sW, eW)}`;
+            if (seenEdgeKeys.has(key)) {
+              const existing = results.find((candidate) => candidate.canonicalKey === key);
+              if (existing && !existing.adjacentFaceIndices.includes(fi))
+                existing.adjacentFaceIndices.push(fi);
+              continue;
+            }
             seenEdgeKeys.add(key);
             const start = { x: sW[axisX], y: sW[axisY] };
             const end = { x: eW[axisX], y: eW[axisY] };
@@ -1366,6 +1371,7 @@ export class Viewport {
               movingEdge,
               targetBrushId: targetBrush.id,
               targetFaceIndex: fi,
+              adjacentFaceIndices: [fi],
               targetEdgeIndex: ei,
               railDirection,
               lineOrigin: start,
@@ -1417,8 +1423,13 @@ export class Viewport {
             const otherVi = tf[(ei + 1) % tf.length];
             const sW = targetBrush.vertices[vi];
             const eW = targetBrush.vertices[otherVi];
-            const key = canonicalEdgeKey(sW, eW);
-            if (seenEdgeKeys.has(key)) continue;
+            const key = `${targetBrush.id}:${canonicalEdgeKey(sW, eW)}`;
+            if (seenEdgeKeys.has(key)) {
+              const existing = candidates.find((candidate) => candidate.canonicalKey === key);
+              if (existing && !existing.adjacentFaceIndices.includes(fi))
+                existing.adjacentFaceIndices.push(fi);
+              continue;
+            }
             const start = { x: sW[axisX], y: sW[axisY] };
             const end = { x: eW[axisX], y: eW[axisY] };
             const railDirection = canonicalLineDirection(start, end);
@@ -1431,6 +1442,7 @@ export class Viewport {
               movingEdge,
               targetBrushId: targetBrush.id,
               targetFaceIndex: fi,
+              adjacentFaceIndices: [fi],
               targetEdgeIndex: ei,
               railDirection,
               lineOrigin: start,
@@ -1526,20 +1538,20 @@ export class Viewport {
     if (this.drag) {
       this.drag.startRailState ||= "pending";
       if (this.drag.startRailState === "pending") {
-        if (screenDist > 3 && (attachedACandidates.length || attachedBCandidates.length)) {
+        if (screenDist > 3 && (sideAPool.length || sideBPool.length)) {
           // Evaluate cross-product, pick best valid pair
           let bestPair = null;
           let bestScore = Infinity;
-          const evalSet = attachedACandidates.length && attachedBCandidates.length
-            ? attachedACandidates.flatMap(sA =>
-                attachedBCandidates.map(sB => ({ sideA: sA, sideB: sB })))
+          const evalSet = sideAPool.length && sideBPool.length
+            ? sideAPool.flatMap(sA =>
+                sideBPool.map(sB => ({ sideA: sA, sideB: sB })))
             : [];
-          if (!evalSet.length && attachedACandidates.length) {
-            for (const sA of attachedACandidates)
+          if (!evalSet.length && sideAPool.length) {
+            for (const sA of sideAPool)
               evalSet.push({ sideA: sA, sideB: null });
           }
-          if (!evalSet.length && attachedBCandidates.length) {
-            for (const sB of attachedBCandidates)
+          if (!evalSet.length && sideBPool.length) {
+            for (const sB of sideBPool)
               evalSet.push({ sideA: null, sideB: sB });
           }
           for (const pair of evalSet) {
@@ -1551,6 +1563,39 @@ export class Viewport {
               activeAxes: allActiveAxes, constraints: cands,
             });
             if (!sol?.cap) continue;
+            const snapTarget = {
+              type: "cross-section-rails",
+              activeAxes: allActiveAxes,
+              conforming: cands,
+              finalCorners: {
+                baseA: sol.baseA,
+                baseB: sol.baseB,
+                capA: sol.capA,
+                capB: sol.capB,
+              },
+              distance: rawDistance,
+            };
+            const selection = this.drag?.selection || new Set([id]);
+            const preview = extrudeSelectedFaces(
+              JSON.parse(JSON.stringify(this.state.brushes)),
+              selection,
+              rawDistance,
+              this.state.grid,
+              this.drag?.guideSelection || selection,
+              this.state.faceExtrusionMode,
+              snapTarget,
+            );
+            if (!preview.previewBrushes.length || preview.errors.length) continue;
+            const safeDistance = limitExtrusionDistance(
+              this.state.brushes,
+              selection,
+              rawDistance,
+              this.state.grid,
+              this.drag?.guideSelection || selection,
+              this.state.faceExtrusionMode,
+              snapTarget,
+            );
+            if (safeDistance <= 0.0001) continue;
             // Score: perpendicular distance from each free cap to its rail
             let score = 0;
             if (pair.sideA) {
@@ -1579,7 +1624,7 @@ export class Viewport {
           if (bestPair) {
             this.drag.startRailPair = bestPair;
             this.drag.startRailState = "locked";
-          } else if (!attachedACandidates.length && !attachedBCandidates.length) {
+          } else if (!sideAPool.length && !sideBPool.length) {
             this.drag.startRailState = "none";
           }
         }
@@ -1693,10 +1738,15 @@ export class Viewport {
       if (!result && capCon.length) result = tryConstraints(capCon);
     }
 
-    // When hard rails are locked but no valid result, mark blocked so
-    // the outer pipeline does not fall through to free extrusion.
-    if (!result && (hardSideA || hardSideB) && this.drag) {
-      this.drag.startRailState = "blocked";
+    // Keep the rail lock through a temporary invalid distance. Only this
+    // pointer frame is blocked, so moving back to valid geometry recovers.
+    if (this.drag) {
+      this.drag.geometryBlocked = !result && Boolean(hardSideA || hardSideB);
+      this.drag.geometryBlockedReason = this.drag.geometryBlocked
+        ? "locked support rails have no valid solution at this distance"
+        : null;
+      if (result && this.drag.startRailPair)
+        this.drag.startRailState = "locked";
     }
 
     this.extrusionCandidate = result
@@ -2079,9 +2129,9 @@ export class Viewport {
           this.drag.current,
         );
         this.drag.snapTarget = this.drag.extrusionCandidate?.snapTarget || null;
-        // When hard rails are locked and no valid constrained geometry
-        // exists, block preview instead of falling back to free extrusion.
-        if (this.drag.startRailState === "blocked") {
+        // A failed solve blocks only this pointer frame; the locked pair is
+        // retained and retried as the pointer moves.
+        if (this.drag.geometryBlocked) {
           this.drag.distance = 0;
         }
         if (this.drag.forwardSnapBlocked) this.drag.distance = 0;
@@ -2137,7 +2187,22 @@ export class Viewport {
           );
           this.previewBrushes = preview.previewBrushes || preview.brushes;
           this.previewErrors = preview.errors;
+          const limitedTarget = this.drag.snapTarget;
+          const limitedSolved =
+            limitedTarget?.type === "corner-snap"
+              ? solveCornerSnappedExtrusion({
+                  brush: this.state.brushes.find(
+                    (item) => item.id === this.drag.faceId.match(/^(.*):f:/)?.[1],
+                  ),
+                  faceIndex: Number(this.drag.faceId.match(/:f:(\d+)$/)?.[1]),
+                  distance: this.drag.distance,
+                  activeAxes: limitedTarget.activeAxes,
+                  snapA: limitedTarget.snapA,
+                  snapB: limitedTarget.snapB,
+                })?.solvedEdges
+              : null;
           const candidateSolved =
+            limitedSolved ||
             this.drag.extrusionCandidate?.solvedEdges ||
             this.drag.extrusionCandidate?.snapTarget?.solvedEdges;
           if (candidateSolved) {
