@@ -380,7 +380,45 @@ function approxPoint(a, b, eps = 0.01) {
 }
 
 // --------------------------------------------------------------------
-// Test 13: mode policies are explicit and forward-only is directional
+// Test 13: two independent support lines produce a narrowing cap
+// --------------------------------------------------------------------
+{
+  const s = box({ x: 0, y: 0, z: 0 }, { x: 64, y: 64, z: 64 });
+  const constraints = [
+    { movingEdge: "sideA", direction: { x: 1, y: 0.25 } },
+    { movingEdge: "sideB", direction: { x: 1, y: -0.25 } },
+  ];
+  const result = solveSingleFaceExtrusion({
+    brush: s,
+    faceIndex: 3,
+    distance: 64,
+    activeAxes: ["x", "y"],
+    constraints,
+  });
+  assert.ok(result, "two support lines solve");
+  assert.ok(result.capA.y > 0 && result.capB.y < 64, "cap narrows between rails");
+  assert.ok(result.capA.x > 64 && result.capB.x > 64, "both rails move forward");
+  const reversed = solveSingleFaceExtrusion({
+    brush: s,
+    faceIndex: 3,
+    distance: 64,
+    activeAxes: ["x", "y"],
+    constraints: constraints.map((constraint) => ({
+      ...constraint,
+      direction: {
+        x: -constraint.direction.x,
+        y: -constraint.direction.y,
+      },
+    })),
+  });
+  assert.ok(reversed, "reversed support-line winding still solves");
+  assert.ok(approxPoint(result.capA, reversed.capA), "side A is winding-independent");
+  assert.ok(approxPoint(result.capB, reversed.capB), "side B is winding-independent");
+  console.log("independent support-line narrowing OK");
+}
+
+// --------------------------------------------------------------------
+// Test 14: mode policies are explicit and forward-only is directional
 // --------------------------------------------------------------------
 {
   assert.deepEqual(extrusionPolicyForMode("snap"), {
