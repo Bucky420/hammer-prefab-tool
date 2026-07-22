@@ -2823,6 +2823,17 @@ export class Viewport {
         context.fillText(label, 26, legendY);
         legendY += 14;
       }
+
+      // Extrusion length readout (like Hammer's info bar)
+      if (this.drag?.distance > 0) {
+        context.font = "14px monospace";
+        context.fillStyle = "#ffffff";
+        context.textBaseline = "top";
+        const grid = this.state.grid || 1;
+        const rounded = Math.round(this.drag.distance / grid) * grid;
+        const decimals = grid >= 1 ? 0 : grid >= 0.125 ? 3 : 4;
+        context.fillText(`L: ${rounded.toFixed(decimals)}`, 12, legendY + 4);
+      }
     }
     if (this.state.mode === "selection") {
       const bounds = this.objectBounds();
