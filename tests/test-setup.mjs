@@ -13,6 +13,8 @@ import {
 import {
   dedupeFirst,
   isNoDrawMaterial,
+  passesProbeValidation,
+  retainLockedCandidate,
 } from "../public/js/rail-acquisition.js";
 
 // Helper: rotate a 2D point by angle around center
@@ -434,6 +436,18 @@ function approxPoint(a, b, eps = 0.01) {
   ]);
   assert.equal(deduped.length, 2, "first duplicate wins");
   assert.equal(deduped[0].source, "attached", "attached priority preserved");
+  const locked = retainLockedCandidate(
+    [
+      { canonicalKey: "edge-1", distancePx: 10 },
+      { canonicalKey: "edge-2", distancePx: 2 },
+    ],
+    "edge-2",
+    18,
+  );
+  assert.equal(locked.length, 1, "locked rail retained first");
+  assert.equal(locked[0].canonicalKey, "edge-2", "locked rail survives reorder");
+  assert.equal(passesProbeValidation(9.8, 10), true, "probe validation passes");
+  assert.equal(passesProbeValidation(9.7, 10), false, "probe validation fails");
   console.log("rail acquisition helper OK");
 }
 

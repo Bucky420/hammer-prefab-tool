@@ -8,7 +8,21 @@ export function isNoDrawMaterial(material) {
 export function dedupeFirst(candidates) {
   const map = new Map();
   for (const candidate of candidates) {
-    if (!map.has(candidate.key)) map.set(candidate.key, candidate);
+    const key = candidate.key || candidate.canonicalKey;
+    if (!map.has(key)) map.set(key, candidate);
   }
   return [...map.values()];
+}
+
+export function retainLockedCandidate(candidates, lockedKey, releaseRadius) {
+  if (!lockedKey) return candidates;
+  const locked = candidates.find(
+    (candidate) => candidate.key === lockedKey || candidate.canonicalKey === lockedKey,
+  );
+  if (locked && locked.distancePx <= releaseRadius) return [locked];
+  return candidates;
+}
+
+export function passesProbeValidation(safeDistance, probeDistance, threshold = 0.98) {
+  return safeDistance / Math.max(probeDistance, 0.000001) >= threshold;
 }

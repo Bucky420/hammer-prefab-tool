@@ -20,7 +20,12 @@ import {
 } from "./extrusion-policy.js";
 import { validateBrush } from "./brush-validation.js";
 import { duplicateBrushes } from "./geometry-model.js";
-import { dedupeFirst, isNoDrawMaterial } from "./rail-acquisition.js";
+import {
+  dedupeFirst,
+  isNoDrawMaterial,
+  passesProbeValidation,
+  retainLockedCandidate,
+} from "./rail-acquisition.js";
 const cross = (a, b) => ({
   x: a.y * b.z - a.z * b.y,
   y: a.z * b.x - a.x * b.z,
@@ -1393,7 +1398,10 @@ export class Viewport {
           }
         }
       }
-      return results.sort(
+      const retained = retainLockedCandidate(results, lockedKey, releaseRadius);
+      if (retained.length === 1 && retained[0] === results.find((candidate) => candidate.canonicalKey === lockedKey))
+        return retained;
+      return retained.sort(
         (a, b) => a.distancePx - b.distancePx || a.canonicalKey.localeCompare(b.canonicalKey),
       );
     };
@@ -1507,6 +1515,8 @@ export class Viewport {
       { x: baseB.x, y: baseB.y },
       freeCapB2D,
     );
+    const hardAPool = dedupeFirst(attachedACandidates).slice(0, 6);
+    const hardBPool = dedupeFirst(attachedBCandidates).slice(0, 6);
     // Attached and magnetic support-line candidates are both evaluated;
     // attached candidates are ordered first in each pool.
     const sideASnaps = baseAScreen
@@ -1556,21 +1566,29 @@ export class Viewport {
     if (this.drag) {
       this.drag.startRailState ||= "pending";
       if (this.drag.startRailState === "pending") {
-        const hardAPool = dedupeFirst(attachedACandidates).slice(0, 6);
-        const hardBPool = dedupeFirst(attachedBCandidates).slice(0, 6);
-        if (screenDist > 3 && hardAPool.length && hardBPool.length) {
-          // Evaluate cross-product, pick best valid pair
+        const probeDistance = Math.max(
+          this.state.grid || 1,
+          8 / Math.max(this.scale, 0.0001),
+        );
+        if (screenDist > 3 && (hardAPool.length || hardBPool.length)) {
+          // Evaluate cross-product first, then fall back to a single hard rail.
           let bestPair = null;
           let bestScore = Infinity;
-          const evalSet = hardAPool.flatMap((sA) =>
-            hardBPool.map((sB) => ({ sideA: sA, sideB: sB })),
-          );
+          const evalSet = hardAPool.length && hardBPool.length
+            ? hardAPool.flatMap((sA) =>
+                hardBPool.map((sB) => ({ sideA: sA, sideB: sB })),
+              )
+            : [];
+          if (!evalSet.length) {
+            for (const sA of hardAPool) evalSet.push({ sideA: sA, sideB: null });
+            for (const sB of hardBPool) evalSet.push({ sideA: null, sideB: sB });
+          }
           for (const pair of evalSet) {
             const cands = [];
             if (pair.sideA) cands.push(makeSideConstraint(pair.sideA));
             if (pair.sideB) cands.push(makeSideConstraint(pair.sideB));
             const sol = solveSingleFaceExtrusion({
-              brush, faceIndex, distance: rawDistance,
+              brush, faceIndex, distance: probeDistance,
               activeAxes: allActiveAxes, constraints: cands,
             });
             if (!sol?.cap) continue;
@@ -1590,7 +1608,7 @@ export class Viewport {
             const preview = extrudeSelectedFaces(
               JSON.parse(JSON.stringify(this.state.brushes)),
               selection,
-              rawDistance,
+              probeDistance,
               this.state.grid,
               this.drag?.guideSelection || selection,
               this.state.faceExtrusionMode,
@@ -1600,13 +1618,13 @@ export class Viewport {
             const safeDistance = limitExtrusionDistance(
               this.state.brushes,
               selection,
-              rawDistance,
+              probeDistance,
               this.state.grid,
               this.drag?.guideSelection || selection,
               this.state.faceExtrusionMode,
               snapTarget,
             );
-            if (safeDistance / Math.max(rawDistance, 0.000001) < 0.98) continue;
+            if (!passesProbeValidation(safeDistance, probeDistance)) continue;
             // Score: perpendicular distance from each free cap to its rail
             let score = 0;
             if (pair.sideA) {
@@ -1632,10 +1650,60 @@ export class Viewport {
               bestPair = pair;
             }
           }
+          if (!bestPair) {
+            for (const pair of [
+              ...hardAPool.map((sA) => ({ sideA: sA, sideB: null })),
+              ...hardBPool.map((sB) => ({ sideA: null, sideB: sB })),
+            ]) {
+              const cands = [];
+              if (pair.sideA) cands.push(makeSideConstraint(pair.sideA));
+              if (pair.sideB) cands.push(makeSideConstraint(pair.sideB));
+              const sol = solveSingleFaceExtrusion({
+                brush, faceIndex, distance: probeDistance,
+                activeAxes: allActiveAxes, constraints: cands,
+              });
+              if (!sol?.cap) continue;
+              const snapTarget = {
+                type: "cross-section-rails",
+                activeAxes: allActiveAxes,
+                conforming: cands,
+                finalCorners: {
+                  baseA: sol.baseA,
+                  baseB: sol.baseB,
+                  capA: sol.capA,
+                  capB: sol.capB,
+                },
+                distance: probeDistance,
+              };
+              const selection = this.drag?.selection || new Set([id]);
+              const preview = extrudeSelectedFaces(
+                JSON.parse(JSON.stringify(this.state.brushes)),
+                selection,
+                probeDistance,
+                this.state.grid,
+                this.drag?.guideSelection || selection,
+                this.state.faceExtrusionMode,
+                snapTarget,
+              );
+              if (!preview.previewBrushes.length || preview.errors.length) continue;
+              const safeDistance = limitExtrusionDistance(
+                this.state.brushes,
+                selection,
+                probeDistance,
+                this.state.grid,
+                this.drag?.guideSelection || selection,
+                this.state.faceExtrusionMode,
+                snapTarget,
+              );
+              if (!passesProbeValidation(safeDistance, probeDistance)) continue;
+              bestPair = pair;
+              break;
+            }
+          }
           if (bestPair) {
             this.drag.startRailPair = bestPair;
             this.drag.startRailState = "locked";
-          } else {
+          } else if (!hardAPool.length && !hardBPool.length) {
             this.drag.startRailState = "none";
           }
         }
