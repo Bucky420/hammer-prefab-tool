@@ -1382,6 +1382,9 @@ export class Viewport {
         results.push({
           movingEdge,
           targetBrushId: targetBrush.id,
+          targetFaceIndex: faceRecords.find(
+            (record) => !isNoDrawMaterial(record.brush.faceMaterials?.[record.faceIndex] || record.brush.material),
+          )?.faceIndex,
           adjacentFaceIndices: faceRecords.map((record) => record.faceIndex),
           targetEdgeIndex: 0,
           railDirection,
@@ -1452,6 +1455,9 @@ export class Viewport {
         candidates.push({
           movingEdge,
           targetBrushId: targetBrush.id,
+          targetFaceIndex: faceRecords.find(
+            (record) => !isNoDrawMaterial(record.brush.faceMaterials?.[record.faceIndex] || record.brush.material),
+          )?.faceIndex,
           adjacentFaceIndices: faceRecords.map((record) => record.faceIndex),
           targetEdgeIndex: 0,
           railDirection,
@@ -1470,38 +1476,40 @@ export class Viewport {
       return candidates;
     };
 
-    // Discover cap and side candidates from both cap corners.
-    const capSnapsA = findCapSnap(
+    const railSnappingEnabled = (this.drag?.selection?.size || 1) === 1;
+    // Discover cap and side candidates from both cap corners only for a
+    // single active face. Grouped multi-face extrusion remains unconstrained.
+    const capSnapsA = railSnappingEnabled ? findCapSnap(
       freeCapA2D,
       freeCapScrA,
       { x: baseA.x, y: baseA.y },
-    );
-    const capSnapsB = findCapSnap(
+    ) : [];
+    const capSnapsB = railSnappingEnabled ? findCapSnap(
       freeCapB2D,
       freeCapScrB,
       { x: baseB.x, y: baseB.y },
-    );
+    ) : [];
     const capSnaps = [...capSnapsA, ...capSnapsB].sort(
       (a, b) => a.distance - b.distance,
     );
-    const attachedACandidates = findAttachedEdges(
+    const attachedACandidates = railSnappingEnabled ? findAttachedEdges(
       "sideA",
       { x: baseA.x, y: baseA.y },
       freeCapA2D,
-    );
-    const attachedBCandidates = findAttachedEdges(
+    ) : [];
+    const attachedBCandidates = railSnappingEnabled ? findAttachedEdges(
       "sideB",
       { x: baseB.x, y: baseB.y },
       freeCapB2D,
-    );
+    ) : [];
     const hardAPool = dedupeFirst(attachedACandidates).slice(0, 6);
     const hardBPool = dedupeFirst(attachedBCandidates).slice(0, 6);
     // Attached and magnetic support-line candidates are both evaluated;
     // attached candidates are ordered first in each pool.
-    const sideASnaps = baseAScreen
+    const sideASnaps = railSnappingEnabled && baseAScreen
       ? findSideSnap("sideA", { x: baseA.x, y: baseA.y }, freeCapA2D, freeCapScrA)
       : [];
-    const sideBSnaps = baseBScreen
+    const sideBSnaps = railSnappingEnabled && baseBScreen
       ? findSideSnap("sideB", { x: baseB.x, y: baseB.y }, freeCapB2D, freeCapScrB)
       : [];
 
@@ -1558,7 +1566,7 @@ export class Viewport {
                 hardBPool.map((sB) => ({ sideA: sA, sideB: sB })),
               )
             : [];
-          if (!evalSet.length) {
+          if (!evalSet.length && !(hardAPool.length && hardBPool.length)) {
             for (const sA of hardAPool) evalSet.push({ sideA: sA, sideB: null });
             for (const sB of hardBPool) evalSet.push({ sideA: null, sideB: sB });
           }
@@ -1635,62 +1643,6 @@ export class Viewport {
               bestPair = pair;
             }
           }
-          if (!bestPair) {
-            for (const pair of [
-              ...hardAPool.map((sA) => ({ sideA: sA, sideB: null })),
-              ...hardBPool.map((sB) => ({ sideA: null, sideB: sB })),
-            ]) {
-              const cands = [];
-              if (pair.sideA) cands.push(makeSideConstraint(pair.sideA));
-              if (pair.sideB) cands.push(makeSideConstraint(pair.sideB));
-              const sol = solveSingleFaceExtrusion({
-                brush, faceIndex, distance: probeDistance,
-                activeAxes: allActiveAxes, constraints: cands,
-              });
-              if (!sol?.cap) continue;
-              const snapTarget = {
-                type: "cross-section-rails",
-                activeAxes: allActiveAxes,
-                conforming: cands,
-                finalCorners: {
-                  baseA: sol.baseA,
-                  baseB: sol.baseB,
-                  capA: sol.capA,
-                  capB: sol.capB,
-                },
-                distance: probeDistance,
-              };
-              const selection = this.drag?.selection || new Set([id]);
-              const preview = extrudeSelectedFaces(
-                JSON.parse(JSON.stringify(this.state.brushes)),
-                selection,
-                probeDistance,
-                this.state.grid,
-                this.drag?.guideSelection || selection,
-                this.state.faceExtrusionMode,
-                snapTarget,
-              );
-              if (!preview.previewBrushes.length || preview.errors.length) continue;
-              if (
-                preview.previewBrushes.some(
-                  (candidate) => validateBrush(candidate).length > 0,
-                )
-              )
-                continue;
-              const safeDistance = limitExtrusionDistance(
-                this.state.brushes,
-                selection,
-                probeDistance,
-                this.state.grid,
-                this.drag?.guideSelection || selection,
-                this.state.faceExtrusionMode,
-                snapTarget,
-              );
-              if (!passesProbeValidation(safeDistance, probeDistance)) continue;
-              bestPair = pair;
-              break;
-            }
-          }
           if (bestPair) {
             this.drag.startRailPair = bestPair;
             this.drag.startRailState = "locked";
@@ -1756,6 +1708,17 @@ export class Viewport {
         snapTarget,
       );
       if (safeDistance <= 0) return null;
+      const alpha = rawDistance > 0.0001
+        ? Math.min(1, safeDistance / rawDistance)
+        : 0;
+      const safeCapA = {
+        x: sol.baseA.x + (sol.capA.x - sol.baseA.x) * alpha,
+        y: sol.baseA.y + (sol.capA.y - sol.baseA.y) * alpha,
+      };
+      const safeCapB = {
+        x: sol.baseB.x + (sol.capB.x - sol.baseB.x) * alpha,
+        y: sol.baseB.y + (sol.capB.y - sol.baseB.y) * alpha,
+      };
       let attractionScore = 0;
       for (const candidate of candidates) {
         if (candidate.movingEdge === "sideA") {
@@ -1776,11 +1739,16 @@ export class Viewport {
       }
       const finalCorners = {
         baseA: sol.baseA, baseB: sol.baseB,
-        capA: sol.capA, capB: sol.capB,
+        capA: safeCapA, capB: safeCapB,
       };
       return {
         finalCorners,
-        solvedEdges: sol.solvedEdges,
+        solvedEdges: {
+          base: [sol.baseA, sol.baseB],
+          sideA: [sol.baseA, safeCapA],
+          cap: [safeCapA, safeCapB],
+          sideB: [safeCapB, sol.baseB],
+        },
         safeDistance,
         attractionScore,
         candidateKey: candidates
@@ -1792,7 +1760,7 @@ export class Viewport {
           conforming: candidates,
           finalCorners,
           targetBrushIds: [...new Set(candidates.map((c) => c.targetBrushId))],
-          distance: rawDistance,
+          distance: safeDistance,
         },
       };
     };
@@ -2551,7 +2519,11 @@ export class Viewport {
           extrusionResolved } = this.drag;
         this.previewBrushes = [];
         this.previewErrors = [];
-        if (distance > 0)
+        if (
+          distance > 0.01 &&
+          !this.drag.geometryBlocked &&
+          (!snapTarget || snapTarget.distance > 0.01)
+        )
           this.onExtrudeFaces(
             selection,
             distance,

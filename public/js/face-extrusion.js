@@ -457,6 +457,13 @@ export function solveVertexSnappedExtrusion(
 
   if (!capA || !capB) return null;
   if (!Number.isFinite(capA.x) || !Number.isFinite(capB.x)) return null;
+  const geometryEpsilon = 0.01;
+  if (
+    Math.hypot(capA.x - baseA.x, capA.y - baseA.y) <= geometryEpsilon ||
+    Math.hypot(capB.x - baseB.x, capB.y - baseB.y) <= geometryEpsilon ||
+    Math.hypot(capA.x - capB.x, capA.y - capB.y) <= geometryEpsilon
+  )
+    return null;
 
   const pushedA =
     (capA.x - baseA.x) * srcNormal.x + (capA.y - baseA.y) * srcNormal.y;
@@ -1684,12 +1691,11 @@ export function limitExtrusionDistance(
     [...selection].map((id) => id.match(/^(.*):f:/)?.[1]).filter(Boolean),
   );
 
-  // Only a cap constraint represents contact with a target face plane.
-  // Side rails align generated sides to support lines and must use ordinary
-  // contact-tolerant SAT instead of an arbitrary adjacent target face.
+  // Cap and side constraints both identify a physical target boundary. The
+  // plane test allows tangential sliding while SAT continues checking the
+  // rest of the target brush for penetration.
   const constraintsByTargetBrush = new Map();
   for (const constraint of snapTarget?.conforming ?? []) {
-    if (constraint.movingEdge !== "cap") continue;
     if (
       !constraint.targetBrushId ||
       !Number.isInteger(constraint.targetFaceIndex)
