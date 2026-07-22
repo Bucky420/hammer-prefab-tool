@@ -41,6 +41,7 @@ const $ = (id) => document.getElementById(id);
 const state = HP.state;
 state.faceSelection ||= new Set();
 state.hiddenBrushes ||= new Set();
+state.squareBox ??= localStorage.getItem("squareBox") === "1";
 state.faceSelectionScope ||= "group";
 state.faceToolMode ||= "extrude";
 const history = state.history || (state.history = new History());
@@ -270,8 +271,18 @@ state.grid = 16;
 const brushPanel = document.createElement("aside");
 brushPanel.className = "brush-panel";
 brushPanel.hidden = false;
-brushPanel.innerHTML = `<header><strong>BRUSH TOOLS</strong></header><label>Shape <select data-shape><option value="block">Block</option><option value="arch">Arch</option><option value="cylinder">Cylinder</option><option value="sphere">Sphere</option><option value="torus">Torus</option></select></label><label>Width <input type="number" data-setting="width" min="1" max="4096" step="${state.grid}" value="64"><output data-output="width">64</output></label><label>Depth <input type="number" data-setting="depth" min="1" max="4096" step="${state.grid}" value="64"><output data-output="depth">64</output></label><label>Height <input type="number" data-setting="height" min="1" max="4096" step="${state.grid}" value="128"><output data-output="height">128</output></label><label>Radius <input type="number" data-setting="radius" min="8" max="4096" step="${state.grid}" value="256"><output data-output="radius">256</output></label><label>Sides <input type="number" data-setting="segments" min="3" max="128" step="1" value="32"><output data-output="segments">32</output></label><label>Rings <input type="number" data-setting="rings" min="2" max="64" step="1" value="12"><output data-output="rings">12</output></label><label>Arc <input type="number" data-setting="arc" min="1" max="360" step="1" value="180"><output data-output="arc">180</output></label><label data-arch-setting>Bevel <input type="number" data-setting="bevel" min="0" max="128" step="${state.grid}" value="0"><output data-output="bevel">0</output></label><label class="check-row"><input type="checkbox" data-setting="powerOfTwo"> Power of 2</label><label class="advanced-setting">Elevation <input type="number" data-setting="addHeight" min="-4096" max="4096" step="${state.grid}" value="0"><output data-output="addHeight">0</output></label><button class="generate-brush" data-generate>Generate Brush</button>`;
+brushPanel.innerHTML = `<header><strong>BRUSH TOOLS</strong></header><label>Shape <select data-shape><option value="block">Block</option><option value="arch">Arch</option><option value="cylinder">Cylinder</option><option value="sphere">Sphere</option><option value="torus">Torus</option></select></label><label>Width <input type="number" data-setting="width" min="1" max="4096" step="${state.grid}" value="64"><output data-output="width">64</output></label><label>Depth <input type="number" data-setting="depth" min="1" max="4096" step="${state.grid}" value="64"><output data-output="depth">64</output></label><label>Height <input type="number" data-setting="height" min="1" max="4096" step="${state.grid}" value="128"><output data-output="height">128</output></label><label>Radius <input type="number" data-setting="radius" min="8" max="4096" step="${state.grid}" value="256"><output data-output="radius">256</output></label><label>Sides <input type="number" data-setting="segments" min="3" max="128" step="1" value="32"><output data-output="segments">32</output></label><label>Rings <input type="number" data-setting="rings" min="2" max="64" step="1" value="12"><output data-output="rings">12</output></label><label>Arc <input type="number" data-setting="arc" min="1" max="360" step="1" value="180"><output data-output="arc">180</output></label><label data-arch-setting>Bevel <input type="number" data-setting="bevel" min="0" max="128" step="${state.grid}" value="0"><output data-output="bevel">0</output></label><label class="check-row"><input type="checkbox" data-setting="powerOfTwo"> Power of 2</label><label class="check-row"><input type="checkbox" data-square> Square</label><label class="advanced-setting">Elevation <input type="number" data-setting="addHeight" min="-4096" max="4096" step="${state.grid}" value="0"><output data-output="addHeight">0</output></label><button class="generate-brush" data-generate>Generate Brush</button>`;
 toolRail.append(brushPanel);
+// Square toggle — persists across reloads via localStorage
+const squareChk = brushPanel.querySelector("[data-square]");
+if (squareChk) {
+  squareChk.checked = localStorage.getItem("squareBox") === "1";
+  state.squareBox = squareChk.checked;
+  squareChk.onchange = () => {
+    state.squareBox = squareChk.checked;
+    localStorage.setItem("squareBox", squareChk.checked ? "1" : "0");
+  };
+}
 brushPanel
   .querySelector('[data-setting="powerOfTwo"]')
   ?.closest("label")

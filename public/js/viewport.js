@@ -2291,6 +2291,14 @@ export class Viewport {
           start[vertical] = min[vertical];
           end[vertical] = max[vertical];
         }
+        if (this.state.squareBox) {
+          const [axX, axY] = axes;
+          const w = end[axX] - start[axX];
+          const h = end[axY] - start[axY];
+          const size = Math.max(Math.abs(w), Math.abs(h));
+          end[axX] = start[axX] + (w >= 0 ? size : -size);
+          end[axY] = start[axY] + (h >= 0 ? size : -size);
+        }
         this.creationBox = { ...this.creationBox, start, end };
         this.onBrushPreview(this.creationBox);
         this.requestDraw();
@@ -2298,6 +2306,13 @@ export class Viewport {
       }
       this.drag.currentX = event.offsetX;
       this.drag.currentY = event.offsetY;
+      if (this.state.squareBox && this.drag.type === "box") {
+        const dx = this.drag.currentX - this.drag.x;
+        const dy = this.drag.currentY - this.drag.y;
+        const size = Math.max(Math.abs(dx), Math.abs(dy));
+        this.drag.currentX = this.drag.x + (dx >= 0 ? size : -size);
+        this.drag.currentY = this.drag.y + (dy >= 0 ? size : -size);
+      }
       if (
         !this.drag.dragged &&
         Math.hypot(
@@ -2966,6 +2981,32 @@ export class Viewport {
       context.setLineDash([5, 3]);
       context.strokeRect(x, y, boxWidth, boxHeight);
       context.setLineDash([]);
+      // Dimension labels (like Hammer) — world-space width / height
+      let dimW = 0, dimH = 0;
+      if (this.creationBox) {
+        const { start: cs, end: ce, axes: cAxes } = this.creationBox;
+        const [axX, axY] = cAxes || this.axes();
+        dimW = Math.abs((ce[axX] || 0) - (cs[axX] || 0));
+        dimH = Math.abs((ce[axY] || 0) - (cs[axY] || 0));
+      } else if (this.drag?.type === "box") {
+        const sw = this.world(start),
+          ew = this.world(end);
+        const [axX, axY] = this.axes();
+        dimW = Math.abs(ew[axX] - sw[axX]);
+        dimH = Math.abs(ew[axY] - sw[axY]);
+      }
+      if (dimW > 0 || dimH > 0) {
+        const grid = this.state.grid || 1;
+        dimW = Math.round(dimW / grid) * grid;
+        dimH = Math.round(dimH / grid) * grid;
+        const dec = grid >= 1 ? 0 : 3;
+        context.font = "11px monospace";
+        context.fillStyle = "#ffc928";
+        context.textBaseline = "bottom";
+        context.fillText(`${dimW.toFixed(dec)}`, x + boxWidth / 2, y - 6);
+        context.textBaseline = "top";
+        context.fillText(`${dimH.toFixed(dec)}`, x + boxWidth + 6, y + boxHeight / 2);
+      }
       context.fillStyle = COLORS.selected;
       for (const [handleX, handleY] of [
         [x, y],
