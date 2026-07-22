@@ -5,6 +5,14 @@ export function isNoDrawMaterial(material) {
     .endsWith("tools/toolsnodraw");
 }
 
+export function projectedRailKey(start, end, axisX, axisY) {
+  const keyFor = (point) =>
+    `${point[axisX].toFixed(5)},${point[axisY].toFixed(5)}`;
+  const a = keyFor(start);
+  const b = keyFor(end);
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
 export function dedupeFirst(candidates) {
   const map = new Map();
   for (const candidate of candidates) {

@@ -14,6 +14,7 @@ import {
   dedupeFirst,
   isNoDrawMaterial,
   passesProbeValidation,
+  projectedRailKey,
   retainLockedCandidate,
 } from "../public/js/rail-acquisition.js";
 
@@ -449,7 +450,48 @@ function approxPoint(a, b, eps = 0.01) {
 }
 
 // --------------------------------------------------------------------
-// Test 15: rail-acquisition helpers preserve attached priority
+// Test 15: projected rail keys collapse depth duplicates
+// --------------------------------------------------------------------
+{
+  const top = { x: 10, y: 20, z: 64 };
+  const bottom = { x: 10, y: 20, z: 0 };
+  const topEnd = { x: 10, y: 84, z: 64 };
+  const bottomEnd = { x: 10, y: 84, z: 0 };
+  assert.equal(
+    projectedRailKey(top, topEnd, "x", "y"),
+    projectedRailKey(bottom, bottomEnd, "x", "y"),
+    "top and bottom edges share one projected rail key",
+  );
+  console.log("projected rail key regression OK");
+}
+
+// --------------------------------------------------------------------
+// Test 16: outward normal extrusion is rotation and winding invariant
+// --------------------------------------------------------------------
+{
+  for (const angle of [0, 90, 180, 270]) {
+    for (const reverse of [false, true]) {
+      const source = buildRotatedBox({ x: 0, y: 0, z: 0 }, { x: 64, y: 64, z: 64 }, angle);
+      if (reverse) source.faces = source.faces.map((face) => [...face].reverse());
+      const result = solveSingleFaceExtrusion({
+        brush: source,
+        faceIndex: 3,
+        distance: 16,
+        activeAxes: ["x", "y"],
+        constraints: [],
+      });
+      assert.ok(result, `rotation ${angle}, reverse ${reverse} solves`);
+      assert.ok(
+        Math.hypot(result.capA.x - result.baseA.x, result.capA.y - result.baseA.y) > 15,
+        `rotation ${angle}, reverse ${reverse} moves outward`,
+      );
+    }
+  }
+  console.log("rotation and winding invariance OK");
+}
+
+// --------------------------------------------------------------------
+// Test 17: rail-acquisition helpers preserve attached priority
 // --------------------------------------------------------------------
 {
   assert.equal(isNoDrawMaterial("tools/toolsnodraw"), true, "nodraw matches");
@@ -477,7 +519,7 @@ function approxPoint(a, b, eps = 0.01) {
 }
 
 // --------------------------------------------------------------------
-// Test 16: mode policies are explicit and forward-only is directional
+// Test 18: mode policies are explicit and forward-only is directional
 // --------------------------------------------------------------------
 {
   assert.deepEqual(extrusionPolicyForMode("snap"), {

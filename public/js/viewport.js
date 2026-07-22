@@ -24,6 +24,7 @@ import {
   dedupeFirst,
   isNoDrawMaterial,
   passesProbeValidation,
+  projectedRailKey,
   retainLockedCandidate,
 } from "./rail-acquisition.js";
 const cross = (a, b) => ({
@@ -1476,12 +1477,6 @@ export class Viewport {
       return candidates;
     };
 
-    const projectedRailKey = (start, end) => {
-      const keyFor = (point) =>
-        `${point[axisX].toFixed(5)},${point[axisY].toFixed(5)}`;
-      const a = keyFor(start), b = keyFor(end);
-      return a < b ? `${a}|${b}` : `${b}|${a}`;
-    };
     const resolveProjectedRailCandidates = (
       movingEdge,
       baseCornerWorld,
