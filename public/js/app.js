@@ -29,7 +29,6 @@ import {
   extrudeSelectedFaces,
   limitExtrusionDistance,
 } from "./face-extrusion.js";
-import { fillSelectedLoop } from "./face-fill.js";
 import {
   nudge,
   scaleVertices,
@@ -43,7 +42,7 @@ state.faceSelection ||= new Set();
 state.hiddenBrushes ||= new Set();
 state.squareBox ??= localStorage.getItem("squareBox") === "1";
 state.faceSelectionScope ||= "group";
-state.faceToolMode ||= "extrude";
+state.faceToolMode = "extrude";
 const history = state.history || (state.history = new History());
 const status = $("status");
 document.querySelector(".live-indicator")?.remove();
@@ -350,13 +349,25 @@ dockDivider.title = "Drag to resize generator pane";
 const facePanel = document.createElement("aside");
 facePanel.className = "brush-panel";
 facePanel.hidden = true;
-facePanel.innerHTML = `<header><strong>FACE TOOLS</strong></header><label>Mode <select data-face-mode><option value="extrude">Extrude</option><option value="fill">Planar Fill</option></select></label><div class="extrusion-toggles"><button type="button" class="extrusion-toggle" data-extrude-mode="parallel" aria-pressed="false">Parallel</button><button type="button" class="extrusion-toggle" data-extrude-mode="snap" aria-pressed="false">Snap</button><button type="button" class="extrusion-toggle" data-extrude-mode="forward-snap" aria-pressed="false">Forward</button></div>`;
+facePanel.innerHTML = `<header><strong>FACE TOOLS</strong></header><div class="extrusion-toggles"><button type="button" class="extrusion-toggle" data-extrude-mode="parallel" aria-pressed="false">Parallel</button><button type="button" class="extrusion-toggle" data-extrude-mode="snap" aria-pressed="false">Snap</button><button type="button" class="extrusion-toggle" data-extrude-mode="forward-snap" aria-pressed="false">Forward</button></div>`;
 for (const el of facePanel.querySelectorAll("[data-extrude-mode]")) {
   const mode = el.dataset.extrudeMode;
   const active = state.faceExtrusionMode === mode;
   el.classList.toggle("active", active);
   el.setAttribute("aria-pressed", active ? "true" : "false");
-  el.onclick = () => { state.faceExtrusionMode = mode; };
+  el.addEventListener("pointerdown", (event) => event.stopPropagation());
+  el.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    state.faceExtrusionMode = mode;
+    for (const button of facePanel.querySelectorAll("[data-extrude-mode]")) {
+      const selected = button.dataset.extrudeMode === state.faceExtrusionMode;
+      button.classList.toggle("active", selected);
+      button.setAttribute("aria-pressed", selected ? "true" : "false");
+    }
+    redraw();
+    setStatus(`Face extrusion mode: ${mode}`);
+  });
 }
 railDock.append(dockDivider, brushPanel, facePanel);
 const railWidthGrip = document.createElement("div");
@@ -405,7 +416,6 @@ function showFaceDock() {
   }
   brushPanel.hidden = true;
   facePanel.hidden = false;
-  updateFaceToolMode();
   railDock.classList.remove("closing", "collapsed");
   railDock.classList.add("available");
   toolRail.style.setProperty(
@@ -429,168 +439,6 @@ function hideBrushDock() {
     }, 530);
   }
 }
-const applyMaterialBtn = facePanel.querySelector("[data-apply-face-material]");
-if (applyMaterialBtn)
-  applyMaterialBtn.onclick = () => {
-    if (!state.faceSelection.size)
-      return setStatus("Select one or more faces first", true);
-    const sideMaterial = facePanel.querySelector(
-      "[data-face-side-material]",
-    ).value;
-    const topMaterial = facePanel.querySelector(
-      "[data-face-top-material]",
-    ).value;
-    let applied = 0;
-    for (const id of state.faceSelection) {
-      const match = id.match(/^(.*):f:(\d+)$/),
-        brush = match && state.brushes.find((item) => item.id === match[1]),
-        faceIndex = Number(match?.[2]);
-      if (!brush || !brush.faces[faceIndex]) continue;
-      brush.faceMaterials ||= brush.faces.map(
-        () => brush.material || "tools/toolsnodraw",
-      );
-      const face = brush.faces[faceIndex];
-      const a = brush.vertices[face[0]],
-        b = brush.vertices[face[1]],
-        c = brush.vertices[face[2]],
-        normal = {
-          x: (b.y - a.y) * (c.z - a.z) - (b.z - a.z) * (c.y - a.y),
-          y: (b.z - a.z) * (c.x - a.x) - (b.x - a.x) * (c.z - a.z),
-          z: (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x),
-        };
-      brush.faceMaterials[faceIndex] =
-        Math.abs(normal.z) > Math.max(Math.abs(normal.x), Math.abs(normal.y))
-          ? topMaterial
-          : sideMaterial;
-      applied++;
-    }
-    if (!applied) return setStatus("Selected faces no longer exist", true);
-    changed();
-    setStatus(`Applied side/top materials to ${applied} faces`);
-  };
-const faceModeSelect = facePanel.querySelector("[data-face-mode]");
-function updateFaceToolMode() {
-  faceModeSelect.value = state.faceToolMode;
-  facePanel.querySelector("[data-fill-selected-loop]").hidden =
-    state.faceToolMode !== "fill";
-}
-function setFaceToolMode(event) {
-  event?.stopPropagation();
-  const mode = event?.currentTarget?.value || faceModeSelect.value;
-  if (mode === state.faceToolMode) return;
-  state.faceToolMode = mode;
-  updateFaceToolMode();
-  setStatus(
-    state.faceToolMode === "fill"
-      ? "Planar Fill: select a closed vertical boundary loop, then Fill Selected Loop"
-      : "Extrude: drag selected faces outward",
-  );
-  changed();
-}
-faceModeSelect.addEventListener("input", setFaceToolMode);
-faceModeSelect.addEventListener("change", setFaceToolMode);
-faceModeSelect.addEventListener("pointerdown", (event) =>
-  event.stopPropagation(),
-);
-facePanel.querySelector("[data-fill-selected-loop]").onclick = () => {
-  const result = fillSelectedLoop(state.brushes, state.faceSelection);
-  if (!result.brushes.length)
-    return setStatus(
-      `Fill blocked: ${result.errors[0] || "no closed loop"}`,
-      true,
-    );
-  applyNodrawToHiddenFaces(
-    [...state.brushes, ...result.brushes],
-    new Set(result.brushes.map((brush) => brush.id)),
-  );
-  add(
-    result.brushes,
-    `Filled loop with ${result.brushes.length} convex brushes`,
-  );
-};
-
-// Test Setup: save the current brushes + selection to a JSON file,
-// or load a previously saved JSON file. Used to share failing test
-// scenarios with the AI.
-const saveTestSetupBtn = facePanel.querySelector("[data-save-test-setup]");
-const loadTestSetupBtn = facePanel.querySelector("[data-load-test-setup]");
-const loadTestFileInput = facePanel.querySelector("[data-load-test-file]");
-if (saveTestSetupBtn) {
-  saveTestSetupBtn.onclick = () => {
-    const setup = {
-      version: 1,
-      savedAt: new Date().toISOString(),
-      state: {
-        mode: state.mode,
-        view: state.view,
-        grid: state.grid,
-        faceSelection: [...state.faceSelection],
-        brushSelection: [...state.brushSelection],
-        selection: [...state.selection],
-        faceExtrusionMode: state.faceExtrusionMode,
-        brushes: JSON.parse(JSON.stringify(state.brushes)),
-      },
-    };
-    const blob = new Blob([JSON.stringify(setup, null, 2)], {
-      type: "application/json",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `test-setup-${Date.now()}.json`;
-    document.body.append(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-    setStatus(
-      `Saved ${setup.state.brushes.length} brush${setup.state.brushes.length === 1 ? "" : "es"} to ${a.download}`,
-    );
-  };
-}
-if (loadTestSetupBtn && loadTestFileInput) {
-  loadTestSetupBtn.onclick = () => loadTestFileInput.click();
-  loadTestFileInput.onchange = (event) => {
-    const file = event.currentTarget.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const setup = JSON.parse(reader.result);
-        if (!setup?.state) throw new Error("Invalid test setup file");
-        const s = setup.state;
-        if (s.brushes) {
-          state.brushes = JSON.parse(JSON.stringify(s.brushes));
-        }
-        if (s.faceSelection)
-          state.faceSelection = new Set(s.faceSelection);
-        if (s.brushSelection)
-          state.brushSelection = new Set(s.brushSelection);
-        if (s.selection) state.selection = new Set(s.selection);
-        if (s.mode) state.mode = s.mode;
-        if (s.view) {
-          state.view = s.view;
-          view.kind = s.view;
-        }
-        if (s.grid) state.grid = s.grid;
-        if (s.faceExtrusionMode)
-          state.faceExtrusionMode = s.faceExtrusionMode;
-        // Reapply active pane
-        if (state.mode === "face") facePanel.hidden = false;
-        changed();
-        setStatus(
-          `Loaded ${state.brushes.length} brush${state.brushes.length === 1 ? "" : "es"} from ${file.name}`,
-        );
-      } catch (err) {
-        setStatus(`Failed to load test setup: ${err.message}`, true);
-      } finally {
-        loadTestFileInput.value = "";
-      }
-    };
-    reader.readAsText(file);
-  };
-}
-
-updateFaceToolMode();
 toolRail.addEventListener("mouseenter", () => {
   setRailExpanded(true);
   if (state.mode === "brush") showBrushDock();
@@ -828,23 +676,24 @@ brushPanel.querySelector("[data-generate]").onclick = () => {
     );
   }
 };
-const snapshot = () => ({
-  extrusionModeVersion: 1,
-  selectionScopeVersion: 1,
-  brushes: clone(state.brushes),
-  selection: [...state.selection],
-  brushSelection: [...state.brushSelection],
-  hiddenBrushes: [...state.hiddenBrushes],
-  faceSelection: [...state.faceSelection],
-  faceSelectionScope: state.faceSelectionScope,
-  faceToolMode: state.faceToolMode,
-  selectionScope: state.selectionScope,
-  mode: state.mode,
-  tool: state.tool,
-  showTextureAxes: state.showTextureAxes,
-  textureLock: state.textureLock,
-  faceExtrusionMode: state.faceExtrusionMode,
-});
+function snapshot() {
+  return {
+    extrusionModeVersion: 1,
+    selectionScopeVersion: 1,
+    brushes: clone(state.brushes),
+    selection: [...state.selection],
+    brushSelection: [...state.brushSelection],
+    hiddenBrushes: [...state.hiddenBrushes],
+    faceSelection: [...state.faceSelection],
+    faceSelectionScope: state.faceSelectionScope,
+    selectionScope: state.selectionScope,
+    mode: state.mode,
+    tool: state.tool,
+    showTextureAxes: state.showTextureAxes,
+    textureLock: state.textureLock,
+    faceExtrusionMode: state.faceExtrusionMode,
+  };
+}
 function redraw() {
   view.kind = activeView;
   view.draw();
@@ -913,7 +762,6 @@ function restore(data) {
     data.selectionScopeVersion === 1
       ? data.faceSelectionScope || "group"
       : "group";
-  state.faceToolMode = data.faceToolMode || "extrude";
   state.faceExtrusionMode =
     data.extrusionModeVersion === 1
       ? data.faceExtrusionMode || "snap"
@@ -1509,9 +1357,7 @@ window.addEventListener("keydown", (event) => {
   }
   if (key === "e" && state.mode === "face") {
     event.preventDefault();
-    if (state.faceToolMode === "fill")
-      facePanel.querySelector("[data-fill-selected-loop]").click();
-    else run("extrude-faces");
+    run("extrude-faces");
     return;
   }
   if ((event.ctrlKey || event.metaKey) && key === "o") {
