@@ -599,8 +599,10 @@ export function solveConvexConformingExtrusion(options) {
     y: baseA.y + srcNormal.y * distance,
   };
   let capLineDir = { x: srcDir.x, y: srcDir.y };
-  let sideADir = adjSideDir(groupA);
-  let sideBDir = adjSideDir(groupB);
+  // Unconstrained extrusion follows the selected face normal. Adjacent-face
+  // directions are only valid after an explicit conforming rail is supplied.
+  let sideADir = { ...srcNormal };
+  let sideBDir = { ...srcNormal };
   let sideAOrigin = { x: baseA.x, y: baseA.y };
   let sideBOrigin = { x: baseB.x, y: baseB.y };
   let capTargetStart = null;

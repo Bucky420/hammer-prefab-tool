@@ -4,6 +4,7 @@ import {
   solveCornerSnappedExtrusion,
   extrudeSelectedFaces,
   limitExtrusionDistance,
+  solveSingleFaceExtrusion,
 } from "../public/js/face-extrusion.js";
 import {
   extrusionPolicyForMode,
@@ -354,7 +355,32 @@ function approxPoint(a, b, eps = 0.01) {
 }
 
 // --------------------------------------------------------------------
-// Test 12: mode policies are explicit and forward-only is directional
+// Test 12: unconstrained diagonal faces follow their own normal
+// --------------------------------------------------------------------
+{
+  const angle = (30 * Math.PI) / 180;
+  const s = buildRotatedBox({ x: 0, y: 0, z: 0 }, { x: 64, y: 64, z: 64 }, 30);
+  const face = s.faces[3];
+  const baseA = s.vertices[face[0]];
+  const baseB = s.vertices[face[1]];
+  const distance = 16;
+  const solved = solveSingleFaceExtrusion({
+    brush: s,
+    faceIndex: 3,
+    distance,
+    activeAxes: ["x", "y"],
+    constraints: [],
+  });
+  assert.ok(solved, "unconstrained diagonal solve succeeds");
+  const expected = { x: Math.cos(angle) * distance, y: Math.sin(angle) * distance };
+  assert.ok(approxPoint({ x: solved.capA.x - solved.baseA.x, y: solved.capA.y - solved.baseA.y }, expected), "side A follows face normal");
+  assert.ok(approxPoint({ x: solved.capB.x - solved.baseB.x, y: solved.capB.y - solved.baseB.y }, expected), "side B follows face normal");
+  assert.ok(Math.abs(baseA.x - baseB.x) + Math.abs(baseA.y - baseB.y) > 1, "diagonal base has distinct endpoints");
+  console.log("unconstrained diagonal extrusion OK");
+}
+
+// --------------------------------------------------------------------
+// Test 13: mode policies are explicit and forward-only is directional
 // --------------------------------------------------------------------
 {
   assert.deepEqual(extrusionPolicyForMode("snap"), {

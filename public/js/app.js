@@ -351,11 +351,22 @@ dockDivider.title = "Drag to resize generator pane";
 const facePanel = document.createElement("aside");
 facePanel.className = "brush-panel";
 facePanel.hidden = true;
+facePanel.innerHTML = `<header><strong>FACE TOOLS</strong></header><label>Mode <select data-face-mode><option value="extrude">Extrude</option><option value="fill">Planar Fill</option></select></label><label>Side material <select data-face-side-material><option value="dev/dev_measuregeneric01">Orange</option><option value="dev/dev_measuregeneric01b">Gray</option></select></label><label>Top material <select data-face-top-material><option value="dev/dev_measuregeneric01b">Gray</option><option value="dev/dev_measuregeneric01">Orange</option></select></label><div class="extrusion-toggles"><button type="button" class="extrusion-toggle" data-extrude-mode="parallel" aria-pressed="false">Parallel</button><button type="button" class="extrusion-toggle" data-extrude-mode="snap" aria-pressed="false">Snap</button><button type="button" class="extrusion-toggle" data-extrude-mode="forward-snap" aria-pressed="false">Forward</button></div>`;
+const faceModeSelect = facePanel.querySelector("[data-face-mode]");
+const sideMaterialSelect = facePanel.querySelector("[data-face-side-material]");
+const topMaterialSelect = facePanel.querySelector("[data-face-top-material]");
+const faceModeButtons = facePanel.querySelectorAll("[data-extrude-mode]");
+if (
+  !faceModeSelect ||
+  !sideMaterialSelect ||
+  !topMaterialSelect ||
+  faceModeButtons.length !== 3
+)
+  throw new Error("Face panel markup is incomplete");
 bindExtrusionModeButtons(facePanel, state, (mode) => {
   redraw();
   setStatus(`Face extrusion mode: ${mode}`);
 });
-const faceModeSelect = facePanel.querySelector("[data-face-mode]");
 function updateFaceToolMode() {
   faceModeSelect.value = state.faceToolMode;
 }
@@ -379,10 +390,8 @@ faceModeSelect.addEventListener("pointerdown", (event) =>
 function applyFaceMaterials() {
   if (!state.faceSelection.size)
     return setStatus("Select one or more faces first", true);
-  const sideMaterial = facePanel.querySelector(
-      "[data-face-side-material]",
-    ).value,
-    topMaterial = facePanel.querySelector("[data-face-top-material]").value;
+  const sideMaterial = sideMaterialSelect.value,
+    topMaterial = topMaterialSelect.value;
   let applied = 0;
   for (const id of state.faceSelection) {
     const match = id.match(/^(.*):f:(\d+)$/),
@@ -411,9 +420,8 @@ function applyFaceMaterials() {
   changed();
   setStatus(`Applied materials to ${applied} faces`);
 }
-facePanel
-  .querySelectorAll("[data-face-side-material], [data-face-top-material]")
-  .forEach((select) => select.addEventListener("change", applyFaceMaterials));
+sideMaterialSelect.addEventListener("change", applyFaceMaterials);
+topMaterialSelect.addEventListener("change", applyFaceMaterials);
 function fillSelectedLoopAction() {
   const result = fillSelectedLoop(state.brushes, state.faceSelection);
   if (!result.brushes.length)

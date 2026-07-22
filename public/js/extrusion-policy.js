@@ -28,6 +28,8 @@ export function isForwardTarget(targetPoint, basePoint, outward, epsilon = 0.01)
 
 export function bindExtrusionModeButtons(container, state, onChange = () => {}) {
   const buttons = [...container.querySelectorAll("[data-extrude-mode]")];
+  if (buttons.length !== 3)
+    throw new Error("Face extrusion controls are incomplete");
   const sync = () => {
     for (const button of buttons) {
       const active = button.dataset.extrudeMode === state.faceExtrusionMode;
