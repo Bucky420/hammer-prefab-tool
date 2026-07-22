@@ -832,7 +832,7 @@ export class Viewport {
     }
     const pixels =
       ((current.x - start.x) * dx + (current.y - start.y) * dy) / screenLength;
-    const rawDistance = Math.abs(pixels / this.scale);
+    const rawDistance = Math.max(0, pixels / this.scale);
     const sourceBrushIds = new Set(
       [...(this.drag?.selection || [])].map(
         (faceId) => faceId.match(/^(.*):f:\d+$/)?.[1],
@@ -1312,6 +1312,7 @@ export class Viewport {
     const findSideSnap = (
       movingEdge,
       baseCornerWorld,
+      freeCapWorld2D,
       freeCapScreen,
     ) => {
       const results = [];
@@ -1350,17 +1351,33 @@ export class Viewport {
             railDirection.y * sourceNormalDir.y,
         );
         if (forwardComponent < 0.05) continue;
+        const forwardStart =
+          (start.x - baseCornerWorld.x) * sourceNormalDir.x +
+          (start.y - baseCornerWorld.y) * sourceNormalDir.y;
+        const forwardEnd =
+          (end.x - baseCornerWorld.x) * sourceNormalDir.x +
+          (end.y - baseCornerWorld.y) * sourceNormalDir.y;
+        if (Math.max(forwardStart, forwardEnd) <= 0.05) continue;
         const baseLineDistance = distancePointToLine(baseCornerWorld, start, end);
         if (baseLineDistance > baseToleranceWorld) continue;
-        const capLineDistance = distancePointToLine(freeCap2D, start, end);
-        const closest = closestPointOnSegment(freeCap2D, start, end);
-        const segmentDistance = Math.hypot(
-          freeCap2D.x - closest.point.x,
-          freeCap2D.y - closest.point.y,
+        const capLineDistancePx = distancePointToLine(
+          freeCapScreen,
+          edge.startScreen,
+          edge.endScreen,
         );
-        const acquired = capLineDistance <= acquireRadius || segmentDistance <= acquireRadius;
+        const closestScreen = closestPointOnSegment(
+          freeCapScreen,
+          edge.startScreen,
+          edge.endScreen,
+        );
+        const segmentDistance = Math.hypot(
+          freeCapScreen.x - closestScreen.point.x,
+          freeCapScreen.y - closestScreen.point.y,
+        );
+        const acquired =
+          capLineDistancePx <= acquireRadius || segmentDistance <= acquireRadius;
         const retained = key === lockedKey &&
-          (capLineDistance <= releaseRadius || segmentDistance <= releaseRadius);
+          (capLineDistancePx <= releaseRadius || segmentDistance <= releaseRadius);
         if (!acquired && !retained) continue;
         results.push({
           movingEdge,
@@ -1371,10 +1388,10 @@ export class Viewport {
           lineOrigin: { x: edge.start[axisX], y: edge.start[axisY] },
           targetStartWorld: { ...edge.start },
           targetEndWorld: { ...edge.end },
-          distancePx: Math.min(capLineDistance, segmentDistance),
-          lineDistancePx: capLineDistance,
+          distancePx: Math.min(capLineDistancePx, segmentDistance),
+          lineDistancePx: capLineDistancePx,
           canonicalKey: key,
-          source: acquired ? "attached" : "magnetic",
+          source: "magnetic",
         });
       }
       const retained = retainLockedCandidate(results, lockedKey, releaseRadius);
@@ -1417,13 +1434,6 @@ export class Viewport {
         const end = { x: edge.end[axisX], y: edge.end[axisY] };
         const railDirection = canonicalLineDirection(start, end);
         if (!railDirection) continue;
-        const forwardStart =
-          (start.x - baseCornerWorld.x) * sourceNormalDir.x +
-          (start.y - baseCornerWorld.y) * sourceNormalDir.y;
-        const forwardEnd =
-          (end.x - baseCornerWorld.x) * sourceNormalDir.x +
-          (end.y - baseCornerWorld.y) * sourceNormalDir.y;
-        if (Math.max(forwardStart, forwardEnd) <= 0.05) continue;
         const attach = closestPointOnSegment(baseCornerWorld, start, end);
         if (
           Math.hypot(
@@ -1433,7 +1443,12 @@ export class Viewport {
         )
           continue;
         seenEdgeKeys.add(key);
-        const distancePx = distancePointToLine(freeCap2D, edge.startScreen, edge.endScreen);
+        const forwardComponent = Math.abs(
+          railDirection.x * sourceNormalDir.x +
+            railDirection.y * sourceNormalDir.y,
+        );
+        if (forwardComponent < 0.05) continue;
+        const distancePx = distancePointToLine(freeCap2D, start, end);
         candidates.push({
           movingEdge,
           targetBrushId: targetBrush.id,
@@ -1484,10 +1499,10 @@ export class Viewport {
     // Attached and magnetic support-line candidates are both evaluated;
     // attached candidates are ordered first in each pool.
     const sideASnaps = baseAScreen
-      ? findSideSnap("sideA", { x: baseA.x, y: baseA.y }, freeCapScrA)
+      ? findSideSnap("sideA", { x: baseA.x, y: baseA.y }, freeCapA2D, freeCapScrA)
       : [];
     const sideBSnaps = baseBScreen
-      ? findSideSnap("sideB", { x: baseB.x, y: baseB.y }, freeCapScrB)
+      ? findSideSnap("sideB", { x: baseB.x, y: baseB.y }, freeCapB2D, freeCapScrB)
       : [];
 
     // Candidate pools: collect top candidates per side (attached first,
@@ -1731,6 +1746,34 @@ export class Viewport {
         preview.previewBrushes.some((candidate) => validateBrush(candidate).length > 0)
       )
         return null;
+      const safeDistance = limitExtrusionDistance(
+        this.state.brushes,
+        selection,
+        rawDistance,
+        this.state.grid,
+        this.drag?.guideSelection || selection,
+        this.state.faceExtrusionMode,
+        snapTarget,
+      );
+      if (safeDistance <= 0) return null;
+      let attractionScore = 0;
+      for (const candidate of candidates) {
+        if (candidate.movingEdge === "sideA") {
+          const origin = candidate.lineOrigin || baseA;
+          const end = {
+            x: origin.x + candidate.direction.x,
+            y: origin.y + candidate.direction.y,
+          };
+          attractionScore += distancePointToLine(freeCapA2D, origin, end);
+        } else if (candidate.movingEdge === "sideB") {
+          const origin = candidate.lineOrigin || baseB;
+          const end = {
+            x: origin.x + candidate.direction.x,
+            y: origin.y + candidate.direction.y,
+          };
+          attractionScore += distancePointToLine(freeCapB2D, origin, end);
+        }
+      }
       const finalCorners = {
         baseA: sol.baseA, baseB: sol.baseB,
         capA: sol.capA, capB: sol.capB,
@@ -1738,6 +1781,11 @@ export class Viewport {
       return {
         finalCorners,
         solvedEdges: sol.solvedEdges,
+        safeDistance,
+        attractionScore,
+        candidateKey: candidates
+          .map((candidate) => candidate.canonicalKey || candidate.targetBrushId || "")
+          .join("|") || "",
         snapTarget: {
           type: "cross-section-rails",
           activeAxes: allActiveAxes,
@@ -1753,38 +1801,55 @@ export class Viewport {
     // are mandatory for the entire drag and must appear in every
     // combination. Fallback cannot drop a hard rail.
     let result = null;
+    const consider = (candidate) => {
+      if (!candidate) return;
+      if (!result) {
+        result = candidate;
+        return;
+      }
+      const safeA = candidate.safeDistance ?? 0;
+      const safeB = result.safeDistance ?? 0;
+      if (safeA !== safeB) {
+        if (safeA > safeB) result = candidate;
+        return;
+      }
+      const attrA = candidate.attractionScore ?? Infinity;
+      const attrB = result.attractionScore ?? Infinity;
+      if (attrA !== attrB) {
+        if (attrA < attrB) result = candidate;
+        return;
+      }
+      if ((candidate.candidateKey || "") < (result.candidateKey || ""))
+        result = candidate;
+    };
     const capCon = bestCap ? [makeCapConstraint(bestCap)] : [];
 
     if (hardSideA && hardSideB) {
       // Both hard rails exist: must include both.
       const cA = makeSideConstraint(hardSideA);
       const cB = makeSideConstraint(hardSideB);
-      if (capCon.length) result = tryConstraints([...capCon, cA, cB]);
-      if (!result) result = tryConstraints([cA, cB]);
+       if (capCon.length) consider(tryConstraints([...capCon, cA, cB]));
+       consider(tryConstraints([cA, cB]));
     } else if (hardSideA) {
       // Hard sideA exists: must include it. Try with each soft sideB.
       const cA = makeSideConstraint(hardSideA);
       for (const sB of sideBPool) {
         const cB = makeSideConstraint(sB);
-        if (capCon.length) result = tryConstraints([...capCon, cA, cB]);
-        if (!result) result = tryConstraints([cA, cB]);
-        if (result) break;
+        if (capCon.length) consider(tryConstraints([...capCon, cA, cB]));
+        consider(tryConstraints([cA, cB]));
       }
-      if (!result && !sideBPool.length && capCon.length)
-        result = tryConstraints([...capCon, cA]);
-      if (!result && !sideBPool.length) result = tryConstraints([cA]);
+      if (!sideBPool.length && capCon.length) consider(tryConstraints([...capCon, cA]));
+      if (!sideBPool.length) consider(tryConstraints([cA]));
     } else if (hardSideB) {
       // Hard sideB exists: must include it. Try with each soft sideA.
       const cB = makeSideConstraint(hardSideB);
       for (const sA of sideAPool) {
         const cA = makeSideConstraint(sA);
-        if (capCon.length) result = tryConstraints([...capCon, cA, cB]);
-        if (!result) result = tryConstraints([cA, cB]);
-        if (result) break;
+        if (capCon.length) consider(tryConstraints([...capCon, cA, cB]));
+        consider(tryConstraints([cA, cB]));
       }
-      if (!result && !sideAPool.length && capCon.length)
-        result = tryConstraints([...capCon, cB]);
-      if (!result && !sideAPool.length) result = tryConstraints([cB]);
+      if (!sideAPool.length && capCon.length) consider(tryConstraints([...capCon, cB]));
+      if (!sideAPool.length) consider(tryConstraints([cB]));
     } else {
       // No hard rails: free cross-product fallback.
       if (sideAPool.length && sideBPool.length) {
@@ -1792,39 +1857,32 @@ export class Viewport {
           for (const sB of sideBPool) {
             const cA = [makeSideConstraint(sA)];
             const cB = [makeSideConstraint(sB)];
-            result = tryConstraints([...capCon, ...cA, ...cB]);
-            if (result) break;
-            result = tryConstraints([...cA, ...cB]);
-            if (result) break;
+            consider(tryConstraints([...capCon, ...cA, ...cB]));
+            consider(tryConstraints([...cA, ...cB]));
           }
-          if (result) break;
         }
       }
-      if (!result && !sideBPool.length && capCon.length) {
+      if (!sideBPool.length && capCon.length) {
         for (const sA of sideAPool) {
-          result = tryConstraints([...capCon, makeSideConstraint(sA)]);
-          if (result) break;
+          consider(tryConstraints([...capCon, makeSideConstraint(sA)]));
         }
       }
-      if (!result && !sideAPool.length && capCon.length) {
+      if (!sideAPool.length && capCon.length) {
         for (const sB of sideBPool) {
-          result = tryConstraints([...capCon, makeSideConstraint(sB)]);
-          if (result) break;
+          consider(tryConstraints([...capCon, makeSideConstraint(sB)]));
         }
       }
-      if (!result && !sideBPool.length) {
+      if (!sideBPool.length) {
         for (const sA of sideAPool) {
-          result = tryConstraints([makeSideConstraint(sA)]);
-          if (result) break;
+          consider(tryConstraints([makeSideConstraint(sA)]));
         }
       }
-      if (!result && !sideAPool.length) {
+      if (!sideAPool.length) {
         for (const sB of sideBPool) {
-          result = tryConstraints([makeSideConstraint(sB)]);
-          if (result) break;
+          consider(tryConstraints([makeSideConstraint(sB)]));
         }
       }
-      if (!result && capCon.length) result = tryConstraints(capCon);
+      if (capCon.length) consider(tryConstraints(capCon));
     }
 
     // Keep the rail lock through a temporary invalid distance. Only this
