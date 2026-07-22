@@ -1,74 +1,23 @@
 import assert from "node:assert/strict";
 
-const parallelControl = { classList: { toggle: () => {} }, setAttribute: () => {} };
-const snapControl = { classList: { toggle: () => {} }, setAttribute: () => {} };
 globalThis.document = {
-  querySelector(selector) {
-    if (selector === "[data-extrusion-parallel]") return parallelControl;
-    if (selector === "[data-extrusion-snap]") return snapControl;
-    return null;
-  },
+  querySelector() { return null; },
+  querySelectorAll() { return []; },
 };
 
 const { HP } = await import(
   `../public/js/namespace.js?extrusion-mode-test=${Date.now()}`
 );
 
-let parallelActive = null;
-parallelControl.classList.toggle = (cls, val) => {
-  if (cls === "active") parallelActive = val;
-};
-parallelControl.setAttribute = (k, v) => {
-  if (k === "aria-pressed") parallelActive = v === "true";
-};
-
-let snapActive = null;
-snapControl.classList.toggle = (cls, val) => {
-  if (cls === "active") snapActive = val;
-};
-snapControl.setAttribute = (k, v) => {
-  if (k === "aria-pressed") snapActive = v === "true";
-};
-
-HP.state.faceExtrusionMode = "normal";
-await new Promise((resolve) => queueMicrotask(resolve));
-assert.equal(
-  parallelActive,
-  false,
-  "setting Face normal must deactivate the Parallel label",
-);
-
+assert.equal(HP.state.faceExtrusionMode, "snap", "default mode is snap");
 HP.state.faceExtrusionMode = "parallel";
-await new Promise((resolve) => queueMicrotask(resolve));
-assert.equal(
-  parallelActive,
-  true,
-  "setting Parallel must activate the Parallel label",
-);
+assert.equal(HP.state.faceExtrusionMode, "parallel", "parallel accepted");
+HP.state.faceExtrusionMode = "forward-snap";
+assert.equal(HP.state.faceExtrusionMode, "forward-snap", "forward-snap accepted");
+HP.state.faceExtrusionMode = "unexpected";
+assert.equal(HP.state.faceExtrusionMode, "snap", "unknown falls back to snap");
+assert.equal(typeof HP.state.faceSnapEnabled, "undefined", "old property removed");
 
-HP.state.faceExtrusionMode = "unexpected-value";
-await new Promise((resolve) => queueMicrotask(resolve));
-assert.equal(
-  parallelActive,
-  false,
-  "unknown extrusion modes must safely fall back to Face normal",
-);
-
-HP.state.faceSnapEnabled = true;
-await new Promise((resolve) => queueMicrotask(resolve));
-assert.equal(
-  snapActive,
-  true,
-  "toggling faceSnapEnabled true must activate the Snap label",
-);
-
-HP.state.faceSnapEnabled = false;
-await new Promise((resolve) => queueMicrotask(resolve));
-assert.equal(
-  snapActive,
-  false,
-  "toggling faceSnapEnabled false must deactivate the Snap label",
-);
-
+await new Promise((r) => queueMicrotask(r));
 delete globalThis.document;
 console.log("extrusion mode state regression passed");

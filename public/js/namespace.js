@@ -16,8 +16,14 @@ const state = {
   projectName: "untitled.json",
 };
 
-let faceExtrusionMode = state.faceExtrusionMode || "normal";
-let faceSnapEnabled = state.faceSnapEnabled ?? true;
+const VALID_MODES = ["snap", "parallel", "forward-snap"];
+const getPersistedMode = () => {
+  try {
+    const v = typeof localStorage !== "undefined" ? localStorage.getItem("faceExtrudeMode") : null;
+    return VALID_MODES.includes(v) ? v : null;
+  } catch { return null; }
+};
+let faceExtrusionMode = state.faceExtrusionMode || getPersistedMode() || "snap";
 
 Object.defineProperty(state, "faceExtrusionMode", {
   enumerable: true,
@@ -26,43 +32,17 @@ Object.defineProperty(state, "faceExtrusionMode", {
     return faceExtrusionMode;
   },
   set(value) {
-    faceExtrusionMode = value === "parallel" ? "parallel" : "normal";
-
+    const prev = faceExtrusionMode;
+    faceExtrusionMode = VALID_MODES.includes(value) ? value : "snap";
+    if (faceExtrusionMode !== prev) {
+      try { localStorage.setItem("faceExtrudeMode", faceExtrusionMode); } catch {}
+    }
     if (typeof document === "undefined") return;
     queueMicrotask(() => {
-      const parallelLabel = document.querySelector("[data-extrusion-parallel]");
-      if (parallelLabel) {
-        parallelLabel.classList.toggle(
-          "active",
-          faceExtrusionMode === "parallel",
-        );
-        parallelLabel.setAttribute(
-          "aria-pressed",
-          faceExtrusionMode === "parallel" ? "true" : "false",
-        );
-      }
-    });
-  },
-});
-
-Object.defineProperty(state, "faceSnapEnabled", {
-  enumerable: true,
-  configurable: true,
-  get() {
-    return faceSnapEnabled;
-  },
-  set(value) {
-    faceSnapEnabled = Boolean(value);
-
-    if (typeof document === "undefined") return;
-    queueMicrotask(() => {
-      const snapLabel = document.querySelector("[data-extrusion-snap]");
-      if (snapLabel) {
-        snapLabel.classList.toggle("active", faceSnapEnabled);
-        snapLabel.setAttribute(
-          "aria-pressed",
-          faceSnapEnabled ? "true" : "false",
-        );
+      for (const el of document.querySelectorAll("[data-extrude-mode]")) {
+        const active = el.dataset.extrudeMode === faceExtrusionMode;
+        el.classList.toggle("active", active);
+        el.setAttribute("aria-pressed", active ? "true" : "false");
       }
     });
   },

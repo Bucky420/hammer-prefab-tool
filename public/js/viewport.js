@@ -1282,8 +1282,8 @@ export class Viewport {
         if (sourceBrushIds.has(targetBrush.id)) continue;
         for (let fi = 0; fi < targetBrush.faces.length; fi++) {
           const tf = targetBrush.faces[fi];
-          const tfNormal = faceDirection(targetBrush, tf);
           let faceScore = 0;
+          const tfNormal = faceDirection(targetBrush, tf);
           if (tfNormal) {
             const tfnX = tfNormal[axisX] || 0;
             const tfnY = tfNormal[axisY] || 0;
@@ -1298,6 +1298,9 @@ export class Viewport {
                 (tfnY / tfnLen) * movingOutward.y;
             }
           }
+          // Forward-snap: reject faces not clearly opposing the expected side face.
+          if (this.state.faceExtrusionMode === "forward-snap" && faceScore > -0.3)
+            continue;
           for (let ei = 0; ei < tf.length; ei++) {
             const vi = tf[ei];
             const otherVi = tf[(ei + 1) % tf.length];
@@ -1414,6 +1417,8 @@ export class Viewport {
                 (tfnY / tfnLen) * movingOutward.y;
             }
           }
+          if (this.state.faceExtrusionMode === "forward-snap" && faceScore > -0.3)
+            continue;
           for (let ei = 0; ei < tf.length; ei++) {
             const vi = tf[ei];
             const otherVi = tf[(ei + 1) % tf.length];
@@ -1482,6 +1487,15 @@ export class Viewport {
       );
       return candidates;
     };
+
+    // Parallel mode: no snap acquisition. Free extrusion only.
+    if (this.state.faceExtrusionMode === "parallel") {
+      this.extrusionCandidate = null;
+      this.extrusionMatchDebug = [];
+      this.extrusionSolvedDebug = null;
+      if (this.drag) this.drag.extrusionCandidate = null;
+      return rawDistance;
+    }
 
     // Discover cap and side candidates from both cap corners.
     const capSnapsA = findCapSnap(
@@ -2322,6 +2336,12 @@ export class Viewport {
       )
         return;
       this.drag.dragged = true;
+      if (this.drag.type === "face-extrude")
+        this.canvas.style.cursor = "grabbing";
+      else if (this.drag.type === "pan")
+        this.canvas.style.cursor = "move";
+      else
+        this.canvas.style.cursor = "crosshair";
       this.requestDraw();
     });
     this.canvas.addEventListener("pointerup", () => {
@@ -2481,7 +2501,18 @@ export class Viewport {
     });
     this.canvas.addEventListener("pointerleave", () => {
       this.hoverFaceIds.clear();
+      this.canvas.style.cursor = "";
       this.requestDraw();
+    });
+    this.canvas.addEventListener("dragstart", (e) => e.preventDefault());
+    this.canvas.addEventListener("pointercancel", () =>
+      this.cancelInteraction(),
+    );
+    this.canvas.addEventListener("lostpointercapture", () => {
+      if (this.drag) {
+        this.drag = null;
+        this.requestDraw();
+      }
     });
     this.canvas.addEventListener(
       "wheel",

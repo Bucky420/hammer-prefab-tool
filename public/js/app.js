@@ -350,39 +350,13 @@ dockDivider.title = "Drag to resize generator pane";
 const facePanel = document.createElement("aside");
 facePanel.className = "brush-panel";
 facePanel.hidden = true;
-facePanel.innerHTML = `<header><strong>FACE TOOLS</strong></header><label>Mode <select data-face-mode><option value="extrude">Extrude</option><option value="fill">Planar Fill</option></select><output data-face-mode-status>Live</output></label><label>Material <select data-face-material><option value="customdev/dev_measuregeneric01red">Generic Red</option><option value="customdev/dev_measuregeneric01blu">Generic Blue</option><option value="customdev/dev_measurewall01blu">Wall Blue</option><option value="customdev/dev_measurewall01red">Wall Red</option><option value="dev/dev_measuregeneric01b">Generic Gray</option><option value="dev/dev_measuregeneric01">Generic Orange</option><option value="dev/dev_measurewall01a">Wall A</option><option value="dev/dev_measurewall01d">Wall D</option><option value="dev/graygrid">Gray Grid</option><option value="tools/toolsnodraw">No Draw</option></select><output></output></label><div class="extrusion-toggles"><button type="button" class="extrusion-toggle" data-extrusion-parallel aria-pressed="false">Parallel</button><button type="button" class="extrusion-toggle" data-extrusion-snap aria-pressed="false">Snap</button></div><button type="button" data-fill-selected-loop hidden>Fill Selected Loop</button><button type="button" data-apply-face-material>Apply to Selected Faces</button><div class="test-setup"><button type="button" data-save-test-setup>Save Test Setup</button><button type="button" data-load-test-setup>Load Test Setup</button><input type="file" data-load-test-file accept="application/json" hidden></div>`;
-facePanel.querySelector("[data-face-mode-status]")?.remove();
-const materialLabel = facePanel
-  .querySelector("[data-face-material]")
-  ?.closest("label");
-if (materialLabel)
-  materialLabel.innerHTML =
-    '<span>Side material</span><select data-face-side-material><option value="dev/dev_measuregeneric01">Orange</option><option value="dev/dev_measuregeneric01b">Gray</option></select><span>Top material</span><select data-face-top-material><option value="dev/dev_measuregeneric01b">Gray</option><option value="dev/dev_measuregeneric01">Orange</option></select>';
-const parallelToggle = facePanel.querySelector("[data-extrusion-parallel]");
-const snapToggle = facePanel.querySelector("[data-extrusion-snap]");
-if (parallelToggle) {
-  parallelToggle.classList.toggle(
-    "active",
-    state.faceExtrusionMode === "parallel",
-  );
-  parallelToggle.setAttribute(
-    "aria-pressed",
-    state.faceExtrusionMode === "parallel" ? "true" : "false",
-  );
-  parallelToggle.onclick = () => {
-    state.faceExtrusionMode =
-      state.faceExtrusionMode === "parallel" ? "normal" : "parallel";
-  };
-}
-if (snapToggle) {
-  snapToggle.classList.toggle("active", Boolean(state.faceSnapEnabled));
-  snapToggle.setAttribute(
-    "aria-pressed",
-    state.faceSnapEnabled ? "true" : "false",
-  );
-  snapToggle.onclick = () => {
-    state.faceSnapEnabled = !state.faceSnapEnabled;
-  };
+facePanel.innerHTML = `<header><strong>FACE TOOLS</strong></header><label>Mode <select data-face-mode><option value="extrude">Extrude</option><option value="fill">Planar Fill</option></select></label><div class="extrusion-toggles"><button type="button" class="extrusion-toggle" data-extrude-mode="parallel" aria-pressed="false">Parallel</button><button type="button" class="extrusion-toggle" data-extrude-mode="snap" aria-pressed="false">Snap</button><button type="button" class="extrusion-toggle" data-extrude-mode="forward-snap" aria-pressed="false">Forward</button></div>`;
+for (const el of facePanel.querySelectorAll("[data-extrude-mode]")) {
+  const mode = el.dataset.extrudeMode;
+  const active = state.faceExtrusionMode === mode;
+  el.classList.toggle("active", active);
+  el.setAttribute("aria-pressed", active ? "true" : "false");
+  el.onclick = () => { state.faceExtrusionMode = mode; };
 }
 railDock.append(dockDivider, brushPanel, facePanel);
 const railWidthGrip = document.createElement("div");
@@ -554,7 +528,6 @@ if (saveTestSetupBtn) {
         brushSelection: [...state.brushSelection],
         selection: [...state.selection],
         faceExtrusionMode: state.faceExtrusionMode,
-        faceSnapEnabled: state.faceSnapEnabled,
         brushes: JSON.parse(JSON.stringify(state.brushes)),
       },
     };
@@ -601,8 +574,6 @@ if (loadTestSetupBtn && loadTestFileInput) {
         if (s.grid) state.grid = s.grid;
         if (s.faceExtrusionMode)
           state.faceExtrusionMode = s.faceExtrusionMode;
-        if (typeof s.faceSnapEnabled === "boolean")
-          state.faceSnapEnabled = s.faceSnapEnabled;
         // Reapply active pane
         if (state.mode === "face") facePanel.hidden = false;
         changed();
@@ -873,7 +844,6 @@ const snapshot = () => ({
   showTextureAxes: state.showTextureAxes,
   textureLock: state.textureLock,
   faceExtrusionMode: state.faceExtrusionMode,
-  faceSnapEnabled: state.faceSnapEnabled,
 });
 function redraw() {
   view.kind = activeView;
@@ -946,9 +916,8 @@ function restore(data) {
   state.faceToolMode = data.faceToolMode || "extrude";
   state.faceExtrusionMode =
     data.extrusionModeVersion === 1
-      ? data.faceExtrusionMode || "normal"
-      : "normal";
-  state.faceSnapEnabled = Boolean(data.faceSnapEnabled);
+      ? data.faceExtrusionMode || "snap"
+      : "snap";
   state.selectionScope =
     data.selectionScopeVersion === 1 ? data.selectionScope || "group" : "group";
   state.mode = data.mode || "selection";
