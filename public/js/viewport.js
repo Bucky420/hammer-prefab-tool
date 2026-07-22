@@ -184,6 +184,13 @@ export class Viewport {
     this.extrusionCandidate = null;
     this.extrusionMatchDebug = [];
     this.extrusionSolvedDebug = null;
+    if (this.drag) {
+      this.drag.geometryBlocked = false;
+      this.drag.geometryBlockedReason = null;
+      this.drag.startRailPair = null;
+      this.drag.startRailState = "pending";
+      this.drag.sideRailLocks = null;
+    }
     this.requestDraw();
     return true;
   }
@@ -1313,90 +1320,69 @@ export class Viewport {
       const releaseRadius = 18;
       const baseToleranceWorld = Math.max(0.5, (this.state.grid || 1) * 0.05);
       const lockedKey = this.drag?.sideRailLocks?.[movingEdge];
-      for (const targetBrush of this.visibleBrushes()) {
+      for (const edge of this.exposedEdges()) {
+        const faceIds = [...edge.faceIds];
+        if (faceIds.length !== 2) continue;
+        const faceRecords = faceIds
+          .map((id) => {
+            const match = id.match(/^(.*):f:(\d+)$/);
+            const brush = match && this.state.brushes.find((item) => item.id === match[1]);
+            const faceIndex = Number(match?.[2]);
+            return brush && brush.faces[faceIndex]
+              ? { id, brush, faceIndex, face: brush.faces[faceIndex] }
+              : null;
+          })
+          .filter(Boolean);
+        if (!faceRecords.length) continue;
+        if (faceRecords.every((record) => isNoDrawMaterial(record.brush.faceMaterials?.[record.faceIndex] || record.brush.material)))
+          continue;
+        const targetBrush = faceRecords[0].brush;
         if (sourceBrushIds.has(targetBrush.id)) continue;
-        for (let fi = 0; fi < targetBrush.faces.length; fi++) {
-          const tf = targetBrush.faces[fi];
-          if (isNoDrawMaterial(targetBrush.faceMaterials?.[fi] || targetBrush.material))
-            continue;
-          let faceScore = 0;
-          const tfNormal = faceDirection(targetBrush, tf);
-          if (tfNormal) {
-            const tfnX = tfNormal[axisX] || 0;
-            const tfnY = tfNormal[axisY] || 0;
-            const tfnLen = Math.hypot(tfnX, tfnY);
-            if (tfnLen > 0.0001) {
-              const sideAOutward = { x: -sourceBaseDir.x, y: -sourceBaseDir.y };
-              const sideBOutward = { x: sourceBaseDir.x, y: sourceBaseDir.y };
-              const movingOutward =
-                movingEdge === "sideA" ? sideAOutward : sideBOutward;
-              faceScore =
-                (tfnX / tfnLen) * movingOutward.x +
-                (tfnY / tfnLen) * movingOutward.y;
-            }
-          }
-          for (let ei = 0; ei < tf.length; ei++) {
-            const sW = targetBrush.vertices[tf[ei]];
-            const eW = targetBrush.vertices[tf[(ei + 1) % tf.length]];
-            const key = `${targetBrush.id}:${canonicalEdgeKey(sW, eW)}`;
-            if (seenEdgeKeys.has(key)) {
-              const existing = results.find((candidate) => candidate.canonicalKey === key);
-              if (existing && !existing.adjacentFaceIndices.includes(fi))
-                existing.adjacentFaceIndices.push(fi);
-              continue;
-            }
-            seenEdgeKeys.add(key);
-            const start = { x: sW[axisX], y: sW[axisY] };
-            const end = { x: eW[axisX], y: eW[axisY] };
-            const railDirection = canonicalLineDirection(start, end);
-            if (!railDirection) continue;
-            const forwardComponent = Math.abs(
-              railDirection.x * sourceNormalDir.x +
-                railDirection.y * sourceNormalDir.y,
-            );
-            if (forwardComponent < 0.05) continue;
-            const baseLineDistance = distancePointToLine(baseCornerWorld, start, end);
-            if (baseLineDistance > baseToleranceWorld) continue;
-            const screenStart = this.screen(sW);
-            const screenEnd = this.screen(eW);
-            const capLineDistance = distancePointToLine(
-              freeCapScreen,
-              screenStart,
-              screenEnd,
-            );
-            const closest = closestPointOnSegment(
-              freeCapScreen,
-              screenStart,
-              screenEnd,
-            );
-            const segmentDistance = Math.hypot(
-              freeCapScreen.x - closest.point.x,
-              freeCapScreen.y - closest.point.y,
-            );
-            const acquired =
-              capLineDistance <= acquireRadius || segmentDistance <= acquireRadius;
-            const retained =
-              key === lockedKey &&
-              (capLineDistance <= releaseRadius || segmentDistance <= releaseRadius);
-            if (!acquired && !retained)
-              continue;
-            results.push({
-              movingEdge,
-              targetBrushId: targetBrush.id,
-              targetFaceIndex: fi,
-              adjacentFaceIndices: [fi],
-              targetEdgeIndex: ei,
-              railDirection,
-              lineOrigin: start,
-              targetStartWorld: { ...sW },
-              targetEndWorld: { ...eW },
-              distancePx: Math.min(capLineDistance, segmentDistance),
-              lineDistancePx: capLineDistance,
-              faceScore,
-              canonicalKey: key,
-            });
-          }
-        }
+        const key = `${targetBrush.id}:${canonicalEdgeKey(edge.start, edge.end)}`;
+        if (seenEdgeKeys.has(key)) continue;
+        seenEdgeKeys.add(key);
+        const start = { x: edge.start[axisX], y: edge.start[axisY] };
+        const end = { x: edge.end[axisX], y: edge.end[axisY] };
+        const railDirection = canonicalLineDirection(start, end);
+        if (!railDirection) continue;
+        const forwardComponent = Math.abs(
+          railDirection.x * sourceNormalDir.x +
+            railDirection.y * sourceNormalDir.y,
+        );
+        if (forwardComponent < 0.05) continue;
+        const forwardStart =
+          (start.x - baseCornerWorld.x) * sourceNormalDir.x +
+          (start.y - baseCornerWorld.y) * sourceNormalDir.y;
+        const forwardEnd =
+          (end.x - baseCornerWorld.x) * sourceNormalDir.x +
+          (end.y - baseCornerWorld.y) * sourceNormalDir.y;
+        if (Math.max(forwardStart, forwardEnd) <= 0.05) continue;
+        const baseLineDistance = distancePointToLine(baseCornerWorld, start, end);
+        if (baseLineDistance > baseToleranceWorld) continue;
+        const capLineDistance = distancePointToLine(freeCapScreen, edge.startScreen, edge.endScreen);
+        const closest = closestPointOnSegment(freeCapScreen, edge.startScreen, edge.endScreen);
+        const segmentDistance = Math.hypot(
+          freeCapScreen.x - closest.point.x,
+          freeCapScreen.y - closest.point.y,
+        );
+        const acquired = capLineDistance <= acquireRadius || segmentDistance <= acquireRadius;
+        const retained = key === lockedKey &&
+          (capLineDistance <= releaseRadius || segmentDistance <= releaseRadius);
+        if (!acquired && !retained) continue;
+        results.push({
+          movingEdge,
+          targetBrushId: targetBrush.id,
+          adjacentFaceIndices: faceRecords.map((record) => record.faceIndex),
+          targetEdgeIndex: 0,
+          railDirection,
+          lineOrigin: { x: edge.start[axisX], y: edge.start[axisY] },
+          targetStartWorld: { ...edge.start },
+          targetEndWorld: { ...edge.end },
+          distancePx: Math.min(capLineDistance, segmentDistance),
+          lineDistancePx: capLineDistance,
+          canonicalKey: key,
+          source: acquired ? "attached" : "magnetic",
+        });
       }
       const retained = retainLockedCandidate(results, lockedKey, releaseRadius);
       if (retained.length === 1 && retained[0] === results.find((candidate) => candidate.canonicalKey === lockedKey))
@@ -1414,76 +1400,66 @@ export class Viewport {
     const findAttachedEdges = (movingEdge, baseCornerWorld, freeCap2D) => {
       const candidates = [];
       const seenEdgeKeys = new Set();
-      for (const targetBrush of this.visibleBrushes()) {
+      for (const edge of this.exposedEdges()) {
+        const faceIds = [...edge.faceIds];
+        if (faceIds.length !== 2) continue;
+        const faceRecords = faceIds
+          .map((id) => {
+            const match = id.match(/^(.*):f:(\d+)$/);
+            const brush = match && this.state.brushes.find((item) => item.id === match[1]);
+            const faceIndex = Number(match?.[2]);
+            return brush && brush.faces[faceIndex]
+              ? { id, brush, faceIndex, face: brush.faces[faceIndex] }
+              : null;
+          })
+          .filter(Boolean);
+        if (!faceRecords.length) continue;
+        if (faceRecords.every((record) => isNoDrawMaterial(record.brush.faceMaterials?.[record.faceIndex] || record.brush.material)))
+          continue;
+        const targetBrush = faceRecords[0].brush;
         if (sourceBrushIds.has(targetBrush.id)) continue;
-        for (let fi = 0; fi < targetBrush.faces.length; fi++) {
-          const tf = targetBrush.faces[fi];
-          if (isNoDrawMaterial(targetBrush.faceMaterials?.[fi] || targetBrush.material))
-            continue;
-          let faceScore = 0;
-          const tfNormal = faceDirection(targetBrush, tf);
-          if (tfNormal) {
-            const tfnX = tfNormal[axisX] || 0;
-            const tfnY = tfNormal[axisY] || 0;
-            const tfnLen = Math.hypot(tfnX, tfnY);
-            if (tfnLen > 0.0001) {
-              const sideAOutward = { x: -sourceBaseDir.x, y: -sourceBaseDir.y };
-              const sideBOutward = { x: sourceBaseDir.x, y: sourceBaseDir.y };
-              const movingOutward =
-                movingEdge === "sideA" ? sideAOutward : sideBOutward;
-              faceScore =
-                (tfnX / tfnLen) * movingOutward.x +
-                (tfnY / tfnLen) * movingOutward.y;
-            }
-          }
-          for (let ei = 0; ei < tf.length; ei++) {
-            const vi = tf[ei];
-            const otherVi = tf[(ei + 1) % tf.length];
-            const sW = targetBrush.vertices[vi];
-            const eW = targetBrush.vertices[otherVi];
-            const key = `${targetBrush.id}:${canonicalEdgeKey(sW, eW)}`;
-            if (seenEdgeKeys.has(key)) {
-              const existing = candidates.find((candidate) => candidate.canonicalKey === key);
-              if (existing && !existing.adjacentFaceIndices.includes(fi))
-                existing.adjacentFaceIndices.push(fi);
-              continue;
-            }
-            const start = { x: sW[axisX], y: sW[axisY] };
-            const end = { x: eW[axisX], y: eW[axisY] };
-            const railDirection = canonicalLineDirection(start, end);
-            if (!railDirection) continue;
-            const forwardComponent = Math.abs(
-              railDirection.x * sourceNormalDir.x +
-                railDirection.y * sourceNormalDir.y,
-            );
-            if (forwardComponent < 0.05) continue;
-            const attach = closestPointOnSegment(baseCornerWorld, start, end);
-            if (
-              Math.hypot(
-                baseCornerWorld.x - attach.point.x,
-                baseCornerWorld.y - attach.point.y,
-              ) > EPSILON_ATTACH
-            )
-              continue;
-            seenEdgeKeys.add(key);
-            const distancePx = distancePointToLine(freeCap2D, start, end);
-            candidates.push({
-              movingEdge,
-              targetBrushId: targetBrush.id,
-              targetFaceIndex: fi,
-              adjacentFaceIndices: [fi],
-              targetEdgeIndex: ei,
-              railDirection,
-              lineOrigin: start,
-              targetStartWorld: { ...sW },
-              targetEndWorld: { ...eW },
-              distancePx,
-              lineDistancePx: distancePx,
-              faceScore,
-              canonicalKey: key,
-            });
-          }
-        }
+        const key = `${targetBrush.id}:${canonicalEdgeKey(edge.start, edge.end)}`;
+        if (seenEdgeKeys.has(key)) continue;
+        const start = { x: edge.start[axisX], y: edge.start[axisY] };
+        const end = { x: edge.end[axisX], y: edge.end[axisY] };
+        const railDirection = canonicalLineDirection(start, end);
+        if (!railDirection) continue;
+        const forwardComponent = Math.abs(
+          railDirection.x * sourceNormalDir.x +
+            railDirection.y * sourceNormalDir.y,
+        );
+        if (forwardComponent < 0.05) continue;
+        const forwardStart =
+          (start.x - baseCornerWorld.x) * sourceNormalDir.x +
+          (start.y - baseCornerWorld.y) * sourceNormalDir.y;
+        const forwardEnd =
+          (end.x - baseCornerWorld.x) * sourceNormalDir.x +
+          (end.y - baseCornerWorld.y) * sourceNormalDir.y;
+        if (Math.max(forwardStart, forwardEnd) <= 0.05) continue;
+        const attach = closestPointOnSegment(baseCornerWorld, start, end);
+        if (
+          Math.hypot(
+            baseCornerWorld.x - attach.point.x,
+            baseCornerWorld.y - attach.point.y,
+          ) > EPSILON_ATTACH
+        )
+          continue;
+        seenEdgeKeys.add(key);
+        const distancePx = distancePointToLine(freeCap2D, edge.startScreen, edge.endScreen);
+        candidates.push({
+          movingEdge,
+          targetBrushId: targetBrush.id,
+          adjacentFaceIndices: faceRecords.map((record) => record.faceIndex),
+          targetEdgeIndex: 0,
+          railDirection,
+          lineOrigin: { x: edge.start[axisX], y: edge.start[axisY] },
+          targetStartWorld: { ...edge.start },
+          targetEndWorld: { ...edge.end },
+          distancePx,
+          lineDistancePx: distancePx,
+          canonicalKey: key,
+          source: "attached",
+        });
       }
       candidates.sort(
         (a, b) => a.distancePx - b.distancePx || a.canonicalKey.localeCompare(b.canonicalKey),
@@ -2635,10 +2611,14 @@ export class Viewport {
       this.cancelInteraction(),
     );
     this.canvas.addEventListener("lostpointercapture", () => {
-      if (this.drag) {
-        this.drag = null;
-        this.requestDraw();
-      }
+      if (this.drag) this.cancelInteraction();
+      this.canvas.style.cursor = "";
+    });
+    window.addEventListener("blur", () => {
+      if (this.drag) this.cancelInteraction();
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden && this.drag) this.cancelInteraction();
     });
     this.canvas.addEventListener(
       "wheel",
