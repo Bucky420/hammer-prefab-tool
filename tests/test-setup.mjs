@@ -424,7 +424,32 @@ function approxPoint(a, b, eps = 0.01) {
 }
 
 // --------------------------------------------------------------------
-// Test 14: rail-acquisition helpers preserve attached priority
+// Test 14: single-side constraints do not mirror the opposite side
+// --------------------------------------------------------------------
+{
+  const s = box({ x: 0, y: 0, z: 0 }, { x: 64, y: 64, z: 64 });
+  const result = solveSingleFaceExtrusion({
+    brush: s,
+    faceIndex: 3,
+    distance: 16,
+    activeAxes: ["x", "y"],
+    constraints: [{ movingEdge: "sideA", direction: { x: 1, y: 0 } }],
+  });
+  assert.ok(result, "single-side solve succeeds");
+  assert.equal(result.applied.sideA, true, "sideA constrained");
+  assert.equal(result.applied.sideB, false, "sideB stays unconstrained");
+  assert.ok(
+    approxPoint(
+      { x: result.capB.x - result.baseB.x, y: result.capB.y - result.baseB.y },
+      { x: 16, y: 0 },
+    ),
+    "unconstrained side stays on source normal",
+  );
+  console.log("single-side no-mirror OK");
+}
+
+// --------------------------------------------------------------------
+// Test 15: rail-acquisition helpers preserve attached priority
 // --------------------------------------------------------------------
 {
   assert.equal(isNoDrawMaterial("tools/toolsnodraw"), true, "nodraw matches");
@@ -452,7 +477,7 @@ function approxPoint(a, b, eps = 0.01) {
 }
 
 // --------------------------------------------------------------------
-// Test 15: mode policies are explicit and forward-only is directional
+// Test 16: mode policies are explicit and forward-only is directional
 // --------------------------------------------------------------------
 {
   assert.deepEqual(extrusionPolicyForMode("snap"), {

@@ -832,7 +832,7 @@ export class Viewport {
     }
     const pixels =
       ((current.x - start.x) * dx + (current.y - start.y) * dy) / screenLength;
-    const rawDistance = Math.max(0, pixels / this.scale);
+    const rawDistance = Math.abs(pixels / this.scale);
     const sourceBrushIds = new Set(
       [...(this.drag?.selection || [])].map(
         (faceId) => faceId.match(/^(.*):f:\d+$/)?.[1],
@@ -1350,20 +1350,13 @@ export class Viewport {
             railDirection.y * sourceNormalDir.y,
         );
         if (forwardComponent < 0.05) continue;
-        const forwardStart =
-          (start.x - baseCornerWorld.x) * sourceNormalDir.x +
-          (start.y - baseCornerWorld.y) * sourceNormalDir.y;
-        const forwardEnd =
-          (end.x - baseCornerWorld.x) * sourceNormalDir.x +
-          (end.y - baseCornerWorld.y) * sourceNormalDir.y;
-        if (Math.max(forwardStart, forwardEnd) <= 0.05) continue;
         const baseLineDistance = distancePointToLine(baseCornerWorld, start, end);
         if (baseLineDistance > baseToleranceWorld) continue;
-        const capLineDistance = distancePointToLine(freeCapScreen, edge.startScreen, edge.endScreen);
-        const closest = closestPointOnSegment(freeCapScreen, edge.startScreen, edge.endScreen);
+        const capLineDistance = distancePointToLine(freeCap2D, start, end);
+        const closest = closestPointOnSegment(freeCap2D, start, end);
         const segmentDistance = Math.hypot(
-          freeCapScreen.x - closest.point.x,
-          freeCapScreen.y - closest.point.y,
+          freeCap2D.x - closest.point.x,
+          freeCap2D.y - closest.point.y,
         );
         const acquired = capLineDistance <= acquireRadius || segmentDistance <= acquireRadius;
         const retained = key === lockedKey &&
@@ -1424,11 +1417,6 @@ export class Viewport {
         const end = { x: edge.end[axisX], y: edge.end[axisY] };
         const railDirection = canonicalLineDirection(start, end);
         if (!railDirection) continue;
-        const forwardComponent = Math.abs(
-          railDirection.x * sourceNormalDir.x +
-            railDirection.y * sourceNormalDir.y,
-        );
-        if (forwardComponent < 0.05) continue;
         const forwardStart =
           (start.x - baseCornerWorld.x) * sourceNormalDir.x +
           (start.y - baseCornerWorld.y) * sourceNormalDir.y;
@@ -1591,6 +1579,12 @@ export class Viewport {
               snapTarget,
             );
             if (!preview.previewBrushes.length || preview.errors.length) continue;
+            if (
+              preview.previewBrushes.some(
+                (candidate) => validateBrush(candidate).length > 0,
+              )
+            )
+              continue;
             const safeDistance = limitExtrusionDistance(
               this.state.brushes,
               selection,
@@ -1662,6 +1656,12 @@ export class Viewport {
                 snapTarget,
               );
               if (!preview.previewBrushes.length || preview.errors.length) continue;
+              if (
+                preview.previewBrushes.some(
+                  (candidate) => validateBrush(candidate).length > 0,
+                )
+              )
+                continue;
               const safeDistance = limitExtrusionDistance(
                 this.state.brushes,
                 selection,
@@ -1679,6 +1679,12 @@ export class Viewport {
           if (bestPair) {
             this.drag.startRailPair = bestPair;
             this.drag.startRailState = "locked";
+            this.drag.geometryBlocked = false;
+            this.drag.geometryBlockedReason = null;
+          } else if (hardAPool.length && hardBPool.length) {
+            this.drag.geometryBlocked = true;
+            this.drag.geometryBlockedReason =
+              "no valid hard-rail pair at probe distance";
           } else if (!hardAPool.length && !hardBPool.length) {
             this.drag.startRailState = "none";
           }
@@ -1697,6 +1703,34 @@ export class Viewport {
         constraints: candidates,
       });
       if (!sol?.cap) return null;
+      const selection = this.drag?.selection || new Set([id]);
+      const snapTarget = {
+        type: "cross-section-rails",
+        activeAxes: allActiveAxes,
+        conforming: candidates,
+        finalCorners: {
+          baseA: sol.baseA,
+          baseB: sol.baseB,
+          capA: sol.capA,
+          capB: sol.capB,
+        },
+        targetBrushIds: [...new Set(candidates.map((c) => c.targetBrushId))],
+        distance: rawDistance,
+      };
+      const preview = extrudeSelectedFaces(
+        JSON.parse(JSON.stringify(this.state.brushes)),
+        selection,
+        rawDistance,
+        this.state.grid,
+        this.drag?.guideSelection || selection,
+        this.state.faceExtrusionMode,
+        snapTarget,
+      );
+      if (!preview.previewBrushes.length || preview.errors.length) return null;
+      if (
+        preview.previewBrushes.some((candidate) => validateBrush(candidate).length > 0)
+      )
+        return null;
       const finalCorners = {
         baseA: sol.baseA, baseB: sol.baseB,
         capA: sol.capA, capB: sol.capB,

@@ -998,18 +998,6 @@ export function solveSingleFaceExtrusion(options) {
     origin: baseB,
     direction: sideBConstraint?.direction || srcNormal2D,
   };
-  if (sideAConstraint && !sideBConstraint) {
-    sideBLine.direction = {
-      x: sideALine.direction.x,
-      y: sideALine.direction.y,
-    };
-  } else if (sideBConstraint && !sideAConstraint) {
-    sideALine.direction = {
-      x: sideBLine.direction.x,
-      y: sideBLine.direction.y,
-    };
-  }
-
   let capLine;
   if (capConstraint) {
     capLine = {
