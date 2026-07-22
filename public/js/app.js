@@ -25,6 +25,8 @@ import {
 import { GRID_VALUES, roundToGrid } from "./grid.js";
 import { ringVertexIds } from "./selection.js";
 import { applyNodrawToHiddenFaces } from "./nodraw.js";
+import { fillSelectedLoop } from "./face-fill.js";
+import { bindExtrusionModeButtons } from "./extrusion-policy.js";
 import {
   extrudeSelectedFaces,
   limitExtrusionDistance,
@@ -42,7 +44,7 @@ state.faceSelection ||= new Set();
 state.hiddenBrushes ||= new Set();
 state.squareBox ??= localStorage.getItem("squareBox") === "1";
 state.faceSelectionScope ||= "group";
-state.faceToolMode = "extrude";
+state.faceToolMode ||= "extrude";
 const history = state.history || (state.history = new History());
 const status = $("status");
 document.querySelector(".live-indicator")?.remove();
@@ -349,25 +351,84 @@ dockDivider.title = "Drag to resize generator pane";
 const facePanel = document.createElement("aside");
 facePanel.className = "brush-panel";
 facePanel.hidden = true;
-facePanel.innerHTML = `<header><strong>FACE TOOLS</strong></header><div class="extrusion-toggles"><button type="button" class="extrusion-toggle" data-extrude-mode="parallel" aria-pressed="false">Parallel</button><button type="button" class="extrusion-toggle" data-extrude-mode="snap" aria-pressed="false">Snap</button><button type="button" class="extrusion-toggle" data-extrude-mode="forward-snap" aria-pressed="false">Forward</button></div>`;
-for (const el of facePanel.querySelectorAll("[data-extrude-mode]")) {
-  const mode = el.dataset.extrudeMode;
-  const active = state.faceExtrusionMode === mode;
-  el.classList.toggle("active", active);
-  el.setAttribute("aria-pressed", active ? "true" : "false");
-  el.addEventListener("pointerdown", (event) => event.stopPropagation());
-  el.addEventListener("click", (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-    state.faceExtrusionMode = mode;
-    for (const button of facePanel.querySelectorAll("[data-extrude-mode]")) {
-      const selected = button.dataset.extrudeMode === state.faceExtrusionMode;
-      button.classList.toggle("active", selected);
-      button.setAttribute("aria-pressed", selected ? "true" : "false");
-    }
-    redraw();
-    setStatus(`Face extrusion mode: ${mode}`);
-  });
+bindExtrusionModeButtons(facePanel, state, (mode) => {
+  redraw();
+  setStatus(`Face extrusion mode: ${mode}`);
+});
+const faceModeSelect = facePanel.querySelector("[data-face-mode]");
+function updateFaceToolMode() {
+  faceModeSelect.value = state.faceToolMode;
+}
+function setFaceToolMode(event) {
+  event?.stopPropagation();
+  const mode = event?.currentTarget?.value || faceModeSelect.value;
+  if (mode === state.faceToolMode) return;
+  state.faceToolMode = mode;
+  setStatus(
+    mode === "fill"
+      ? "Planar Fill: select a closed vertical boundary loop, then press E"
+      : "Extrude: drag selected faces outward",
+  );
+  changed();
+}
+faceModeSelect.addEventListener("input", setFaceToolMode);
+faceModeSelect.addEventListener("change", setFaceToolMode);
+faceModeSelect.addEventListener("pointerdown", (event) =>
+  event.stopPropagation(),
+);
+function applyFaceMaterials() {
+  if (!state.faceSelection.size)
+    return setStatus("Select one or more faces first", true);
+  const sideMaterial = facePanel.querySelector(
+      "[data-face-side-material]",
+    ).value,
+    topMaterial = facePanel.querySelector("[data-face-top-material]").value;
+  let applied = 0;
+  for (const id of state.faceSelection) {
+    const match = id.match(/^(.*):f:(\d+)$/),
+      brush = match && state.brushes.find((item) => item.id === match[1]),
+      faceIndex = Number(match?.[2]);
+    if (!brush || !brush.faces[faceIndex]) continue;
+    brush.faceMaterials ||= brush.faces.map(
+      () => brush.material || "tools/toolsnodraw",
+    );
+    const face = brush.faces[faceIndex],
+      a = brush.vertices[face[0]],
+      b = brush.vertices[face[1]],
+      c = brush.vertices[face[2]],
+      normal = {
+        x: (b.y - a.y) * (c.z - a.z) - (b.z - a.z) * (c.y - a.y),
+        y: (b.z - a.z) * (c.x - a.x) - (b.x - a.x) * (c.z - a.z),
+        z: (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x),
+      };
+    brush.faceMaterials[faceIndex] =
+      Math.abs(normal.z) > Math.max(Math.abs(normal.x), Math.abs(normal.y))
+        ? topMaterial
+        : sideMaterial;
+    applied++;
+  }
+  if (!applied) return setStatus("Selected faces no longer exist", true);
+  changed();
+  setStatus(`Applied materials to ${applied} faces`);
+}
+facePanel
+  .querySelectorAll("[data-face-side-material], [data-face-top-material]")
+  .forEach((select) => select.addEventListener("change", applyFaceMaterials));
+function fillSelectedLoopAction() {
+  const result = fillSelectedLoop(state.brushes, state.faceSelection);
+  if (!result.brushes.length)
+    return setStatus(
+      `Fill blocked: ${result.errors[0] || "no closed loop"}`,
+      true,
+    );
+  applyNodrawToHiddenFaces(
+    [...state.brushes, ...result.brushes],
+    new Set(result.brushes.map((brush) => brush.id)),
+  );
+  add(
+    result.brushes,
+    `Filled loop with ${result.brushes.length} convex brushes`,
+  );
 }
 railDock.append(dockDivider, brushPanel, facePanel);
 const railWidthGrip = document.createElement("div");
@@ -686,6 +747,7 @@ function snapshot() {
     hiddenBrushes: [...state.hiddenBrushes],
     faceSelection: [...state.faceSelection],
     faceSelectionScope: state.faceSelectionScope,
+    faceToolMode: state.faceToolMode,
     selectionScope: state.selectionScope,
     mode: state.mode,
     tool: state.tool,
@@ -762,6 +824,7 @@ function restore(data) {
     data.selectionScopeVersion === 1
       ? data.faceSelectionScope || "group"
       : "group";
+  state.faceToolMode = data.faceToolMode || "extrude";
   state.faceExtrusionMode =
     data.extrusionModeVersion === 1
       ? data.faceExtrusionMode || "snap"
@@ -1357,7 +1420,8 @@ window.addEventListener("keydown", (event) => {
   }
   if (key === "e" && state.mode === "face") {
     event.preventDefault();
-    run("extrude-faces");
+    if (state.faceToolMode === "fill") fillSelectedLoopAction();
+    else run("extrude-faces");
     return;
   }
   if ((event.ctrlKey || event.metaKey) && key === "o") {

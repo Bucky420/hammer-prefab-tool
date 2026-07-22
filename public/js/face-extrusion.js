@@ -1478,13 +1478,6 @@ export function extrudeSelectedFaces(
     preview = [],
     errors = [],
     touched = [],
-    firstId = [...selection][0],
-    firstMatch = firstId?.match(/^(.*):f:(\d+)$/),
-    firstBrush =
-      firstMatch && sourceBrushes.find((item) => item.id === firstMatch[1]),
-    firstFace = firstBrush?.faces[Number(firstMatch?.[2])],
-    sharedDirection =
-      firstBrush && firstFace ? faceDirection(firstBrush, firstFace) : null,
     region =
       selection.size > 1
         ? sideLoopCaps(sourceBrushes, selection, distance, grid)
@@ -1499,8 +1492,7 @@ export function extrudeSelectedFaces(
       errors.push(`${id}: face no longer exists`);
       continue;
     }
-    const direction =
-      mode === "parallel" ? sharedDirection : faceDirection(brush, face);
+    const direction = faceDirection(brush, face);
     if (!direction) {
       errors.push(`${id}: face has no usable normal`);
       continue;
@@ -1508,11 +1500,9 @@ export function extrudeSelectedFaces(
     const base = face.map((index) => ({ ...brush.vertices[index] }));
     const capResult =
       region.caps.get(id) ||
-      (selection.size === 1 && mode !== "parallel" && snapTarget
+      (selection.size === 1 && snapTarget
         ? offsetFacePlaneCap(brush, faceIndex, distance, snapTarget)
-        : mode === "parallel" && selection.size === 1
-          ? offsetFacePlaneCap(brush, faceIndex, distance)
-          : base.map((point) => extrudedPoint(point, direction, distance)));
+        : base.map((point) => extrudedPoint(point, direction, distance)));
     const cap = Array.isArray(capResult)
       ? capResult
       : capResult?.cap || capResult;

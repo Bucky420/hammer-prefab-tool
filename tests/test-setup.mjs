@@ -5,6 +5,10 @@ import {
   extrudeSelectedFaces,
   limitExtrusionDistance,
 } from "../public/js/face-extrusion.js";
+import {
+  extrusionPolicyForMode,
+  isForwardTarget,
+} from "../public/js/extrusion-policy.js";
 
 // Helper: rotate a 2D point by angle around center
 function rotate2D(x, y, angle, cx, cy) {
@@ -181,7 +185,7 @@ function approxPoint(a, b, eps = 0.01) {
     62,
     16,
     new Set([s.id + ":f:3"]),
-    "normal",
+    "snap",
     snapTarget,
   );
   assert.equal(result.errors.length, 0, "no errors");
@@ -302,8 +306,7 @@ function approxPoint(a, b, eps = 0.01) {
       faceSelection: ["brush-1:f:3"],
       brushSelection: [],
       selection: [],
-      faceExtrusionMode: "normal",
-      faceSnapEnabled: true,
+      faceExtrusionMode: "snap",
       brushes: [
         box({ x: 0, y: 0, z: 0 }, { x: 64, y: 64, z: 64 }),
         box({ x: 120, y: 0, z: 0 }, { x: 184, y: 64, z: 64 }),
@@ -319,8 +322,7 @@ function approxPoint(a, b, eps = 0.01) {
     mode: "selection",
     view: "top",
     grid: 16,
-    faceExtrusionMode: "normal",
-    faceSnapEnabled: false,
+    faceExtrusionMode: "snap",
   };
   const s = saved.state;
   if (s.brushes) state.brushes = JSON.parse(JSON.stringify(s.brushes));
@@ -329,13 +331,48 @@ function approxPoint(a, b, eps = 0.01) {
   if (s.view) state.view = s.view;
   if (s.grid) state.grid = s.grid;
   if (s.faceExtrusionMode) state.faceExtrusionMode = s.faceExtrusionMode;
-  if (typeof s.faceSnapEnabled === "boolean")
-    state.faceSnapEnabled = s.faceSnapEnabled;
   assert.equal(state.brushes.length, 2, "two brushes loaded");
   assert.equal(state.mode, "face", "face mode");
-  assert.equal(state.faceSnapEnabled, true, "snap enabled");
+  assert.equal(state.faceExtrusionMode, "snap", "snap mode restored");
   assert.ok(state.faceSelection.has("brush-1:f:3"), "face selection restored");
   console.log("save/load round-trip OK");
+}
+
+// --------------------------------------------------------------------
+// Test 11: grouped Parallel preserves each selected face's direction
+// --------------------------------------------------------------------
+{
+  const s = box({ x: 0, y: 0, z: 0 }, { x: 64, y: 64, z: 64 });
+  const selected = new Set([`${s.id}:f:2`, `${s.id}:f:3`]);
+  const result = extrudeSelectedFaces([s], selected, 16, 16, selected, "parallel");
+  assert.equal(result.errors.length, 0, "parallel grouped extrusion is valid");
+  assert.equal(result.previewBrushes.length, 2, "both selected faces extruded");
+  const caps = result.previewBrushes.map((brush) => brush.faces[1].map((index) => brush.vertices[index]));
+  assert.ok(caps.some((face) => face.every((point) => point.x >= 80)), "x-facing face moved along x");
+  assert.ok(caps.some((face) => face.every((point) => point.y <= -16)), "y-facing face moved along y");
+  console.log("grouped parallel extrusion OK");
+}
+
+// --------------------------------------------------------------------
+// Test 12: mode policies are explicit and forward-only is directional
+// --------------------------------------------------------------------
+{
+  assert.deepEqual(extrusionPolicyForMode("snap"), {
+    externalSnap: true,
+    groupedRegion: false,
+    forwardOnly: false,
+  });
+  assert.deepEqual(extrusionPolicyForMode("parallel"), {
+    externalSnap: false,
+    groupedRegion: true,
+    forwardOnly: false,
+  });
+  assert.equal(extrusionPolicyForMode("forward-snap").forwardOnly, true);
+  const outward = { x: 1, y: 0 };
+  const base = { x: 0, y: 0 };
+  assert.equal(isForwardTarget({ x: 8, y: 0 }, base, outward), true, "ahead target accepted");
+  assert.equal(isForwardTarget({ x: -8, y: 0 }, base, outward), false, "behind target rejected");
+  console.log("extrusion policy direction OK");
 }
 
 console.log("all test-setup tests passed");

@@ -15,6 +15,10 @@ import {
   solveSingleFaceExtrusion,
   solveVertexSnappedExtrusion,
 } from "./face-extrusion.js";
+import {
+  extrusionPolicyForMode,
+  isForwardTarget,
+} from "./extrusion-policy.js";
 import { validateBrush } from "./brush-validation.js";
 import { duplicateBrushes } from "./geometry-model.js";
 const cross = (a, b) => ({
@@ -836,6 +840,9 @@ export class Viewport {
             z: sourceNormal.z / sourceLen,
           }
         : { x: 0, y: 0, z: 1 };
+    const extrusionPolicy = extrusionPolicyForMode(
+      this.state.faceExtrusionMode,
+    );
 
     const sourceBoundary = face.map((vertexIndex, offset) => ({
       start: this.screen(brush.vertices[vertexIndex]),
@@ -1073,7 +1080,7 @@ export class Viewport {
     // Perpendicular/wrong-direction edges are skipped.
     // This is the "corner slides along a target edge" model.
 
-    if (!this.state.faceSnapEnabled) {
+    if (!extrusionPolicy.externalSnap) {
       this.extrusionMatchDebug = [];
       this.extrusionSolvedDebug = null;
       this.extrusionCandidate = null;
@@ -1128,6 +1135,7 @@ export class Viewport {
     // a direction constraint that makes the cap parallel to the base.
     const ACQUIRE_RADIUS = 12;
     const RELEASE_RADIUS = 18;
+    let forwardRejected = false;
     // Stable key: identifies the target edge (brush, face, and
     // vertex index) so endpoint magnet state persists across frames.
     const edgeKey = (targetBrushId, fi, vi) =>
@@ -1242,6 +1250,17 @@ export class Viewport {
             const worldSnapPt = { x: 0, y: 0, z: 0 };
             worldSnapPt[axisX] = snapX;
             worldSnapPt[axisY] = snapY;
+            if (
+              extrusionPolicy.forwardOnly &&
+              !isForwardTarget(
+                { x: snapX, y: snapY },
+                baseCorner,
+                sourceNormalDir,
+              )
+            ) {
+              forwardRejected = true;
+              continue;
+            }
             const dist = Math.hypot(
               cornerScr.x - this.screen(worldSnapPt).x,
               cornerScr.y - this.screen(worldSnapPt).y,
@@ -1298,9 +1317,6 @@ export class Viewport {
                 (tfnY / tfnLen) * movingOutward.y;
             }
           }
-          // Forward-snap: reject faces not clearly opposing the expected side face.
-          if (this.state.faceExtrusionMode === "forward-snap" && faceScore > -0.3)
-            continue;
           for (let ei = 0; ei < tf.length; ei++) {
             const vi = tf[ei];
             const otherVi = tf[(ei + 1) % tf.length];
@@ -1357,6 +1373,17 @@ export class Viewport {
               const toCap = { x: capW.x - attachW.x, y: capW.y - attachW.y };
               const capProj = toCap.x * railDir.x + toCap.y * railDir.y;
               if (capProj <= 0.01) continue;
+              if (
+                extrusionPolicy.forwardOnly &&
+                !isForwardTarget(
+                  { x: ray.farPt[axisX], y: ray.farPt[axisY] },
+                  baseCornerWorld,
+                  sourceNormalDir,
+                )
+              ) {
+                forwardRejected = true;
+                continue;
+              }
               results.push({
                 movingEdge,
                 targetBrushId: targetBrush.id,
@@ -1376,8 +1403,7 @@ export class Viewport {
         }
       }
       return results.sort(
-        (a, b) =>
-          a.distancePx - b.distancePx || a.faceScore - b.faceScore,
+        (a, b) => a.distancePx - b.distancePx || a.faceScore - b.faceScore,
       );
     };
 
@@ -1417,8 +1443,6 @@ export class Viewport {
                 (tfnY / tfnLen) * movingOutward.y;
             }
           }
-          if (this.state.faceExtrusionMode === "forward-snap" && faceScore > -0.3)
-            continue;
           for (let ei = 0; ei < tf.length; ei++) {
             const vi = tf[ei];
             const otherVi = tf[(ei + 1) % tf.length];
@@ -1462,6 +1486,17 @@ export class Viewport {
               const capProj = (freeCap2D.x - attachW.x) * railDir.x +
                 (freeCap2D.y - attachW.y) * railDir.y;
               if (capProj <= 0.01) continue;
+              if (
+                extrusionPolicy.forwardOnly &&
+                !isForwardTarget(
+                  { x: ray.farPt[0], y: ray.farPt[1] },
+                  baseCornerWorld,
+                  sourceNormalDir,
+                )
+              ) {
+                forwardRejected = true;
+                continue;
+              }
               const score = directedRayDistance(freeCap2D, baseCornerWorld, railDir);
               candidates.push({
                 movingEdge,
@@ -1482,20 +1517,10 @@ export class Viewport {
         }
       }
       candidates.sort(
-        (a, b) =>
-          a.distancePx - b.distancePx || a.faceScore - b.faceScore,
+        (a, b) => a.distancePx - b.distancePx || a.faceScore - b.faceScore,
       );
       return candidates;
     };
-
-    // Parallel mode: no snap acquisition. Free extrusion only.
-    if (this.state.faceExtrusionMode === "parallel") {
-      this.extrusionCandidate = null;
-      this.extrusionMatchDebug = [];
-      this.extrusionSolvedDebug = null;
-      if (this.drag) this.drag.extrusionCandidate = null;
-      return rawDistance;
-    }
 
     // Discover cap and side candidates from both cap corners.
     const capSnapsA = findCapSnap(
@@ -1738,6 +1763,9 @@ export class Viewport {
           solvedEdges: result.solvedEdges,
         }
       : null;
+    if (this.drag)
+      this.drag.forwardSnapBlocked =
+        extrusionPolicy.forwardOnly && forwardRejected && !result;
     if (this.drag) this.drag.extrusionCandidate = this.extrusionCandidate;
     if (result?.solvedEdges) {
       this.extrusionSolvedDebug = this.toScreenEdges(result.solvedEdges);
@@ -2106,6 +2134,7 @@ export class Viewport {
         if (this.drag.startRailState === "blocked") {
           this.drag.distance = 0;
         }
+        if (this.drag.forwardSnapBlocked) this.drag.distance = 0;
         this.drag.distance = limitExtrusionDistance(
           this.state.brushes,
           this.drag.selection,
