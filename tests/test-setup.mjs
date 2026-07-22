@@ -10,6 +10,10 @@ import {
   extrusionPolicyForMode,
   isForwardTarget,
 } from "../public/js/extrusion-policy.js";
+import {
+  dedupeFirst,
+  isNoDrawMaterial,
+} from "../public/js/rail-acquisition.js";
 
 // Helper: rotate a 2D point by angle around center
 function rotate2D(x, y, angle, cx, cy) {
@@ -418,7 +422,23 @@ function approxPoint(a, b, eps = 0.01) {
 }
 
 // --------------------------------------------------------------------
-// Test 14: mode policies are explicit and forward-only is directional
+// Test 14: rail-acquisition helpers preserve attached priority
+// --------------------------------------------------------------------
+{
+  assert.equal(isNoDrawMaterial("tools/toolsnodraw"), true, "nodraw matches");
+  assert.equal(isNoDrawMaterial("custom/brick"), false, "visible material does not match");
+  const deduped = dedupeFirst([
+    { key: "brush-1:edge-1", source: "attached" },
+    { key: "brush-1:edge-1", source: "magnetic" },
+    { key: "brush-2:edge-1", source: "magnetic" },
+  ]);
+  assert.equal(deduped.length, 2, "first duplicate wins");
+  assert.equal(deduped[0].source, "attached", "attached priority preserved");
+  console.log("rail acquisition helper OK");
+}
+
+// --------------------------------------------------------------------
+// Test 15: mode policies are explicit and forward-only is directional
 // --------------------------------------------------------------------
 {
   assert.deepEqual(extrusionPolicyForMode("snap"), {

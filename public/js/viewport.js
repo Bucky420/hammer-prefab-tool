@@ -20,6 +20,7 @@ import {
 } from "./extrusion-policy.js";
 import { validateBrush } from "./brush-validation.js";
 import { duplicateBrushes } from "./geometry-model.js";
+import { dedupeFirst, isNoDrawMaterial } from "./rail-acquisition.js";
 const cross = (a, b) => ({
   x: a.y * b.z - a.z * b.y,
   y: a.z * b.x - a.x * b.z,
@@ -1311,6 +1312,8 @@ export class Viewport {
         if (sourceBrushIds.has(targetBrush.id)) continue;
         for (let fi = 0; fi < targetBrush.faces.length; fi++) {
           const tf = targetBrush.faces[fi];
+          if (isNoDrawMaterial(targetBrush.faceMaterials?.[fi] || targetBrush.material))
+            continue;
           let faceScore = 0;
           const tfNormal = faceDirection(targetBrush, tf);
           if (tfNormal) {
@@ -1342,6 +1345,11 @@ export class Viewport {
             const end = { x: eW[axisX], y: eW[axisY] };
             const railDirection = canonicalLineDirection(start, end);
             if (!railDirection) continue;
+            const forwardComponent = Math.abs(
+              railDirection.x * sourceNormalDir.x +
+                railDirection.y * sourceNormalDir.y,
+            );
+            if (forwardComponent < 0.05) continue;
             const baseLineDistance = distancePointToLine(baseCornerWorld, start, end);
             if (baseLineDistance > baseToleranceWorld) continue;
             const screenStart = this.screen(sW);
@@ -1386,7 +1394,7 @@ export class Viewport {
         }
       }
       return results.sort(
-        (a, b) => a.distancePx - b.distancePx || a.faceScore - b.faceScore,
+        (a, b) => a.distancePx - b.distancePx || a.canonicalKey.localeCompare(b.canonicalKey),
       );
     };
 
@@ -1402,6 +1410,8 @@ export class Viewport {
         if (sourceBrushIds.has(targetBrush.id)) continue;
         for (let fi = 0; fi < targetBrush.faces.length; fi++) {
           const tf = targetBrush.faces[fi];
+          if (isNoDrawMaterial(targetBrush.faceMaterials?.[fi] || targetBrush.material))
+            continue;
           let faceScore = 0;
           const tfNormal = faceDirection(targetBrush, tf);
           if (tfNormal) {
@@ -1434,7 +1444,18 @@ export class Viewport {
             const end = { x: eW[axisX], y: eW[axisY] };
             const railDirection = canonicalLineDirection(start, end);
             if (!railDirection) continue;
-            if (distancePointToLine(baseCornerWorld, start, end) > EPSILON_ATTACH)
+            const forwardComponent = Math.abs(
+              railDirection.x * sourceNormalDir.x +
+                railDirection.y * sourceNormalDir.y,
+            );
+            if (forwardComponent < 0.05) continue;
+            const attach = closestPointOnSegment(baseCornerWorld, start, end);
+            if (
+              Math.hypot(
+                baseCornerWorld.x - attach.point.x,
+                baseCornerWorld.y - attach.point.y,
+              ) > EPSILON_ATTACH
+            )
               continue;
             seenEdgeKeys.add(key);
             const distancePx = distancePointToLine(freeCap2D, start, end);
@@ -1457,7 +1478,7 @@ export class Viewport {
         }
       }
       candidates.sort(
-        (a, b) => a.distancePx - b.distancePx || a.faceScore - b.faceScore,
+        (a, b) => a.distancePx - b.distancePx || a.canonicalKey.localeCompare(b.canonicalKey),
       );
       return candidates;
     };
@@ -1497,14 +1518,11 @@ export class Viewport {
 
     // Candidate pools: collect top candidates per side (attached first,
     // then magnetic). Use up to 6 per side to explore branch options.
-    const dedupeCandidates = (candidates) => [
-      ...new Map(candidates.map((candidate) => [candidate.canonicalKey, candidate])).values(),
-    ];
-    const sideAPool = dedupeCandidates([
+    const sideAPool = dedupeFirst([
       ...attachedACandidates,
       ...sideASnaps,
     ]).slice(0, 6);
-    const sideBPool = dedupeCandidates([
+    const sideBPool = dedupeFirst([
       ...attachedBCandidates,
       ...sideBSnaps,
     ]).slice(0, 6);
@@ -1538,22 +1556,15 @@ export class Viewport {
     if (this.drag) {
       this.drag.startRailState ||= "pending";
       if (this.drag.startRailState === "pending") {
-        if (screenDist > 3 && (sideAPool.length || sideBPool.length)) {
+        const hardAPool = dedupeFirst(attachedACandidates).slice(0, 6);
+        const hardBPool = dedupeFirst(attachedBCandidates).slice(0, 6);
+        if (screenDist > 3 && hardAPool.length && hardBPool.length) {
           // Evaluate cross-product, pick best valid pair
           let bestPair = null;
           let bestScore = Infinity;
-          const evalSet = sideAPool.length && sideBPool.length
-            ? sideAPool.flatMap(sA =>
-                sideBPool.map(sB => ({ sideA: sA, sideB: sB })))
-            : [];
-          if (!evalSet.length && sideAPool.length) {
-            for (const sA of sideAPool)
-              evalSet.push({ sideA: sA, sideB: null });
-          }
-          if (!evalSet.length && sideBPool.length) {
-            for (const sB of sideBPool)
-              evalSet.push({ sideA: null, sideB: sB });
-          }
+          const evalSet = hardAPool.flatMap((sA) =>
+            hardBPool.map((sB) => ({ sideA: sA, sideB: sB })),
+          );
           for (const pair of evalSet) {
             const cands = [];
             if (pair.sideA) cands.push(makeSideConstraint(pair.sideA));
@@ -1595,7 +1606,7 @@ export class Viewport {
               this.state.faceExtrusionMode,
               snapTarget,
             );
-            if (safeDistance <= 0.0001) continue;
+            if (safeDistance / Math.max(rawDistance, 0.000001) < 0.98) continue;
             // Score: perpendicular distance from each free cap to its rail
             let score = 0;
             if (pair.sideA) {
@@ -1624,7 +1635,7 @@ export class Viewport {
           if (bestPair) {
             this.drag.startRailPair = bestPair;
             this.drag.startRailState = "locked";
-          } else if (!sideAPool.length && !sideBPool.length) {
+          } else {
             this.drag.startRailState = "none";
           }
         }
@@ -2188,13 +2199,16 @@ export class Viewport {
           this.previewBrushes = preview.previewBrushes || preview.brushes;
           this.previewErrors = preview.errors;
           const limitedTarget = this.drag.snapTarget;
+          const limitedFaceMatch = this.drag.faceId?.match(/^(.*):f:(\d+)$/);
+          const limitedBrush =
+            limitedFaceMatch &&
+            this.state.brushes.find((item) => item.id === limitedFaceMatch[1]);
+          const limitedFaceIndex = Number(limitedFaceMatch?.[2]);
           const limitedSolved =
-            limitedTarget?.type === "corner-snap"
+            limitedTarget?.type === "corner-snap" && limitedBrush
               ? solveCornerSnappedExtrusion({
-                  brush: this.state.brushes.find(
-                    (item) => item.id === this.drag.faceId.match(/^(.*):f:/)?.[1],
-                  ),
-                  faceIndex: Number(this.drag.faceId.match(/:f:(\d+)$/)?.[1]),
+                  brush: limitedBrush,
+                  faceIndex: limitedFaceIndex,
                   distance: this.drag.distance,
                   activeAxes: limitedTarget.activeAxes,
                   snapA: limitedTarget.snapA,
