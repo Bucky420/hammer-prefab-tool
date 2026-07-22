@@ -25,6 +25,7 @@ import {
   isNoDrawMaterial,
   passesProbeValidation,
   projectedRailKey,
+  chooseProjectedBoundaryFace,
   retainLockedCandidate,
 } from "./rail-acquisition.js";
 const cross = (a, b) => ({
@@ -1523,22 +1524,15 @@ export class Viewport {
         const reference = movingEdge === "sideA"
           ? { x: (baseB.x + freeCapWorld2D.x) / 2, y: (baseB.y + freeCapWorld2D.y) / 2 }
           : { x: (baseA.x + freeCapWorld2D.x) / 2, y: (baseA.y + freeCapWorld2D.y) / 2 };
-        const boundaryFaces = [...group.records.values()]
-          .filter((record) => !isNoDrawMaterial(record.brush.faceMaterials?.[record.faceIndex] || record.brush.material))
-          .map((record) => {
-            const normal = faceDirection(record.brush, record.face);
-            const projected = { x: normal?.[axisX] || 0, y: normal?.[axisY] || 0 };
-            const length = Math.hypot(projected.x, projected.y);
-            if (length < 0.25) return null;
-            const nx = projected.x / length, ny = projected.y / length;
-            if (Math.abs(nx * railDirection.x + ny * railDirection.y) > 0.1)
-              return null;
-            const corridorSide = nx * (reference.x - start.x) + ny * (reference.y - start.y);
-            return { ...record, normal, corridorSide, projectedLength: length };
-          })
-          .filter(Boolean)
-          .sort((a, b) => b.corridorSide - a.corridorSide);
-        const boundaryFace = boundaryFaces.find((face) => face.corridorSide >= -0.01);
+        const boundaryFace = chooseProjectedBoundaryFace(
+          [...group.records.values()].map((record) => ({ ...record, edgePoint: start })),
+          railDirection,
+          reference,
+          axisX,
+          axisY,
+          isNoDrawMaterial,
+          faceDirection,
+        );
         if (!boundaryFace) continue;
         const forwardComponent = Math.abs(
           railDirection.x * sourceNormalDir.x + railDirection.y * sourceNormalDir.y,

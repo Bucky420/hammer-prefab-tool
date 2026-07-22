@@ -13,6 +13,39 @@ export function projectedRailKey(start, end, axisX, axisY) {
   return a < b ? `${a}|${b}` : `${b}|${a}`;
 }
 
+export function chooseProjectedBoundaryFace(
+  records,
+  railDirection,
+  reference,
+  axisX,
+  axisY,
+  isNoDraw,
+  faceDirection,
+) {
+  return records
+    .filter((record) => !isNoDraw(record.brush.faceMaterials?.[record.faceIndex] || record.brush.material))
+    .map((record) => {
+      const normal = faceDirection(record.brush, record.face);
+      const projected = { x: normal?.[axisX] || 0, y: normal?.[axisY] || 0 };
+      const projectedLength = Math.hypot(projected.x, projected.y);
+      if (projectedLength < 0.25) return null;
+      const nx = projected.x / projectedLength;
+      const ny = projected.y / projectedLength;
+      if (Math.abs(nx * railDirection.x + ny * railDirection.y) > 0.1)
+        return null;
+      return {
+        ...record,
+        normal,
+        projectedLength,
+        corridorSide: nx * (reference.x - record.edgePoint.x) +
+          ny * (reference.y - record.edgePoint.y),
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.corridorSide - a.corridorSide)
+    .find((record) => record.corridorSide >= -0.01) || null;
+}
+
 export function dedupeFirst(candidates) {
   const map = new Map();
   for (const candidate of candidates) {

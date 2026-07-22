@@ -15,8 +15,10 @@ import {
   isNoDrawMaterial,
   passesProbeValidation,
   projectedRailKey,
+  chooseProjectedBoundaryFace,
   retainLockedCandidate,
 } from "../public/js/rail-acquisition.js";
+import { faceDirection } from "../public/js/face-extrusion.js";
 
 // Helper: rotate a 2D point by angle around center
 function rotate2D(x, y, angle, cx, cy) {
@@ -491,7 +493,36 @@ function approxPoint(a, b, eps = 0.01) {
 }
 
 // --------------------------------------------------------------------
-// Test 17: rail-acquisition helpers preserve attached priority
+// Test 17: projected rail chooses a vertical corridor boundary face
+// --------------------------------------------------------------------
+{
+  const source = box({ x: 0, y: 0, z: 0 }, { x: 64, y: 64, z: 64 });
+  source.material = "dev/dev_measuregeneric01";
+  source.faceMaterials = source.faces.map(() => source.material);
+  const records = source.faces.map((face, faceIndex) => ({
+    brush: source,
+    face,
+    faceIndex,
+    edgePoint: { x: 64, y: 0 },
+  }));
+  const selected = chooseProjectedBoundaryFace(
+    records,
+    { x: 0, y: 1 },
+    { x: 80, y: 32 },
+    "x",
+    "y",
+    isNoDrawMaterial,
+    faceDirection,
+  );
+  assert.ok(selected, "a projected boundary face is selected");
+  assert.ok(selected.projectedLength > 0.25, "selected face projects into XY");
+  assert.ok(Math.abs(selected.normal.z) < 0.1, "selected face is not top/bottom");
+  assert.ok(selected.corridorSide > 0, "selected face faces the corridor");
+  console.log("projected boundary face regression OK");
+}
+
+// --------------------------------------------------------------------
+// Test 18: rail-acquisition helpers preserve attached priority
 // --------------------------------------------------------------------
 {
   assert.equal(isNoDrawMaterial("tools/toolsnodraw"), true, "nodraw matches");
@@ -519,7 +550,7 @@ function approxPoint(a, b, eps = 0.01) {
 }
 
 // --------------------------------------------------------------------
-// Test 18: mode policies are explicit and forward-only is directional
+// Test 19: mode policies are explicit and forward-only is directional
 // --------------------------------------------------------------------
 {
   assert.deepEqual(extrusionPolicyForMode("snap"), {
