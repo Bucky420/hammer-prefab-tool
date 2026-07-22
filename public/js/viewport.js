@@ -1309,7 +1309,7 @@ export class Viewport {
       const length = Math.hypot(dx, dy);
       return length < 0.0001 ? null : { x: dx / length, y: dy / length };
     };
-    const findSideSnap = (
+    const findSideSnapLegacy = (
       movingEdge,
       baseCornerWorld,
       freeCapWorld2D,
@@ -1410,7 +1410,7 @@ export class Viewport {
     // Scored by perpendicular distance from the free cap corner to
     // the rail line, not by forwardDot (which biases toward straight).
     const EPSILON_ATTACH = 0.5;
-    const findAttachedEdges = (movingEdge, baseCornerWorld, freeCap2D) => {
+    const findAttachedEdgesLegacy = (movingEdge, baseCornerWorld, freeCap2D) => {
       const candidates = [];
       const seenEdgeKeys = new Set();
       for (const edge of this.exposedEdges()) {
@@ -1475,6 +1475,121 @@ export class Viewport {
       );
       return candidates;
     };
+
+    const projectedRailKey = (start, end) => {
+      const keyFor = (point) =>
+        `${point[axisX].toFixed(5)},${point[axisY].toFixed(5)}`;
+      const a = keyFor(start), b = keyFor(end);
+      return a < b ? `${a}|${b}` : `${b}|${a}`;
+    };
+    const resolveProjectedRailCandidates = (
+      movingEdge,
+      baseCornerWorld,
+      freeCapWorld2D,
+      freeCapScreen,
+      source,
+    ) => {
+      const groups = new Map();
+      for (const edge of this.exposedEdges()) {
+        const records = [...edge.faceIds]
+          .map((id) => {
+            const match = id.match(/^(.*):f:(\d+)$/);
+            const brush = match && this.state.brushes.find((item) => item.id === match[1]);
+            const faceIndex = Number(match?.[2]);
+            return brush?.faces[faceIndex]
+              ? { brush, faceIndex, face: brush.faces[faceIndex] }
+              : null;
+          })
+          .filter(Boolean);
+        if (records.length !== 2) continue;
+        if (sourceBrushIds.has(records[0].brush.id)) continue;
+        if (records.every((record) => isNoDrawMaterial(record.brush.faceMaterials?.[record.faceIndex] || record.brush.material)))
+          continue;
+        const key = `${records[0].brush.id}:${projectedRailKey(edge.start, edge.end)}`;
+        const group = groups.get(key) || {
+          key,
+          brush: records[0].brush,
+          start: edge.start,
+          end: edge.end,
+          startScreen: edge.startScreen,
+          endScreen: edge.endScreen,
+          records: new Map(),
+        };
+        for (const record of records)
+          group.records.set(`${record.brush.id}:f:${record.faceIndex}`, record);
+        groups.set(key, group);
+      }
+      const candidates = [];
+      for (const group of groups.values()) {
+        const start = { x: group.start[axisX], y: group.start[axisY] };
+        const end = { x: group.end[axisX], y: group.end[axisY] };
+        const railDirection = canonicalLineDirection(start, end);
+        if (!railDirection) continue;
+        const reference = movingEdge === "sideA"
+          ? { x: (baseB.x + freeCapWorld2D.x) / 2, y: (baseB.y + freeCapWorld2D.y) / 2 }
+          : { x: (baseA.x + freeCapWorld2D.x) / 2, y: (baseA.y + freeCapWorld2D.y) / 2 };
+        const boundaryFaces = [...group.records.values()]
+          .filter((record) => !isNoDrawMaterial(record.brush.faceMaterials?.[record.faceIndex] || record.brush.material))
+          .map((record) => {
+            const normal = faceDirection(record.brush, record.face);
+            const projected = { x: normal?.[axisX] || 0, y: normal?.[axisY] || 0 };
+            const length = Math.hypot(projected.x, projected.y);
+            if (length < 0.25) return null;
+            const nx = projected.x / length, ny = projected.y / length;
+            if (Math.abs(nx * railDirection.x + ny * railDirection.y) > 0.1)
+              return null;
+            const corridorSide = nx * (reference.x - start.x) + ny * (reference.y - start.y);
+            return { ...record, normal, corridorSide, projectedLength: length };
+          })
+          .filter(Boolean)
+          .sort((a, b) => b.corridorSide - a.corridorSide);
+        const boundaryFace = boundaryFaces.find((face) => face.corridorSide >= -0.01);
+        if (!boundaryFace) continue;
+        const forwardComponent = Math.abs(
+          railDirection.x * sourceNormalDir.x + railDirection.y * sourceNormalDir.y,
+        );
+        if (forwardComponent < 0.05) continue;
+        const baseLineDistance = distancePointToLine(baseCornerWorld, start, end);
+        let distancePx;
+        if (source === "attached") {
+          const attach = closestPointOnSegment(baseCornerWorld, start, end);
+          if (Math.hypot(baseCornerWorld.x - attach.point.x, baseCornerWorld.y - attach.point.y) > EPSILON_ATTACH)
+            continue;
+          distancePx = distancePointToLine(freeCapWorld2D, start, end);
+        } else {
+          const forwardStart = (start.x - baseCornerWorld.x) * sourceNormalDir.x + (start.y - baseCornerWorld.y) * sourceNormalDir.y;
+          const forwardEnd = (end.x - baseCornerWorld.x) * sourceNormalDir.x + (end.y - baseCornerWorld.y) * sourceNormalDir.y;
+          if (Math.max(forwardStart, forwardEnd) <= 0.05 || baseLineDistance > baseToleranceWorld)
+            continue;
+          const capLineDistancePx = distancePointToLine(freeCapScreen, group.startScreen, group.endScreen);
+          const closest = closestPointOnSegment(freeCapScreen, group.startScreen, group.endScreen);
+          const segmentDistancePx = Math.hypot(freeCapScreen.x - closest.point.x, freeCapScreen.y - closest.point.y);
+          if (capLineDistancePx > 12 && segmentDistancePx > 12) continue;
+          distancePx = Math.min(capLineDistancePx, segmentDistancePx);
+        }
+        candidates.push({
+          movingEdge,
+          targetBrushId: group.brush.id,
+          targetFaceIndex: boundaryFace.faceIndex,
+          adjacentFaceIndices: [...group.records.values()].map((record) => record.faceIndex),
+          railDirection,
+          lineOrigin: start,
+          targetStartWorld: { ...group.start },
+          targetEndWorld: { ...group.end },
+          targetFaceNormal: boundaryFace.normal,
+          projectedRailKey: projectedRailKey(group.start, group.end),
+          canonicalKey: group.key,
+          source,
+          distancePx,
+          lineDistancePx: distancePx,
+        });
+      }
+      return candidates.sort((a, b) => a.distancePx - b.distancePx || a.canonicalKey.localeCompare(b.canonicalKey));
+    };
+    const findSideSnap = (movingEdge, baseCornerWorld, freeCapWorld2D, freeCapScreen) =>
+      resolveProjectedRailCandidates(movingEdge, baseCornerWorld, freeCapWorld2D, freeCapScreen, "magnetic");
+    const findAttachedEdges = (movingEdge, baseCornerWorld, freeCapWorld2D) =>
+      resolveProjectedRailCandidates(movingEdge, baseCornerWorld, freeCapWorld2D, null, "attached");
 
     const railSnappingEnabled = (this.drag?.selection?.size || 1) === 1;
     // Discover cap and side candidates from both cap corners only for a
