@@ -1387,9 +1387,8 @@ export function solveSingleFaceExtrusion(options) {
       x: tStart.x + tDir.x * bSide,
       y: tStart.y + tDir.y * bSide,
     };
-    const orderedA = aSide <= bSide;
-    capA = orderedA ? projectionA : projectionB;
-    capB = orderedA ? projectionB : projectionA;
+    capA = projectionA;
+    capB = projectionB;
   }
   if (!capA || !capB) return null;
   if (!Number.isFinite(capA.x) || !Number.isFinite(capB.x)) return null;

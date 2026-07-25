@@ -1,0 +1,216 @@
+{
+  "schemaVersion": 1,
+  "name": "single-face-finite-cap-edge",
+  "issue": "A forward cap acquired from one endpoint of a short target edge must not extend along the edge's infinite support line.",
+  "manualBaseline": {
+    "name": "center_test.vmf",
+    "note": "The user's standard radial-ring manual extrusion setup. This focused state isolates the finite-cap failure."
+  },
+  "editor": {
+    "brushes": [
+      {
+        "id": "source",
+        "material": "dev/source",
+        "vertices": [
+          { "x": 0, "y": 0, "z": 0 },
+          { "x": 64, "y": 0, "z": 0 },
+          { "x": 64, "y": 64, "z": 0 },
+          { "x": 0, "y": 64, "z": 0 },
+          { "x": 0, "y": 0, "z": 64 },
+          { "x": 64, "y": 0, "z": 64 },
+          { "x": 64, "y": 64, "z": 64 },
+          { "x": 0, "y": 64, "z": 64 }
+        ],
+        "faces": [
+          [0, 3, 2, 1],
+          [4, 5, 6, 7],
+          [0, 1, 5, 4],
+          [1, 2, 6, 5],
+          [2, 3, 7, 6],
+          [3, 0, 4, 7]
+        ]
+      },
+      {
+        "id": "target",
+        "material": "dev/target",
+        "vertices": [
+          { "x": 120, "y": 0, "z": 0 },
+          { "x": 184, "y": 0, "z": 0 },
+          { "x": 184, "y": 16, "z": 0 },
+          { "x": 120, "y": 16, "z": 0 },
+          { "x": 120, "y": 0, "z": 64 },
+          { "x": 184, "y": 0, "z": 64 },
+          { "x": 184, "y": 16, "z": 64 },
+          { "x": 120, "y": 16, "z": 64 }
+        ],
+        "faces": [
+          [0, 3, 2, 1],
+          [4, 5, 6, 7],
+          [0, 1, 5, 4],
+          [1, 2, 6, 5],
+          [2, 3, 7, 6],
+          [3, 0, 4, 7]
+        ]
+      }
+    ],
+    "selection": [],
+    "brushSelection": [],
+    "faceSelection": ["source:f:3"],
+    "hiddenBrushes": [],
+    "mode": "face",
+    "faceToolMode": "extrude",
+    "faceSelectionScope": "single",
+    "view": "top",
+    "grid": 16,
+    "extrusionMode": "straight",
+    "faceRailMaxAngle": 89,
+    "faceSourceMaxAngle": 135
+  },
+  "viewport": {
+    "canvasWidth": 800,
+    "canvasHeight": 600,
+    "scale": 1,
+    "offset": { "x": 0, "y": 0 }
+  },
+  "gesture": {
+    "pointerStart": { "x": 464, "y": 268 },
+    "pointerEnd": { "x": 514, "y": 268 },
+    "exactDistance": 50
+  },
+  "acquisition": {
+    "railCandidates": [
+      {
+        "movingEdge": "cap",
+        "targetBrushId": "target",
+        "targetFaceIndex": 5,
+        "targetStartWorld": { "x": 120, "y": 16, "z": 0 },
+        "targetEndWorld": { "x": 120, "y": 0, "z": 0 },
+        "cornerSnap": { "x": 120, "y": 0 },
+        "distancePx": 6
+      }
+    ],
+    "chosenConstraints": [
+      {
+        "movingEdge": "cap",
+        "direction": { "x": 0, "y": -1 },
+        "origin": { "x": 120, "y": 0 },
+        "targetBrushId": "target",
+        "targetFaceIndex": 5,
+        "targetStart": { "x": 120, "y": 16 },
+        "targetEnd": { "x": 120, "y": 0 },
+        "targetStartWorld": { "x": 120, "y": 16, "z": 0 },
+        "targetEndWorld": { "x": 120, "y": 0, "z": 0 },
+        "cornerSnap": { "x": 120, "y": 0 }
+      }
+    ],
+    "targetBrushId": "target",
+    "targetFaceIndex": 5
+  },
+  "observedBeforeFix": {
+    "rawDistance": 50,
+    "finalDistance": 50,
+    "chosenTargetFaceIndex": 0,
+    "finalCorners": {
+      "baseA": { "x": 64, "y": 0 },
+      "baseB": { "x": 64, "y": 64 },
+      "capA": { "x": 120, "y": 0 },
+      "capB": { "x": 120, "y": 64 }
+    },
+    "solvedEdges": {
+      "base": [
+        { "x": 64, "y": 0 },
+        { "x": 64, "y": 64 }
+      ],
+      "sideA": [
+        { "x": 64, "y": 0 },
+        { "x": 120, "y": 0 }
+      ],
+      "cap": [
+        { "x": 120, "y": 0 },
+        { "x": 120, "y": 64 }
+      ],
+      "sideB": [
+        { "x": 120, "y": 64 },
+        { "x": 64, "y": 64 }
+      ]
+    }
+  },
+  "expected": {
+    "rawDistance": 50,
+    "finalDistance": 50,
+    "finalCorners": {
+      "baseA": { "x": 64, "y": 0 },
+      "baseB": { "x": 64, "y": 64 },
+      "capA": { "x": 120, "y": 0 },
+      "capB": { "x": 120, "y": 16 }
+    },
+    "solvedEdges": {
+      "base": [
+        { "x": 64, "y": 0 },
+        { "x": 64, "y": 64 }
+      ],
+      "sideA": [
+        { "x": 64, "y": 0 },
+        { "x": 120, "y": 0 }
+      ],
+      "cap": [
+        { "x": 120, "y": 0 },
+        { "x": 120, "y": 16 }
+      ],
+      "sideB": [
+        { "x": 120, "y": 16 },
+        { "x": 64, "y": 64 }
+      ]
+    },
+    "blocked": false,
+    "blockedReason": null,
+    "errors": [],
+    "previewGeometry": [
+      {
+        "sourceBrushId": "source",
+        "vertices": [
+          { "x": 64, "y": 0, "z": 0 },
+          { "x": 64, "y": 64, "z": 0 },
+          { "x": 64, "y": 64, "z": 64 },
+          { "x": 64, "y": 0, "z": 64 },
+          { "x": 120, "y": 0, "z": 0 },
+          { "x": 120, "y": 16, "z": 0 },
+          { "x": 120, "y": 16, "z": 64 },
+          { "x": 120, "y": 0, "z": 64 }
+        ],
+        "faces": [
+          [3, 2, 1, 0],
+          [4, 5, 6, 7],
+          [0, 1, 5, 4],
+          [1, 2, 6, 5],
+          [2, 3, 7, 6],
+          [3, 0, 4, 7]
+        ]
+      }
+    ],
+    "committedGeometry": [
+      {
+        "sourceBrushId": "source",
+        "vertices": [
+          { "x": 64, "y": 0, "z": 0 },
+          { "x": 64, "y": 64, "z": 0 },
+          { "x": 64, "y": 64, "z": 64 },
+          { "x": 64, "y": 0, "z": 64 },
+          { "x": 120, "y": 0, "z": 0 },
+          { "x": 120, "y": 16, "z": 0 },
+          { "x": 120, "y": 16, "z": 64 },
+          { "x": 120, "y": 0, "z": 64 }
+        ],
+        "faces": [
+          [3, 2, 1, 0],
+          [4, 5, 6, 7],
+          [0, 1, 5, 4],
+          [1, 2, 6, 5],
+          [2, 3, 7, 6],
+          [3, 0, 4, 7]
+        ]
+      }
+    ],
+    "screenshot": "regression.png"
+  }
+}

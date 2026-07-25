@@ -1015,18 +1015,16 @@ export class Viewport {
         for (let fi = 0; fi < targetBrush.faces.length; fi++) {
           const tf = targetBrush.faces[fi];
           const tfNormal = faceDirection(targetBrush, tf);
-          if (tfNormal) {
-            var tfnX = tfNormal[axisX] || 0;
-            var tfnY = tfNormal[axisY] || 0;
-            var tfnLen = Math.hypot(tfnX, tfnY);
-            if (tfnLen > 0.0001) {
-              var tfnDX = tfnX / tfnLen;
-              var tfnDY = tfnY / tfnLen;
-              var faceDot =
-                tfnDX * sourceNormalDir.x + tfnDY * sourceNormalDir.y;
-              if (faceDot > -0.3) continue;
-            }
-          }
+          if (!tfNormal) continue;
+          const tfnX = tfNormal[axisX] || 0;
+          const tfnY = tfNormal[axisY] || 0;
+          const tfnLen = Math.hypot(tfnX, tfnY);
+          if (tfnLen <= 0.0001) continue;
+          const tfnDX = tfnX / tfnLen;
+          const tfnDY = tfnY / tfnLen;
+          const faceDot =
+            tfnDX * sourceNormalDir.x + tfnDY * sourceNormalDir.y;
+          if (faceDot > -0.3) continue;
           for (let ei = 0; ei < tf.length; ei++) {
             const vi = tf[ei];
             const otherVi = tf[(ei + 1) % tf.length];
@@ -1087,8 +1085,8 @@ export class Viewport {
             results.push({
               targetBrushId: targetBrush.id,
               targetFaceIndex: fi,
-              startWorld: { ...sW },
-              endWorld: { ...eW },
+              targetStartWorld: { ...sW },
+              targetEndWorld: { ...eW },
               direction: tDir,
               cornerSnap: { x: snapX, y: snapY },
               distance: dist,
@@ -1361,6 +1359,14 @@ export class Viewport {
       origin: snap.cornerSnap,
       targetBrushId: snap.targetBrushId,
       targetFaceIndex: snap.targetFaceIndex,
+      targetStart: {
+        x: snap.targetStartWorld[axisX],
+        y: snap.targetStartWorld[axisY],
+      },
+      targetEnd: {
+        x: snap.targetEndWorld[axisX],
+        y: snap.targetEndWorld[axisY],
+      },
       targetStartWorld: snap.targetStartWorld,
       targetEndWorld: snap.targetEndWorld,
       source: snap.source,

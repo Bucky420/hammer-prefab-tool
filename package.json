@@ -6,7 +6,7 @@
     "start": "node server.js",
     "dev": "node dev.mjs",
     "typecheck": "tsc --project jsconfig.json",
-    "check": "npm run typecheck && node tests/static-contracts.test.mjs && node tests/geometry-runtime.test.mjs && node tests/milestone.test.mjs && node tests/extrusion-mode-state.test.mjs && node tests/test-setup.mjs && node tests/extrusion-fixtures.test.mjs"
+    "check": "npm run typecheck && node tests/static-contracts.test.mjs && node tests/geometry-runtime.test.mjs && node tests/milestone.test.mjs && node tests/extrusion-mode-state.test.mjs && node tests/test-setup.mjs && node tests/extrusion-fixtures.test.mjs && node tests/single-face-extrusion-fixtures.test.mjs"
   },
   "engines": {
     "node": ">=20.19.0"
