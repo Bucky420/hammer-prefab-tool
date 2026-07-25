@@ -4,13 +4,17 @@
   "private": true,
   "scripts": {
     "start": "node server.js",
-    "dev": "node dev.mjs"
+    "dev": "node dev.mjs",
+    "typecheck": "tsc --project jsconfig.json",
+    "check": "npm run typecheck && node tests/static-contracts.test.mjs && node tests/geometry-runtime.test.mjs && node tests/milestone.test.mjs && node tests/extrusion-mode-state.test.mjs && node tests/test-setup.mjs && node tests/extrusion-fixtures.test.mjs"
   },
   "engines": {
     "node": ">=20.19.0"
   },
   "devDependencies": {
     "chokidar": "5.0.0",
+    "typescript": "^5.9.2",
+    "typescript-language-server": "^5.0.1",
     "vite": "8.1.4"
   },
   "dependencies": {

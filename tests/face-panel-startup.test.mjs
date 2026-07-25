@@ -5,15 +5,24 @@ import { bindExtrusionModeButtons } from "../public/js/extrusion-policy.js";
 const appSource = readFileSync(new URL("../public/js/app.js", import.meta.url), "utf8");
 const markupStart = appSource.indexOf("facePanel.innerHTML =");
 const bindingStart = appSource.indexOf("bindExtrusionModeButtons(facePanel");
+const restoreStart = appSource.indexOf("function restore(data)");
+const restoreEnd = appSource.indexOf("function saveHmrState", restoreStart);
 assert.ok(markupStart >= 0, "face panel markup is initialized");
 assert.ok(bindingStart > markupStart, "face panel controls bind after markup");
+assert.ok(restoreStart >= 0 && restoreEnd > restoreStart, "restore function exists");
+assert.equal(
+  appSource.slice(restoreStart, restoreEnd).includes("state.faceExtrusionMode ="),
+  false,
+  "geometry restore does not change the current extrusion mode",
+);
 for (const selector of [
   "data-face-mode",
   "data-face-side-material",
   "data-face-top-material",
+  "data-face-rail-angle",
+  "data-face-source-angle",
   'data-extrude-mode=\"parallel\"',
   'data-extrude-mode=\"snap\"',
-  'data-extrude-mode=\"forward-snap\"',
 ])
   assert.ok(appSource.includes(selector), `face panel contains ${selector}`);
 
@@ -47,15 +56,18 @@ function makeButton(mode) {
 const buttons = [
   makeButton("parallel"),
   makeButton("snap"),
-  makeButton("forward-snap"),
 ];
-const state = { faceExtrusionMode: "snap" };
+const state = { faceExtrusionMode: "straight" };
 bindExtrusionModeButtons({ querySelectorAll: () => buttons }, state);
 for (const button of buttons) {
   button.click();
   assert.equal(state.faceExtrusionMode, button.dataset.extrudeMode);
   assert.equal(button.active, true);
   assert.equal(button.ariaPressed, "true");
+  button.click();
+  assert.equal(state.faceExtrusionMode, "straight");
+  assert.equal(button.active, false);
+  assert.equal(button.ariaPressed, "false");
 }
 
 console.log("face panel startup regression passed");

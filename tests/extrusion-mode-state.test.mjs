@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { bindExtrusionModeButtons } from "../public/js/extrusion-policy.js";
+import {
+  bindExtrusionModeButtons,
+  railWithinAngleLimit,
+} from "../public/js/extrusion-policy.js";
 
 globalThis.document = {
   querySelector() { return null; },
@@ -10,14 +13,31 @@ const { HP } = await import(
   `../public/js/namespace.js?extrusion-mode-test=${Date.now()}`
 );
 
-assert.equal(HP.state.faceExtrusionMode, "snap", "default mode is snap");
+assert.equal(HP.state.faceExtrusionMode, "straight", "default mode is straight");
+assert.equal(HP.state.faceRailMaxAngle, 89, "default rail angle preserves behavior");
+assert.equal(HP.state.faceSourceMaxAngle, 135, "default signed source angle");
 HP.state.faceExtrusionMode = "parallel";
 assert.equal(HP.state.faceExtrusionMode, "parallel", "parallel accepted");
 HP.state.faceExtrusionMode = "forward-snap";
-assert.equal(HP.state.faceExtrusionMode, "forward-snap", "forward-snap accepted");
+assert.equal(HP.state.faceExtrusionMode, "straight", "forward-snap is removed");
 HP.state.faceExtrusionMode = "unexpected";
-assert.equal(HP.state.faceExtrusionMode, "snap", "unknown falls back to snap");
+assert.equal(HP.state.faceExtrusionMode, "straight", "unknown falls back to straight");
 assert.equal(typeof HP.state.faceSnapEnabled, "undefined", "old property removed");
+const outward = { x: 1, y: 0 };
+const railAt85Degrees = {
+  x: Math.cos((85 * Math.PI) / 180),
+  y: Math.sin((85 * Math.PI) / 180),
+};
+assert.equal(
+  railWithinAngleLimit(railAt85Degrees, outward, 75),
+  false,
+  "near-perpendicular rail is rejected by a tighter cap",
+);
+assert.equal(
+  railWithinAngleLimit(railAt85Degrees, outward, 89),
+  true,
+  "near-perpendicular rail remains available at the compatibility default",
+);
 
 function button(mode) {
   const listeners = new Map();
@@ -45,7 +65,7 @@ function button(mode) {
     },
   };
 }
-const controls = [button("parallel"), button("snap"), button("forward-snap")];
+const controls = [button("parallel"), button("snap")];
 controls.forEach((control) => (control.classList.owner = control));
 bindExtrusionModeButtons(
   { querySelectorAll: () => controls },
@@ -56,6 +76,10 @@ for (const control of controls) {
   assert.equal(HP.state.faceExtrusionMode, control.dataset.extrudeMode);
   assert.equal(control.active, true);
   assert.equal(control.ariaPressed, "true");
+  control.click();
+  assert.equal(HP.state.faceExtrusionMode, "straight");
+  assert.equal(control.active, false);
+  assert.equal(control.ariaPressed, "false");
 }
 
 await new Promise((r) => queueMicrotask(r));

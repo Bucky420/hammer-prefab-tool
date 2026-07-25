@@ -1,0 +1,182 @@
+{
+  "schemaVersion": 1,
+  "name": "multi-face-selected-source-collision",
+  "issue": "A grouped extrusion must collide with selected source brushes other than each generated brush's own source.",
+  "editor": {
+    "brushes": [
+      {
+        "id": "source-a",
+        "material": "tools/toolsnodraw",
+        "vertices": [
+          { "x": 0, "y": 0, "z": 0 },
+          { "x": 64, "y": 0, "z": 0 },
+          { "x": 64, "y": 64, "z": 0 },
+          { "x": 0, "y": 64, "z": 0 },
+          { "x": 0, "y": 0, "z": 64 },
+          { "x": 64, "y": 0, "z": 64 },
+          { "x": 64, "y": 64, "z": 64 },
+          { "x": 0, "y": 64, "z": 64 }
+        ],
+        "faces": [
+          [0, 3, 2, 1],
+          [4, 5, 6, 7],
+          [0, 1, 5, 4],
+          [1, 2, 6, 5],
+          [2, 3, 7, 6],
+          [3, 0, 4, 7]
+        ]
+      },
+      {
+        "id": "source-b",
+        "material": "tools/toolsnodraw",
+        "vertices": [
+          { "x": 96, "y": 0, "z": 0 },
+          { "x": 160, "y": 0, "z": 0 },
+          { "x": 160, "y": 64, "z": 0 },
+          { "x": 96, "y": 64, "z": 0 },
+          { "x": 96, "y": 0, "z": 64 },
+          { "x": 160, "y": 0, "z": 64 },
+          { "x": 160, "y": 64, "z": 64 },
+          { "x": 96, "y": 64, "z": 64 }
+        ],
+        "faces": [
+          [0, 3, 2, 1],
+          [4, 5, 6, 7],
+          [0, 1, 5, 4],
+          [1, 2, 6, 5],
+          [2, 3, 7, 6],
+          [3, 0, 4, 7]
+        ]
+      }
+    ],
+    "selection": [],
+    "brushSelection": [],
+    "faceSelection": ["source-a:f:3", "source-b:f:3"],
+    "hiddenBrushes": [],
+    "mode": "face",
+    "faceToolMode": "extrude",
+    "faceSelectionScope": "single",
+    "view": "top",
+    "grid": 16,
+    "extrusionMode": "parallel"
+  },
+  "gesture": {
+    "exactDistance": 64,
+    "pointerStart": null,
+    "pointerEnd": null
+  },
+  "acquisition": {
+    "railCandidates": [],
+    "chosenConstraints": [],
+    "targetBrushId": "source-b",
+    "targetFaceIndex": 5
+  },
+  "observedBeforeFix": {
+    "rawDistance": 64,
+    "finalDistance": 64,
+    "finalCorners": null,
+    "solvedEdges": null,
+    "previewBounds": [
+      { "sourceBrushId": "source-a", "minX": 64, "maxX": 128 },
+      { "sourceBrushId": "source-b", "minX": 160, "maxX": 224 }
+    ]
+  },
+  "expected": {
+    "rawDistance": 64,
+    "finalDistance": 32.0099983215332,
+    "distanceTolerance": 0.000001,
+    "finalCorners": null,
+    "solvedEdges": null,
+    "blocked": false,
+    "blockedReason": null,
+    "previewGeometry": [
+      {
+        "sourceBrushId": "source-a",
+        "vertices": [
+          { "x": 64, "y": 0, "z": 0 },
+          { "x": 64, "y": 64, "z": 0 },
+          { "x": 64, "y": 64, "z": 64 },
+          { "x": 64, "y": 0, "z": 64 },
+          { "x": 96.0099983215332, "y": 0, "z": 0 },
+          { "x": 96.0099983215332, "y": 64, "z": 0 },
+          { "x": 96.0099983215332, "y": 64, "z": 64 },
+          { "x": 96.0099983215332, "y": 0, "z": 64 }
+        ],
+        "faces": [
+          [3, 2, 1, 0],
+          [4, 5, 6, 7],
+          [0, 1, 5, 4],
+          [1, 2, 6, 5],
+          [2, 3, 7, 6],
+          [3, 0, 4, 7]
+        ]
+      },
+      {
+        "sourceBrushId": "source-b",
+        "vertices": [
+          { "x": 160, "y": 0, "z": 0 },
+          { "x": 160, "y": 64, "z": 0 },
+          { "x": 160, "y": 64, "z": 64 },
+          { "x": 160, "y": 0, "z": 64 },
+          { "x": 192.0099983215332, "y": 0, "z": 0 },
+          { "x": 192.0099983215332, "y": 64, "z": 0 },
+          { "x": 192.0099983215332, "y": 64, "z": 64 },
+          { "x": 192.0099983215332, "y": 0, "z": 64 }
+        ],
+        "faces": [
+          [3, 2, 1, 0],
+          [4, 5, 6, 7],
+          [0, 1, 5, 4],
+          [1, 2, 6, 5],
+          [2, 3, 7, 6],
+          [3, 0, 4, 7]
+        ]
+      }
+    ],
+    "committedGeometry": [
+      {
+        "sourceBrushId": "source-a",
+        "vertices": [
+          { "x": 64, "y": 0, "z": 0 },
+          { "x": 64, "y": 64, "z": 0 },
+          { "x": 64, "y": 64, "z": 64 },
+          { "x": 64, "y": 0, "z": 64 },
+          { "x": 96.0099983215332, "y": 0, "z": 0 },
+          { "x": 96.0099983215332, "y": 64, "z": 0 },
+          { "x": 96.0099983215332, "y": 64, "z": 64 },
+          { "x": 96.0099983215332, "y": 0, "z": 64 }
+        ],
+        "faces": [
+          [3, 2, 1, 0],
+          [4, 5, 6, 7],
+          [0, 1, 5, 4],
+          [1, 2, 6, 5],
+          [2, 3, 7, 6],
+          [3, 0, 4, 7]
+        ]
+      },
+      {
+        "sourceBrushId": "source-b",
+        "vertices": [
+          { "x": 160, "y": 0, "z": 0 },
+          { "x": 160, "y": 64, "z": 0 },
+          { "x": 160, "y": 64, "z": 64 },
+          { "x": 160, "y": 0, "z": 64 },
+          { "x": 192.0099983215332, "y": 0, "z": 0 },
+          { "x": 192.0099983215332, "y": 64, "z": 0 },
+          { "x": 192.0099983215332, "y": 64, "z": 64 },
+          { "x": 192.0099983215332, "y": 0, "z": 64 }
+        ],
+        "faces": [
+          [3, 2, 1, 0],
+          [4, 5, 6, 7],
+          [0, 1, 5, 4],
+          [1, 2, 6, 5],
+          [2, 3, 7, 6],
+          [3, 0, 4, 7]
+        ]
+      }
+    ],
+    "screenshot": "regression.png"
+  }
+}

@@ -1,5 +1,214 @@
 import { validateBrush } from "./brush-validation.js";
 
+/**
+ * @typedef {import("./geometry-model.js").ActiveAxes} ActiveAxes
+ * @typedef {import("./geometry-model.js").Brush} Brush
+ * @typedef {import("./geometry-model.js").Face} Face
+ * @typedef {import("./geometry-model.js").FaceSelection} FaceSelection
+ * @typedef {import("./geometry-model.js").Plane} Plane
+ * @typedef {import("./geometry-model.js").Vector2} Vector2
+ * @typedef {import("./geometry-model.js").Vector3} Vector3
+ */
+
+/**
+ * @typedef {"base" | "cap" | "sideA" | "sideB"} ExtrusionMovingEdge
+ */
+
+/**
+ * @typedef {object} ExtrusionConstraint
+ * @property {ExtrusionMovingEdge} movingEdge
+ * @property {Vector2} direction
+ * @property {Vector2} [origin]
+ * @property {Vector2} [lineOrigin]
+ * @property {Vector2} [targetStart]
+ * @property {Vector2} [targetEnd]
+ * @property {Vector2} [cornerSnap]
+ * @property {string} [canonicalKey]
+ * @property {string} [targetBrushId]
+ * @property {number | undefined} [targetFaceIndex]
+ * @property {Vector3} [targetStartWorld]
+ * @property {Vector3} [targetEndWorld]
+ * @property {"attached" | "magnetic"} [source]
+ */
+
+/**
+ * @typedef {object} ExtrusionCorners
+ * @property {Vector2} baseA
+ * @property {Vector2} baseB
+ * @property {Vector2} capA
+ * @property {Vector2} capB
+ */
+
+/**
+ * @typedef {object} SolvedEdges
+ * @property {[Vector2, Vector2]} [base]
+ * @property {[Vector2, Vector2]} sideA
+ * @property {[Vector2, Vector2]} cap
+ * @property {[Vector2, Vector2]} sideB
+ */
+
+/**
+ * @typedef {object} SingleFaceExtrusionOptions
+ * @property {Brush} brush
+ * @property {number} faceIndex
+ * @property {number} distance
+ * @property {ActiveAxes} [activeAxes]
+ * @property {ExtrusionConstraint | ExtrusionConstraint[]} [constraints]
+ * @property {boolean} [followAdjacentSides]
+ * @property {boolean} [mirrorSingleSide]
+ * @property {number} [maxSourceAngleDegrees]
+ */
+
+/**
+ * @typedef {object} SingleFaceExtrusionResult
+ * @property {Vector3[]} cap
+ * @property {Vector2} baseA
+ * @property {Vector2} baseB
+ * @property {Vector2} capA
+ * @property {Vector2} capB
+ * @property {SolvedEdges} solvedEdges
+ * @property {{cap: boolean, sideA: boolean, sideB: boolean}} applied
+ */
+
+/**
+ * @typedef {object} CornerSnappedExtrusionOptions
+ * @property {Brush} brush
+ * @property {number} faceIndex
+ * @property {number} distance
+ * @property {ActiveAxes} [activeAxes]
+ * @property {Vector2 | null} [snapA]
+ * @property {Vector2 | null} [snapB]
+ */
+
+/**
+ * @typedef {object} CornerSnappedExtrusionResult
+ * @property {Vector3[]} cap
+ * @property {Vector2} baseA
+ * @property {Vector2} baseB
+ * @property {Vector2} capA
+ * @property {Vector2} capB
+ * @property {SolvedEdges} solvedEdges
+ */
+
+/**
+ * @typedef {object} CrossSectionRailSnapTarget
+ * @property {ActiveAxes} [activeAxes]
+ * @property {{origin: Vector2, direction: Vector2}} [railA]
+ * @property {{origin: Vector2, direction: Vector2}} [railB]
+ */
+
+/**
+ * @typedef {object} RailExtrusionSnapTarget
+ * @property {"cross-section-rails"} type
+ * @property {ActiveAxes} activeAxes
+ * @property {ExtrusionConstraint[]} conforming
+ * @property {ExtrusionCorners} finalCorners
+ * @property {string[]} [targetBrushIds]
+ * @property {number} distance
+ */
+
+/**
+ * @typedef {object} CornerExtrusionSnapTarget
+ * @property {"corner-snap"} type
+ * @property {ActiveAxes} activeAxes
+ * @property {Vector2} snapA
+ * @property {Vector2} snapB
+ * @property {Brush[]} [brushes]
+ * @property {number} distance
+ */
+
+/**
+ * @typedef {object} PlaneExtrusionSnapTarget
+ * @property {Plane} plane
+ * @property {number} distance
+ * @property {ActiveAxes} [activeAxes]
+ */
+
+/**
+ * @typedef {RailExtrusionSnapTarget | CornerExtrusionSnapTarget | PlaneExtrusionSnapTarget} ExtrusionSnapTarget
+ */
+
+/**
+ * @typedef {object} ExtrudeFacesResult
+ * @property {Brush[]} brushes
+ * @property {Brush[]} previewBrushes
+ * @property {string[]} errors
+ * @property {SolvedEdges | null} [solvedEdges]
+ */
+
+/**
+ * @typedef {object} ResolvedExtrusion
+ * @property {number} rawDistance
+ * @property {number} finalDistance
+ * @property {FaceSelection} selection
+ * @property {FaceSelection} guideSelection
+ * @property {string} mode
+ * @property {ExtrusionConstraint[]} constraints
+ * @property {ExtrusionCorners | null} finalCorners
+ * @property {string[]} targetBrushIds
+ * @property {Brush[]} previewBrushes
+ * @property {Brush[]} brushes
+ * @property {SolvedEdges | null} solvedEdges
+ * @property {ExtrusionSnapTarget | null} snapTarget
+ * @property {boolean} blocked
+ * @property {string | null} blockedReason
+ * @property {string[]} errors
+ */
+
+/**
+ * @typedef {object} ResolveExtrusionOptions
+ * @property {Brush[]} sourceBrushes
+ * @property {FaceSelection} selection
+ * @property {number} rawDistance
+ * @property {number} grid
+ * @property {FaceSelection} [guideSelection]
+ * @property {string} [mode]
+ * @property {ExtrusionSnapTarget | null} [snapTarget]
+ * @property {number} [maxSourceAngleDegrees]
+ */
+
+/**
+ * @typedef {object} WeldedVertexColumn
+ * @property {Brush} brush
+ * @property {number[]} indices
+ * @property {number} x
+ * @property {number} y
+ */
+
+/**
+ * @typedef {object} LegacyConformingConstraints
+ * @property {{direction: Vector2, origin?: Vector2}} [sideA]
+ * @property {{direction: Vector2, origin?: Vector2}} [sideB]
+ * @property {Vector2} [capLine]
+ * @property {Vector2} [baseLine]
+ */
+
+/**
+ * @typedef {object} ConvexConformingExtrusionOptions
+ * @property {Brush[]} brushes
+ * @property {string} sourceBrushId
+ * @property {number} faceIndex
+ * @property {number} distance
+ * @property {ActiveAxes} [activeAxes]
+ * @property {ExtrusionConstraint[] | LegacyConformingConstraints} [constraints]
+ */
+
+/**
+ * @typedef {object} SourceVertexMove
+ * @property {string} brushId
+ * @property {number} vertexIndex
+ * @property {Partial<Vector3>} position
+ */
+
+/**
+ * @typedef {object} ConvexConformingExtrusionResult
+ * @property {Vector3[]} generatedCap
+ * @property {SourceVertexMove[]} sourceVertexMoves
+ * @property {SolvedEdges} solvedEdges
+ * @property {{newBaseA: Vector2, newBaseB: Vector2, newCapA: Vector2, newCapB: Vector2}} corners
+ * @property {{sideA: boolean, sideB: boolean, base: boolean, cap: boolean}} applied
+ */
+
 let nextId = 30000;
 const subtract = (a, b) => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z });
 const cross = (a, b) => ({
@@ -36,6 +245,11 @@ function outward(face, vertices) {
     : face;
 }
 
+/**
+ * @param {Brush} brush
+ * @param {Face} face
+ * @returns {Vector3 | null}
+ */
 export function faceDirection(brush, face) {
   const points = face.map((index) => brush.vertices[index]),
     center = brush.vertices.reduce(
@@ -66,12 +280,24 @@ export function faceDirection(brush, face) {
     : null;
 }
 
+/**
+ * @param {Brush} brush
+ * @param {Face} face
+ * @returns {Plane | null}
+ */
 export function planeForFace(brush, face) {
   const normal = faceDirection(brush, face);
   if (!normal) return null;
   return { normal, distance: dot(normal, brush.vertices[face[0]]) };
 }
 
+/**
+ * @param {Brush} brush
+ * @param {number} selectedIndex
+ * @param {number} a
+ * @param {number} b
+ * @returns {number}
+ */
 export function adjacentFaceForEdge(brush, selectedIndex, a, b) {
   return brush.faces.findIndex(
     (face, index) =>
@@ -105,6 +331,13 @@ function intersectPlanes(first, second, third) {
   };
 }
 
+/**
+ * @param {Brush} brush
+ * @param {number} faceIndex
+ * @param {Plane | null} targetPlane
+ * @param {Map<number, Plane>} [sidePlaneOverrides]
+ * @returns {Array<Vector3 | null> | null}
+ */
 export function solveCapFromPlane(
   brush,
   faceIndex,
@@ -164,6 +397,13 @@ function isStrictlyConvex(points, epsilon = 1e-6) {
   return true;
 }
 
+/**
+ * @param {Brush} brush
+ * @param {number} faceIndex
+ * @param {number} distance
+ * @param {CrossSectionRailSnapTarget | null} snapTarget
+ * @returns {Array<Vector3 | null> | null}
+ */
 export function solveCrossSectionCap(brush, faceIndex, distance, snapTarget) {
   const face = brush.faces[faceIndex],
     sourcePlane = planeForFace(brush, face);
@@ -372,6 +612,15 @@ export function solveCrossSectionCap(brush, faceIndex, distance, snapTarget) {
   return cap;
 }
 
+/**
+ * @param {Brush} brush
+ * @param {number} faceIndex
+ * @param {number} distance
+ * @param {{point: Vector2} | null} snapA
+ * @param {{point: Vector2} | null} snapB
+ * @param {ActiveAxes} [activeAxes]
+ * @returns {Vector3[] | null}
+ */
 export function solveVertexSnappedExtrusion(
   brush,
   faceIndex,
@@ -491,6 +740,13 @@ export function solveVertexSnappedExtrusion(
   return cap;
 }
 
+/**
+ * @param {Brush[]} brushes
+ * @param {Vector3} worldPoint
+ * @param {ActiveAxes} [activeAxes]
+ * @param {number} [epsilon]
+ * @returns {WeldedVertexColumn[]}
+ */
 export function collectWeldedVertexColumns(
   brushes,
   worldPoint,
@@ -525,6 +781,10 @@ export function collectWeldedVertexColumns(
   return columns;
 }
 
+/**
+ * @param {ConvexConformingExtrusionOptions} options
+ * @returns {ConvexConformingExtrusionResult | null}
+ */
 export function solveConvexConformingExtrusion(options) {
   const {
     brushes,
@@ -901,8 +1161,21 @@ function lineIntersection2D(originA, dirA, originB, dirB) {
   return { x: originA.x + dirA.x * t, y: originA.y + dirA.y * t };
 }
 
+/**
+ * @param {SingleFaceExtrusionOptions} options
+ * @returns {SingleFaceExtrusionResult | null}
+ */
 export function solveSingleFaceExtrusion(options) {
-  const { brush, faceIndex, distance, activeAxes, constraints } = options;
+  const {
+    brush,
+    faceIndex,
+    distance,
+    activeAxes,
+    constraints,
+    followAdjacentSides = false,
+    mirrorSingleSide = false,
+    maxSourceAngleDegrees = 135,
+  } = options;
   const face = brush?.faces?.[faceIndex];
   if (!brush || !face || face.length < 3) return null;
   const axes = activeAxes || ["x", "y"];
@@ -962,22 +1235,20 @@ export function solveSingleFaceExtrusion(options) {
   };
 
   const adjSideDir = (group) => {
-    for (const vi of group) {
-      const fi = face.indexOf(vi);
-      if (fi < 0) continue;
-      const prev = face[(fi + face.length - 1) % face.length];
-      const adj = adjacentFaceForEdge(brush, faceIndex, prev, vi);
-      if (adj >= 0) {
-        const adjN = faceDirection(brush, brush.faces[adj]);
-        if (adjN) {
-          const d = {
-            x: -adjN[axisY] || baseDir.x,
-            y: adjN[axisX] || baseDir.y,
-          };
-          const dl = Math.hypot(d.x, d.y);
-          if (dl > 0.0001) return { x: d.x / dl, y: d.y / dl };
-        }
-      }
+    const adjacent = brush.faces.find(
+      (candidate, index) =>
+        index !== faceIndex &&
+        group.filter((vertexIndex) => candidate.includes(vertexIndex)).length >= 2,
+    );
+    const adjacentNormal = adjacent && faceDirection(brush, adjacent);
+    if (adjacentNormal) {
+      const direction = {
+        x: -adjacentNormal[axisY],
+        y: adjacentNormal[axisX],
+      };
+      const length = Math.hypot(direction.x, direction.y);
+      if (length > 0.0001)
+        return { x: direction.x / length, y: direction.y / length };
     }
     return { x: srcNormal2D.x, y: srcNormal2D.y };
   };
@@ -997,13 +1268,45 @@ export function solveSingleFaceExtrusion(options) {
     else if (c.movingEdge === "sideB") sideBConstraint = c;
   }
 
+  let fallbackSideA = followAdjacentSides ? adjSideDir(groupA) : srcNormal2D;
+  let fallbackSideB = followAdjacentSides ? adjSideDir(groupB) : srcNormal2D;
+  if (followAdjacentSides) {
+    const signedLimit = Math.max(
+      90,
+      Math.min(179, Number(maxSourceAngleDegrees) || 135),
+    );
+    const lineLimit = Math.min(signedLimit, 180 - signedLimit);
+    const minimumAlignment = Math.cos((lineLimit * Math.PI) / 180);
+    const allowedA =
+      Math.abs(
+        fallbackSideA.x * srcNormal2D.x + fallbackSideA.y * srcNormal2D.y,
+      ) >= minimumAlignment;
+    const allowedB =
+      Math.abs(
+        fallbackSideB.x * srcNormal2D.x + fallbackSideB.y * srcNormal2D.y,
+      ) >= minimumAlignment;
+    if (!allowedA && allowedB) fallbackSideA = fallbackSideB;
+    else if (allowedA && !allowedB) fallbackSideB = fallbackSideA;
+    else if (!allowedA && !allowedB) {
+      fallbackSideA = srcNormal2D;
+      fallbackSideB = srcNormal2D;
+    }
+  }
   const sideALine = {
-    origin: baseA,
-    direction: sideAConstraint?.direction || srcNormal2D,
+    origin:
+      sideAConstraint?.source === "magnetic" && sideAConstraint.lineOrigin
+        ? sideAConstraint.lineOrigin
+        : baseA,
+    direction:
+      sideAConstraint?.direction || fallbackSideA,
   };
   const sideBLine = {
-    origin: baseB,
-    direction: sideBConstraint?.direction || srcNormal2D,
+    origin:
+      sideBConstraint?.source === "magnetic" && sideBConstraint.lineOrigin
+        ? sideBConstraint.lineOrigin
+        : baseB,
+    direction:
+      sideBConstraint?.direction || fallbackSideB,
   };
   let capLine;
   if (capConstraint) {
@@ -1025,18 +1328,36 @@ export function solveSingleFaceExtrusion(options) {
     y: capLine.direction.y / capALen,
   };
 
-  let capA = lineIntersection2D(
+  let capA =
+    sideAConstraint?.source === "magnetic" && sideAConstraint.cornerSnap
+      ? { ...sideAConstraint.cornerSnap }
+      : lineIntersection2D(
     sideALine.origin,
     sideALine.direction,
     capLine.origin,
     capDir,
   );
-  let capB = lineIntersection2D(
+  let capB =
+    sideBConstraint?.source === "magnetic" && sideBConstraint.cornerSnap
+      ? { ...sideBConstraint.cornerSnap }
+      : lineIntersection2D(
     sideBLine.origin,
     sideBLine.direction,
     capLine.origin,
     capDir,
   );
+  if (mirrorSingleSide && sideAConstraint && !sideBConstraint && capA) {
+    const direction = { x: capA.x - baseA.x, y: capA.y - baseA.y };
+    capB = lineIntersection2D(baseB, direction, capLine.origin, capDir);
+  } else if (
+    mirrorSingleSide &&
+    sideBConstraint &&
+    !sideAConstraint &&
+    capB
+  ) {
+    const direction = { x: capB.x - baseB.x, y: capB.y - baseB.y };
+    capA = lineIntersection2D(baseA, direction, capLine.origin, capDir);
+  }
 
   // For a cap snap with a finite target edge, clamp the cap corners to the
   // target edge endpoints. Otherwise the line intersection can land anywhere
@@ -1116,6 +1437,10 @@ export function solveSingleFaceExtrusion(options) {
   };
 }
 
+/**
+ * @param {CornerSnappedExtrusionOptions} options
+ * @returns {CornerSnappedExtrusionResult | null}
+ */
 export function solveCornerSnappedExtrusion(options) {
   const { brush, faceIndex, distance, activeAxes, snapA, snapB } = options;
   const face = brush?.faces?.[faceIndex];
@@ -1210,7 +1535,14 @@ export function solveCornerSnappedExtrusion(options) {
   };
 }
 
-function offsetFacePlaneCap(brush, faceIndex, distance, snapTarget = null) {
+function offsetFacePlaneCap(
+  brush,
+  faceIndex,
+  distance,
+  snapTarget = null,
+  mode = "straight",
+  maxSourceAngleDegrees = 135,
+) {
   const face = brush.faces[faceIndex];
 
   if (snapTarget?.type === "corner-snap") {
@@ -1231,13 +1563,22 @@ function offsetFacePlaneCap(brush, faceIndex, distance, snapTarget = null) {
     return null;
   }
 
-  const single = solveSingleFaceExtrusion({
+  const options = {
     brush,
     faceIndex,
     distance,
     activeAxes: snapTarget?.activeAxes,
     constraints: snapTarget?.conforming,
-  });
+    followAdjacentSides: mode === "parallel" || mode === "snap",
+    mirrorSingleSide: mode === "snap",
+    maxSourceAngleDegrees,
+  };
+  let single = solveSingleFaceExtrusion(options);
+  if (!single && mode === "snap")
+    single = solveSingleFaceExtrusion({
+      ...options,
+      followAdjacentSides: false,
+    });
   if (single) {
     return {
       cap: single.cap,
@@ -1462,6 +1803,17 @@ function sideLoopCaps(sourceBrushes, selection, distance, grid) {
   };
 }
 
+/**
+ * @param {Brush[]} sourceBrushes
+ * @param {FaceSelection} selection
+ * @param {number} distance
+ * @param {number} grid
+ * @param {FaceSelection} [guideSelection]
+ * @param {string} [mode]
+ * @param {ExtrusionSnapTarget | null} [snapTarget]
+ * @param {number} [maxSourceAngleDegrees]
+ * @returns {ExtrudeFacesResult}
+ */
 export function extrudeSelectedFaces(
   sourceBrushes,
   selection,
@@ -1470,6 +1822,7 @@ export function extrudeSelectedFaces(
   guideSelection = selection,
   mode = "normal",
   snapTarget = null,
+  maxSourceAngleDegrees = 135,
 ) {
   const created = [],
     preview = [],
@@ -1479,6 +1832,7 @@ export function extrudeSelectedFaces(
       selection.size > 1
         ? sideLoopCaps(sourceBrushes, selection, distance, grid)
         : { caps: new Map(), errors: [] };
+  let solvedEdges = null;
   errors.push(...region.errors);
   for (const id of selection) {
     const match = id.match(/^(.*):f:(\d+)$/),
@@ -1497,9 +1851,19 @@ export function extrudeSelectedFaces(
     const base = face.map((index) => ({ ...brush.vertices[index] }));
     const capResult =
       region.caps.get(id) ||
-      (selection.size === 1 && snapTarget
-        ? offsetFacePlaneCap(brush, faceIndex, distance, snapTarget)
+      (selection.size === 1 &&
+      (snapTarget || mode === "parallel" || mode === "snap")
+        ? offsetFacePlaneCap(
+            brush,
+            faceIndex,
+            distance,
+            snapTarget,
+            mode,
+            maxSourceAngleDegrees,
+          )
         : base.map((point) => extrudedPoint(point, direction, distance)));
+    if (selection.size === 1 && capResult?.solvedEdges)
+      solvedEdges = capResult.solvedEdges;
     const cap = Array.isArray(capResult)
       ? capResult
       : capResult?.cap || capResult;
@@ -1535,7 +1899,7 @@ export function extrudeSelectedFaces(
     const material =
       brush.faceMaterials?.[faceIndex] || brush.material || "tools/toolsnodraw";
     const result = {
-      id: `extrude-${nextId++}`,
+      id: `extrude-preview-${preview.length}`,
       material,
       faceMaterials: [
         "tools/toolsnodraw",
@@ -1570,14 +1934,34 @@ export function extrudeSelectedFaces(
     touched.push({ brush, faceIndex });
     created.push(result);
   }
-  if (errors.length) return { brushes: [], previewBrushes: preview, errors };
+  if (errors.length)
+    return { brushes: [], previewBrushes: preview, errors, solvedEdges };
   for (const { brush, faceIndex } of touched) {
     brush.faceMaterials ||= brush.faces.map(
       () => brush.material || "tools/toolsnodraw",
     );
     brush.faceMaterials[faceIndex] = "tools/toolsnodraw";
   }
-  return { brushes: created, previewBrushes: preview, errors };
+  return { brushes: created, previewBrushes: preview, errors, solvedEdges };
+}
+
+/**
+ * Assigns permanent IDs only when already-resolved brushes are committed.
+ *
+ * @param {Brush[]} brushes
+ * @param {Brush[]} existingBrushes
+ * @returns {void}
+ */
+export function assignExtrusionBrushIds(brushes, existingBrushes) {
+  const usedIds = new Set(existingBrushes.map((brush) => brush.id));
+  for (const brush of brushes) {
+    let id;
+    do {
+      id = `extrude-${nextId++}`;
+    } while (usedIds.has(id));
+    brush.id = id;
+    usedIds.add(id);
+  }
 }
 
 function axisProjection(brush, axis) {
@@ -1676,6 +2060,17 @@ function crossesTargetFace(candidate, targetBrush, targetFaceIndex, epsilon) {
   );
 }
 
+/**
+ * @param {Brush[]} sourceBrushes
+ * @param {FaceSelection} selection
+ * @param {number} distance
+ * @param {number} grid
+ * @param {FaceSelection} [guideSelection]
+ * @param {string} [mode]
+ * @param {ExtrusionSnapTarget | null} [snapTarget]
+ * @param {number} [maxSourceAngleDegrees]
+ * @returns {number}
+ */
 export function limitExtrusionDistance(
   sourceBrushes,
   selection,
@@ -1684,13 +2079,10 @@ export function limitExtrusionDistance(
   guideSelection = selection,
   mode = "normal",
   snapTarget = null,
+  maxSourceAngleDegrees = 135,
 ) {
   const CONTACT_EPSILON = 0.01;
   const TARGET_CONTACT_EPSILON = 0.01;
-  const selectedBrushIds = new Set(
-    [...selection].map((id) => id.match(/^(.*):f:/)?.[1]).filter(Boolean),
-  );
-
   // Cap and side constraints both identify a physical target boundary. The
   // plane test allows tangential sliding while SAT continues checking the
   // rest of the target brush for penetration.
@@ -1748,7 +2140,9 @@ export function limitExtrusionDistance(
   const checkCollision = (previewBrushes) =>
     previewBrushes.some((candidate) =>
       sourceBrushes.some((obstacle) => {
-        if (selectedBrushIds.has(obstacle.id)) return false;
+        // Ignore inherited contact with this extrusion's own source only.
+        // Other selected sources remain physical collision obstacles.
+        if (obstacle.id === candidate.generator?.sourceBrushId) return false;
 
         const targetConstraints = constraintsByTargetBrush.get(obstacle.id);
 
@@ -1811,6 +2205,7 @@ export function limitExtrusionDistance(
         guideSelection,
         mode,
         modifiedTarget,
+        maxSourceAngleDegrees,
       );
       if (!result.previewBrushes.length || result.errors.length) {
         result.extrusionCollisionDebug = {
@@ -1853,6 +2248,7 @@ export function limitExtrusionDistance(
       guideSelection,
       mode,
       snapTarget,
+      maxSourceAngleDegrees,
     );
     if (!result.previewBrushes.length || result.errors.length) return false;
     return checkCollision(result.previewBrushes);
@@ -1866,4 +2262,114 @@ export function limitExtrusionDistance(
     else low = middle;
   }
   return low;
+}
+
+/**
+ * Resolves collision limiting and final geometry once so preview and commit
+ * can consume the same result.
+ *
+ * @param {ResolveExtrusionOptions} options
+ * @returns {ResolvedExtrusion}
+ */
+export function resolveExtrusion(options) {
+  const {
+    sourceBrushes,
+    selection,
+    rawDistance,
+    grid,
+    guideSelection = selection,
+    mode = "straight",
+    snapTarget = null,
+    maxSourceAngleDegrees = 135,
+  } = options;
+  const finalDistance = limitExtrusionDistance(
+    sourceBrushes,
+    selection,
+    rawDistance,
+    grid,
+    guideSelection,
+    mode,
+    snapTarget,
+    maxSourceAngleDegrees,
+  );
+  let finalTarget = snapTarget;
+  let finalCorners = snapTarget?.finalCorners || null;
+  if (finalCorners) {
+    const alpha =
+      rawDistance > 0.0001
+        ? Math.max(0, Math.min(1, finalDistance / rawDistance))
+        : 0;
+    const { baseA, baseB, capA, capB } = finalCorners;
+    finalCorners = {
+      baseA,
+      baseB,
+      capA: {
+        x: baseA.x + (capA.x - baseA.x) * alpha,
+        y: baseA.y + (capA.y - baseA.y) * alpha,
+      },
+      capB: {
+        x: baseB.x + (capB.x - baseB.x) * alpha,
+        y: baseB.y + (capB.y - baseB.y) * alpha,
+      },
+    };
+    finalTarget = {
+      type: "corner-snap",
+      activeAxes: snapTarget?.activeAxes || ["x", "y"],
+      snapA: finalCorners.capA,
+      snapB: finalCorners.capB,
+      brushes: sourceBrushes,
+      distance: finalDistance,
+    };
+  }
+  const sourceClone = JSON.parse(JSON.stringify(sourceBrushes));
+  const result =
+    finalDistance > 0.0001
+      ? extrudeSelectedFaces(
+          sourceClone,
+          selection,
+          finalDistance,
+          grid,
+          guideSelection,
+          mode,
+          finalTarget,
+          maxSourceAngleDegrees,
+        )
+      : { brushes: [], previewBrushes: [], errors: [] };
+  const errors = result.errors || [];
+  const blocked =
+    finalDistance <= 0.0001 || !result.brushes.length || errors.length > 0;
+  const constraints = snapTarget?.conforming || [];
+  const targetBrushIds = [
+    ...new Set(
+      snapTarget?.targetBrushIds ||
+        constraints.map((constraint) => constraint.targetBrushId).filter(Boolean),
+    ),
+  ];
+  const solvedEdges = finalCorners
+    ? {
+        base: [finalCorners.baseA, finalCorners.baseB],
+        sideA: [finalCorners.baseA, finalCorners.capA],
+        cap: [finalCorners.capA, finalCorners.capB],
+        sideB: [finalCorners.capB, finalCorners.baseB],
+      }
+    : result.solvedEdges || null;
+  return {
+    rawDistance,
+    finalDistance,
+    selection: new Set(selection),
+    guideSelection: new Set(guideSelection),
+    mode,
+    constraints,
+    finalCorners,
+    targetBrushIds,
+    previewBrushes: result.previewBrushes || result.brushes,
+    brushes: result.brushes,
+    solvedEdges,
+    snapTarget: finalTarget,
+    blocked,
+    blockedReason:
+      errors[0] ||
+      (finalDistance <= 0.0001 ? "blocked by an adjacent brush" : null),
+    errors,
+  };
 }

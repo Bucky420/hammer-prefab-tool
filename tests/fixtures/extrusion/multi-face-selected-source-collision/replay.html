@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Multi-face selected-source collision fixture</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { margin: 0; background: #101419; color: #edf3f8; font: 15px/1.45 Consolas, monospace; }
+      main { width: 1200px; min-height: 720px; padding: 28px 32px; }
+      h1 { margin: 0 0 6px; color: #fff; font: 700 25px/1.2 Arial, sans-serif; }
+      .summary { color: #aebdca; margin-bottom: 22px; }
+      .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+      section { border: 1px solid #3b4650; background: #171d23; padding: 16px; }
+      h2 { margin: 0 0 10px; font: 700 17px Arial, sans-serif; }
+      .bug h2 { color: #ff6677; }
+      .expected h2 { color: #56e69d; }
+      canvas { width: 100%; height: 330px; display: block; background: #0c1014; border: 1px solid #2c3740; }
+      pre { margin: 12px 0 0; color: #c9d4dc; white-space: pre-wrap; }
+      .legend { margin-top: 17px; color: #9fb0bd; }
+      .source { color: #d4dee6; }
+      .actual { color: #ff6677; }
+      .target { color: #cb7cff; }
+      .safe { color: #56e69d; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Extrusion Fixture: Selected Source Collision</h1>
+      <div class="summary">Top view · grid 16 · Parallel · selected source-a:f:3 + source-b:f:3 · exact distance 64</div>
+      <div class="panels">
+        <section class="bug">
+          <h2>Observed Before Fix</h2>
+          <canvas id="bug" width="540" height="330"></canvas>
+          <pre>raw: 64   limited: 64
+        </section>
+        <section class="expected">
+          <h2>Expected Contact Result</h2>
+          <canvas id="expected" width="540" height="330"></canvas>
+          <pre>raw: 64   limited: 32
+        </section>
+      </div>
+      <div class="legend"><span class="source">gray: selected sources</span> · <span class="actual">red: penetrating preview</span> · <span class="safe">green: expected preview</span> · <span class="target">purple: collision face</span></div>
+    </main>
+    <script>
+      const sources = [
+        { minX: 0, maxX: 64, minY: 0, maxY: 64 },
+        { minX: 96, maxX: 160, minY: 0, maxY: 64 },
+      ];
+      const actual = [
+        { minX: 64, maxX: 128, minY: 0, maxY: 64 },
+        { minX: 160, maxX: 224, minY: 0, maxY: 64 },
+      ];
+      const expected = [
+        { minX: 64, maxX: 96, minY: 0, maxY: 64 },
+        { minX: 160, maxX: 192, minY: 0, maxY: 64 },
+      ];
+      function draw(id, previews, color) {
+        const canvas = document.getElementById(id);
+        const context = canvas.getContext("2d");
+        const scale = 2.15;
+        const originX = 28;
+        const originY = 226;
+        context.strokeStyle = "#1f2a32";
+        context.lineWidth = 1;
+        for (let x = 0; x <= 224; x += 16) {
+          context.beginPath(); context.moveTo(originX + x * scale, 24); context.lineTo(originX + x * scale, 296); context.stroke();
+        }
+        for (let y = -32; y <= 96; y += 16) {
+          context.beginPath(); context.moveTo(18, originY - y * scale); context.lineTo(522, originY - y * scale); context.stroke();
+        }
+        for (const box of sources) {
+          context.fillStyle = "rgba(197, 211, 221, .18)";
+          context.strokeStyle = "#c9d6df";
+          context.lineWidth = 2;
+          context.fillRect(originX + box.minX * scale, originY - box.maxY * scale, (box.maxX - box.minX) * scale, (box.maxY - box.minY) * scale);
+          context.strokeRect(originX + box.minX * scale, originY - box.maxY * scale, (box.maxX - box.minX) * scale, (box.maxY - box.minY) * scale);
+        }
+        for (const box of previews) {
+          context.fillStyle = color === "#ff5267" ? "rgba(255, 82, 103, .38)" : "rgba(71, 225, 145, .35)";
+          context.strokeStyle = color;
+          context.lineWidth = 3;
+          context.fillRect(originX + box.minX * scale, originY - box.maxY * scale, (box.maxX - box.minX) * scale, (box.maxY - box.minY) * scale);
+          context.strokeRect(originX + box.minX * scale, originY - box.maxY * scale, (box.maxX - box.minX) * scale, (box.maxY - box.minY) * scale);
+        }
+        context.strokeStyle = "#cb7cff";
+        context.lineWidth = 5;
+        context.beginPath(); context.moveTo(originX + 96 * scale, originY); context.lineTo(originX + 96 * scale, originY - 64 * scale); context.stroke();
+      }
+      draw("bug", actual, "#ff5267");
+      draw("expected", expected, "#47e191");
+    </script>
+  </body>
+</html>

@@ -28,9 +28,14 @@ import { applyNodrawToHiddenFaces } from "./nodraw.js";
 import { fillSelectedLoop } from "./face-fill.js";
 import { bindExtrusionModeButtons } from "./extrusion-policy.js";
 import {
-  extrudeSelectedFaces,
-  limitExtrusionDistance,
+  assignExtrusionBrushIds,
+  resolveExtrusion,
 } from "./face-extrusion.js";
+
+/**
+ * @typedef {import("./face-extrusion.js").ResolvedExtrusion} ResolvedExtrusion
+ */
+
 import {
   nudge,
   scaleVertices,
@@ -53,17 +58,23 @@ hmrIndicator.className = "live-indicator";
 hmrIndicator.dataset.state = "connecting";
 hmrIndicator.title = "Development reload connecting";
 document.querySelector("header").append(hmrIndicator);
+function describeUIError(error, fallbackMessage = "Unknown UI error") {
+  const message = error?.message || String(error || fallbackMessage);
+  const stack = error?.stack;
+  return stack ? `${message}\n${stack}` : message;
+}
 window.addEventListener("error", (event) => {
-  if (status)
-    setTimeout(() => setStatus(`UI error: ${event.message}`, true), 0);
+  const location = event.filename
+    ? ` (${event.filename}:${event.lineno || 0}:${event.colno || 0})`
+    : "";
+  const details = describeUIError(event.error, event.message);
+  console.error(`[UI error]${location}`, event.error || event.message);
+  if (status) setTimeout(() => setStatus(`UI error${location}: ${details}`, true), 0);
 });
 window.addEventListener("unhandledrejection", (event) => {
-  if (status)
-    setTimeout(
-      () =>
-        setStatus(`UI error: ${event.reason?.message || event.reason}`, true),
-      0,
-    );
+  const details = describeUIError(event.reason);
+  console.error("[UI unhandled rejection]", event.reason);
+  if (status) setTimeout(() => setStatus(`UI error: ${details}`, true), 0);
 });
 const browser = $("project-browser");
 const search = $("file-search");
@@ -116,8 +127,7 @@ const view = new Viewport(
   (bounds) => {
     createBrushFromBounds(bounds);
   },
-  (selection, distance, guideSelection, mode, snapTarget, resolved) =>
-    commitFaceExtrusion(selection, distance, guideSelection, mode, snapTarget, resolved),
+  (resolved) => commitFaceExtrusion(resolved),
   (bounds) => {
     view.creationPreviewBrushes = buildBrushesFromBounds(bounds) || [];
     view.requestDraw();
@@ -351,22 +361,61 @@ dockDivider.title = "Drag to resize generator pane";
 const facePanel = document.createElement("aside");
 facePanel.className = "brush-panel";
 facePanel.hidden = true;
-facePanel.innerHTML = `<header><strong>FACE TOOLS</strong></header><label>Mode <select data-face-mode><option value="extrude">Extrude</option><option value="fill">Planar Fill</option></select></label><label>Side material <select data-face-side-material><option value="dev/dev_measuregeneric01">Orange</option><option value="dev/dev_measuregeneric01b">Gray</option></select></label><label>Top material <select data-face-top-material><option value="dev/dev_measuregeneric01b">Gray</option><option value="dev/dev_measuregeneric01">Orange</option></select></label><div class="extrusion-toggles"><button type="button" class="extrusion-toggle" data-extrude-mode="parallel" aria-pressed="false">Parallel</button><button type="button" class="extrusion-toggle" data-extrude-mode="snap" aria-pressed="false">Snap</button><button type="button" class="extrusion-toggle" data-extrude-mode="forward-snap" aria-pressed="false">Forward</button></div>`;
+facePanel.innerHTML = `<header><strong>FACE TOOLS</strong></header><label>Mode <select data-face-mode><option value="extrude">Extrude</option><option value="fill">Planar Fill</option></select></label><label>Side material <select data-face-side-material><option value="dev/dev_measuregeneric01">Orange</option><option value="dev/dev_measuregeneric01b">Gray</option></select></label><label>Top material <select data-face-top-material><option value="dev/dev_measuregeneric01b">Gray</option><option value="dev/dev_measuregeneric01">Orange</option></select></label><label title="Maximum angle between an external rail and the extrusion normal">Max rail angle <input type="number" data-face-rail-angle min="15" max="89" step="1" value="89"> deg</label><label title="Signed source-side angle; 135 degrees is a 45-degree undirected line deviation">Max source angle <input type="number" data-face-source-angle min="90" max="179" step="1" value="135"> deg</label><div class="extrusion-toggles"><button type="button" class="extrusion-toggle" data-extrude-mode="parallel" aria-pressed="false" title="Keep the dragged cap parallel to the selected face while following adjacent source sides">Parallel</button><button type="button" class="extrusion-toggle" data-extrude-mode="snap" aria-pressed="false">Snap</button></div>`;
 const faceModeSelect = facePanel.querySelector("[data-face-mode]");
 const sideMaterialSelect = facePanel.querySelector("[data-face-side-material]");
 const topMaterialSelect = facePanel.querySelector("[data-face-top-material]");
+const railAngleInput = facePanel.querySelector("[data-face-rail-angle]");
+const sourceAngleInput = facePanel.querySelector("[data-face-source-angle]");
 const faceModeButtons = facePanel.querySelectorAll("[data-extrude-mode]");
 if (
   !faceModeSelect ||
   !sideMaterialSelect ||
   !topMaterialSelect ||
-  faceModeButtons.length !== 3
+  !railAngleInput ||
+  !sourceAngleInput ||
+  faceModeButtons.length !== 2
 )
   throw new Error("Face panel markup is incomplete");
 bindExtrusionModeButtons(facePanel, state, (mode) => {
   redraw();
-  setStatus(`Face extrusion mode: ${mode}`);
+  setStatus(
+    mode === "parallel"
+      ? "Parallel extrusion: following adjacent source sides"
+      : mode === "straight"
+        ? "Straight extrusion: forward-cap snapping active"
+        : "Snap extrusion: forward cap and external side rails active",
+  );
 });
+railAngleInput.value = String(state.faceRailMaxAngle);
+railAngleInput.onchange = () => {
+  state.faceRailMaxAngle = Math.max(
+    15,
+    Math.min(89, Number(railAngleInput.value) || 89),
+  );
+  railAngleInput.value = String(state.faceRailMaxAngle);
+  try {
+    localStorage.setItem("faceRailMaxAngle", String(state.faceRailMaxAngle));
+  } catch {}
+  redraw();
+  setStatus(`Maximum rail angle: ${state.faceRailMaxAngle} deg`);
+};
+sourceAngleInput.value = String(state.faceSourceMaxAngle);
+sourceAngleInput.onchange = () => {
+  state.faceSourceMaxAngle = Math.max(
+    90,
+    Math.min(179, Number(sourceAngleInput.value) || 135),
+  );
+  sourceAngleInput.value = String(state.faceSourceMaxAngle);
+  try {
+    localStorage.setItem(
+      "faceSourceMaxAngle",
+      String(state.faceSourceMaxAngle),
+    );
+  } catch {}
+  redraw();
+  setStatus(`Maximum source-side angle: ${state.faceSourceMaxAngle} deg`);
+};
 function updateFaceToolMode() {
   faceModeSelect.value = state.faceToolMode;
 }
@@ -777,6 +826,45 @@ function redraw() {
   $("stats").textContent =
     `${state.brushes.length} brush${state.brushes.length === 1 ? "" : "es"} · ${selected}`;
 }
+
+async function captureGridScreenshot() {
+  const source = view.canvas;
+  const maxEdge = 768;
+  const scale = Math.min(1, maxEdge / source.width, maxEdge / source.height);
+  const capture = document.createElement("canvas");
+  capture.width = Math.max(1, Math.round(source.width * scale));
+  capture.height = Math.max(1, Math.round(source.height * scale));
+  const context = capture.getContext("2d");
+  if (!context) throw new Error("Could not prepare screenshot canvas");
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = "high";
+  context.drawImage(source, 0, 0, capture.width, capture.height);
+  const blob = await new Promise((resolve) =>
+    capture.toBlob(resolve, "image/png"),
+  );
+  if (!blob) throw new Error("Could not encode screenshot");
+
+  if (navigator.clipboard?.write && window.ClipboardItem) {
+    try {
+      await navigator.clipboard.write([
+        new ClipboardItem({ "image/png": blob }),
+      ]);
+      setStatus("Clean grid screenshot copied to clipboard");
+      return;
+    } catch {
+      // Clipboard access can be denied outside a secure browser context.
+    }
+  }
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `hammer-grid-${activeView}.png`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+  setStatus("Clean grid screenshot downloaded");
+}
+
 function changed() {
   history.push(snapshot());
   redraw();
@@ -833,10 +921,6 @@ function restore(data) {
       ? data.faceSelectionScope || "group"
       : "group";
   state.faceToolMode = data.faceToolMode || "extrude";
-  state.faceExtrusionMode =
-    data.extrusionModeVersion === 1
-      ? data.faceExtrusionMode || "snap"
-      : "snap";
   state.selectionScope =
     data.selectionScopeVersion === 1 ? data.selectionScope || "group" : "group";
   state.mode = data.mode || "selection";
@@ -1067,85 +1151,61 @@ async function loadSelected() {
     $("browser-status").textContent = error.message;
   }
 }
-function commitFaceExtrusion(
-  selection = state.faceSelection,
-  distance = null,
-  guideSelection = selection,
-  mode = state.faceExtrusionMode,
-  snapTarget = null,
-  resolved = false,
-) {
-  state.faceSelection = new Set(selection);
+/**
+ * @param {ResolvedExtrusion | null} [resolved]
+ * @returns {void}
+ */
+function commitFaceExtrusion(resolved = null) {
   if (!state.faceSelection.size)
     return setStatus("Select one or more faces first", true);
-  if (distance == null)
-    distance = Number(
+  if (!resolved) {
+    const distance = Number(
       prompt(
         "Extrusion distance along the selected extrusion direction:",
         String(state.grid * 2),
       ),
     );
-  if (!Number.isFinite(distance) || distance <= 0)
-    return setStatus("Extrusion distance must be greater than zero", true);
-  // Drag commits: distance and snapTarget are already collision-limited.
-  // Do not re-limit; preview and commit must use the same resolved state.
-  if (!resolved) {
-    distance = limitExtrusionDistance(
-      state.brushes,
-      state.faceSelection,
-      distance,
-      state.grid,
-      guideSelection,
-      mode,
-      snapTarget,
-    );
-    if (distance <= 0.0001)
-      return setStatus("Extrusion blocked by an adjacent brush", true);
-    if (snapTarget?.finalCorners && distance < snapTarget.distance) {
-      const alpha =
-        snapTarget.distance > 0 ? distance / snapTarget.distance : 0;
-      const { baseA, baseB, capA, capB } = snapTarget.finalCorners;
-      snapTarget = {
-        type: "corner-snap",
-        activeAxes: snapTarget.activeAxes,
-        snapA: {
-          x: baseA.x + (capA.x - baseA.x) * alpha,
-          y: baseA.y + (capA.y - baseA.y) * alpha,
-        },
-        snapB: {
-          x: baseB.x + (capB.x - baseB.x) * alpha,
-          y: baseB.y + (capB.y - baseB.y) * alpha,
-        },
-        brushes: state.brushes,
-        distance,
-      };
-    }
+    if (!Number.isFinite(distance) || distance <= 0)
+      return setStatus("Extrusion distance must be greater than zero", true);
+    resolved = resolveExtrusion({
+      sourceBrushes: state.brushes,
+      selection: state.faceSelection,
+      rawDistance: distance,
+      grid: state.grid,
+      guideSelection: state.faceSelection,
+      mode: state.faceExtrusionMode,
+      snapTarget: null,
+      maxSourceAngleDegrees: state.faceSourceMaxAngle,
+    });
   }
-  const result = extrudeSelectedFaces(
-    state.brushes,
-    state.faceSelection,
-    distance,
-    state.grid,
-    guideSelection,
-    mode,
-    snapTarget,
-  );
-  if (!result.brushes.length)
+  if (resolved.blocked || !resolved.brushes.length)
     return setStatus(
-      `Extrusion rejected: ${result.errors[0] || "no valid faces"}`,
+      `Extrusion rejected: ${resolved.blockedReason || "no valid faces"}`,
       true,
     );
+  assignExtrusionBrushIds(resolved.brushes, state.brushes);
+  state.faceSelection = new Set(resolved.selection);
+  for (const id of resolved.selection) {
+    const match = id.match(/^(.*):f:(\d+)$/);
+    const brush =
+      match && state.brushes.find((item) => item.id === match[1]);
+    const faceIndex = Number(match?.[2]);
+    if (!brush?.faces?.[faceIndex]) continue;
+    brush.faceMaterials ||= brush.faces.map(
+      () => brush.material || "tools/toolsnodraw",
+    );
+    brush.faceMaterials[faceIndex] = "tools/toolsnodraw";
+  }
   applyNodrawToHiddenFaces(
-    [...state.brushes, ...result.brushes],
-    new Set(result.brushes.map((brush) => brush.id)),
+    [...state.brushes, ...resolved.brushes],
+    new Set(resolved.brushes.map((brush) => brush.id)),
   );
   state.faceSelection = new Set(
-    result.brushes.map((brush) => `${brush.id}:f:1`),
+    resolved.brushes.map((brush) => `${brush.id}:f:1`),
   );
-  add(result.brushes, "Faces extruded");
+  add(resolved.brushes, "Faces extruded");
   setStatus(
-    `Extruded ${result.brushes.length} face${result.brushes.length === 1 ? "" : "s"} by ${distance} units${result.errors.length ? `; ${result.errors.length} rejected` : ""}`,
-    Boolean(result.errors.length),
+    `Extruded ${resolved.brushes.length} face${resolved.brushes.length === 1 ? "" : "s"} by ${resolved.finalDistance} units`,
   );
 }
 function run(command) {
@@ -1310,6 +1370,11 @@ $("view-selector").onclick = () => {
   redraw();
   setStatus(`View: ${viewLabels[activeView]}`);
 };
+$("grid-screenshot").onclick = () => {
+  captureGridScreenshot().catch((error) =>
+    setStatus(`Screenshot failed: ${error.message}`, true),
+  );
+};
 $("key-toggle").onclick = () => {
   const key = $("editor-key");
   const open = !key.classList.contains("open");
@@ -1430,6 +1495,13 @@ window.addEventListener("keydown", (event) => {
     event.preventDefault();
     if (state.faceToolMode === "fill") fillSelectedLoopAction();
     else run("extrude-faces");
+    return;
+  }
+  if ((event.ctrlKey || event.metaKey) && event.shiftKey && key === "c") {
+    event.preventDefault();
+    captureGridScreenshot().catch((error) =>
+      setStatus(`Screenshot failed: ${error.message}`, true),
+    );
     return;
   }
   if ((event.ctrlKey || event.metaKey) && key === "o") {

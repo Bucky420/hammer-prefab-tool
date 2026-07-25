@@ -1,6 +1,60 @@
 import { snap } from "./math.js";
 import { roundToGrid } from "./grid.js";
+
+/**
+ * @typedef {"x" | "y" | "z"} Axis
+ * @typedef {[Axis, Axis] | [Axis, Axis, Axis]} ActiveAxes
+ * @typedef {{x: number, y: number}} Vector2
+ * @typedef {{x: number, y: number, z: number}} Vector3
+ * @typedef {number[]} Face
+ * @typedef {{normal: Vector3, distance: number}} Plane
+ * @typedef {string} FaceId
+ * @typedef {Set<FaceId>} FaceSelection
+ */
+
+/**
+ * @typedef {object} TextureAxes
+ * @property {number[]} [u]
+ * @property {number[]} [v]
+ * @property {number} [uShift]
+ * @property {number} [vShift]
+ * @property {number} [uScale]
+ * @property {number} [vScale]
+ */
+
+/**
+ * Generator metadata remains open because each generator preserves its own
+ * additional fields.
+ *
+ * @typedef {object} BrushGenerator
+ * @property {string} [type]
+ * @property {string} [sourceBrushId]
+ * @property {string} [extrusion]
+ * @property {Vector3} [extrusionCenter]
+ * @property {Axis[]} [extrusionAxes]
+ */
+
+/**
+ * @typedef {object} Brush
+ * @property {string} id
+ * @property {Vector3[]} vertices
+ * @property {Face[]} faces
+ * @property {string} [material]
+ * @property {string[]} [faceMaterials]
+ * @property {Array<TextureAxes | undefined>} [textureAxes]
+ * @property {string} [groupId]
+ * @property {Record<string, number[]>} [vertexRoles]
+ * @property {BrushGenerator} [generator]
+ */
+
 let nextId = 1;
+
+/**
+ * @param {Vector3} [min]
+ * @param {Vector3} [max]
+ * @param {string} [material]
+ * @returns {Brush}
+ */
 export function box(
   min = { x: -64, y: -64, z: 0 },
   max = { x: 64, y: 64, z: 128 },
@@ -30,9 +84,21 @@ export function box(
     ],
   };
 }
+
+/**
+ * @template T
+ * @param {T} value
+ * @returns {T}
+ */
 export function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
+
+/**
+ * @param {Brush[]} brushes
+ * @param {Set<string>} selected
+ * @returns {Brush[]}
+ */
 export function duplicateBrushes(brushes, selected) {
   const groups = new Map();
   return brushes
@@ -48,6 +114,15 @@ export function duplicateBrushes(brushes, selected) {
       return copy;
     });
 }
+
+/**
+ * @param {Brush[]} brushes
+ * @param {Set<string>} selected
+ * @param {Vector3} delta
+ * @param {number} grid
+ * @param {boolean} [snapResult]
+ * @returns {void}
+ */
 export function moveVertices(
   brushes,
   selected,
@@ -65,6 +140,15 @@ export function moveVertices(
     }),
   );
 }
+
+/**
+ * @param {Brush[]} brushes
+ * @param {Set<string>} selected
+ * @param {Vector3} delta
+ * @param {number} grid
+ * @param {boolean} [snapResult]
+ * @returns {void}
+ */
 export function moveBrushes(brushes, selected, delta, grid, snapResult = true) {
   brushes.forEach((b) => {
     if (!selected.has(b.id)) return;
@@ -76,6 +160,12 @@ export function moveBrushes(brushes, selected, delta, grid, snapResult = true) {
   });
 }
 // Matches Hammer's ToolMorph V_rint(position / grid) * grid behavior.
+
+/**
+ * @param {Brush[]} brushes
+ * @param {number} grid
+ * @returns {number}
+ */
 export function snapAllVertices(brushes, grid) {
   let moved = 0;
   for (const brush of brushes)
@@ -89,6 +179,12 @@ export function snapAllVertices(brushes, grid) {
       }
   return moved;
 }
+
+/**
+ * @param {Brush[]} brushes
+ * @param {number} grid
+ * @returns {{total: number, offGrid: number}}
+ */
 export function countOffGridCoordinates(brushes, grid) {
   let total = 0,
     offGrid = 0;
@@ -104,6 +200,11 @@ export function countOffGridCoordinates(brushes, grid) {
       }
   return { total, offGrid };
 }
+
+/**
+ * @param {Brush} b
+ * @returns {Vector3}
+ */
 export function center(b) {
   const n = b.vertices.length;
   return b.vertices.reduce(
@@ -111,6 +212,13 @@ export function center(b) {
     { x: 0, y: 0, z: 0 },
   );
 }
+
+/**
+ * @param {Vector3} point
+ * @param {Brush} brush
+ * @param {number} [epsilon]
+ * @returns {boolean}
+ */
 export function pointInsideBrush(point, brush, epsilon = 0.01) {
   if (!brush?.faces?.length) return false;
   for (const face of brush.faces) {
@@ -163,6 +271,13 @@ export function pointInsideBrush(point, brush, epsilon = 0.01) {
   }
   return true;
 }
+
+/**
+ * @param {Brush} brush
+ * @param {Brush[]} others
+ * @param {number} [epsilon]
+ * @returns {boolean}
+ */
 export function brushEntersOtherBrush(brush, others, epsilon = 0.01) {
   if (!brush?.vertices?.length) return false;
   for (const vertex of brush.vertices) {
@@ -173,6 +288,12 @@ export function brushEntersOtherBrush(brush, others, epsilon = 0.01) {
   }
   return false;
 }
+
+/**
+ * @param {Brush[]} brushes
+ * @param {Set<string>} selection
+ * @returns {number}
+ */
 export function selectedVertexCount(brushes, selection) {
   return brushes.reduce(
     (count, brush) =>

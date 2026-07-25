@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { box } from "../public/js/geometry-model.js";
+import { writeVMF } from "../public/js/vmf-writer.js";
 import {
+  assignExtrusionBrushIds,
   solveCornerSnappedExtrusion,
   extrudeSelectedFaces,
   limitExtrusionDistance,
+  resolveExtrusion,
   solveSingleFaceExtrusion,
 } from "../public/js/face-extrusion.js";
 import {
@@ -16,7 +19,9 @@ import {
   passesProbeValidation,
   projectedRailKey,
   chooseProjectedBoundaryFace,
+  movingCornerTouchesRail,
   retainLockedCandidate,
+  solvedEdgeMatchesRail,
 } from "../public/js/rail-acquisition.js";
 import { faceDirection } from "../public/js/face-extrusion.js";
 
@@ -332,7 +337,7 @@ function approxPoint(a, b, eps = 0.01) {
     mode: "selection",
     view: "top",
     grid: 16,
-    faceExtrusionMode: "snap",
+    faceExtrusionMode: "parallel",
   };
   const s = saved.state;
   if (s.brushes) state.brushes = JSON.parse(JSON.stringify(s.brushes));
@@ -340,10 +345,13 @@ function approxPoint(a, b, eps = 0.01) {
   if (s.mode) state.mode = s.mode;
   if (s.view) state.view = s.view;
   if (s.grid) state.grid = s.grid;
-  if (s.faceExtrusionMode) state.faceExtrusionMode = s.faceExtrusionMode;
   assert.equal(state.brushes.length, 2, "two brushes loaded");
   assert.equal(state.mode, "face", "face mode");
-  assert.equal(state.faceExtrusionMode, "snap", "snap mode restored");
+  assert.equal(
+    state.faceExtrusionMode,
+    "parallel",
+    "project load preserves the current extrusion setting",
+  );
   assert.ok(state.faceSelection.has("brush-1:f:3"), "face selection restored");
   console.log("save/load round-trip OK");
 }
@@ -427,6 +435,137 @@ function approxPoint(a, b, eps = 0.01) {
 }
 
 // --------------------------------------------------------------------
+// Collision limiting must not move resolved corners off snapped rails
+// --------------------------------------------------------------------
+{
+  const source = box({ x: 0, y: 0, z: 0 }, { x: 64, y: 64, z: 64 });
+  const obstacle = box({ x: 108, y: 20, z: 0 }, { x: 124, y: 44, z: 64 });
+  const constraints = [
+    { movingEdge: "sideA", direction: { x: 1, y: 0.25 } },
+    { movingEdge: "sideB", direction: { x: 1, y: -0.25 } },
+  ];
+  const solved = solveSingleFaceExtrusion({
+    brush: source,
+    faceIndex: 3,
+    distance: 64,
+    activeAxes: ["x", "y"],
+    constraints,
+  });
+  assert.ok(solved, "raw two-rail solve succeeds");
+  const resolved = resolveExtrusion({
+    sourceBrushes: [source, obstacle],
+    selection: new Set([`${source.id}:f:3`]),
+    rawDistance: 64,
+    grid: 16,
+    mode: "snap",
+    snapTarget: {
+      type: "cross-section-rails",
+      activeAxes: ["x", "y"],
+      conforming: constraints,
+      finalCorners: {
+        baseA: solved.baseA,
+        baseB: solved.baseB,
+        capA: solved.capA,
+        capB: solved.capB,
+      },
+      distance: 64,
+    },
+  });
+  assert.ok(!resolved.blocked, "collision-limited rail result remains valid");
+  assert.ok(resolved.finalDistance < 64, "obstacle shortens the extrusion");
+  for (const [base, cap, constraint] of [
+    [resolved.finalCorners.baseA, resolved.finalCorners.capA, constraints[0]],
+    [resolved.finalCorners.baseB, resolved.finalCorners.capB, constraints[1]],
+  ]) {
+    const delta = { x: cap.x - base.x, y: cap.y - base.y };
+    assert.ok(
+      Math.abs(delta.x * constraint.direction.y - delta.y * constraint.direction.x) <
+        0.0001,
+      "collision-limited corner stays on its support rail",
+    );
+  }
+  const preview = resolved.previewBrushes[0];
+  assert.equal(
+    preview,
+    resolved.brushes[0],
+    "preview and commit share the exact resolved brush object",
+  );
+  assert.match(
+    preview.id,
+    /^extrude-preview-\d+$/,
+    "resolved preview uses a temporary deterministic ID",
+  );
+  assert.equal(
+    writeVMF([preview]).includes(preview.id),
+    false,
+    "VMF output never serializes internal preview brush IDs",
+  );
+  const capPoints = preview.faces[1].map((index) => preview.vertices[index]);
+  for (const corner of [resolved.finalCorners.capA, resolved.finalCorners.capB])
+    assert.ok(
+      capPoints.some(
+        (point) => approxEqual(point.x, corner.x) && approxEqual(point.y, corner.y),
+      ),
+      "preview cap consumes the resolved corner",
+    );
+  const repeated = resolveExtrusion({
+    sourceBrushes: [source, obstacle],
+    selection: new Set([`${source.id}:f:3`]),
+    rawDistance: 64,
+    grid: 16,
+    mode: "snap",
+    snapTarget: {
+      type: "cross-section-rails",
+      activeAxes: ["x", "y"],
+      conforming: constraints,
+      finalCorners: {
+        baseA: solved.baseA,
+        baseB: solved.baseB,
+        capA: solved.capA,
+        capB: solved.capB,
+      },
+      distance: 64,
+    },
+  });
+  assert.equal(
+    repeated.brushes[0].id,
+    resolved.brushes[0].id,
+    "repeated previews do not consume permanent extrusion IDs",
+  );
+  const verticesBeforeCommit = structuredClone(resolved.brushes[0].vertices);
+  assignExtrusionBrushIds(resolved.brushes, [
+    ...[source, obstacle],
+    { ...source, id: "extrude-30000" },
+  ]);
+  assert.match(
+    resolved.brushes[0].id,
+    /^extrude-\d+$/,
+    "commit assigns a permanent extrusion ID",
+  );
+  assert.notEqual(
+    resolved.brushes[0].id,
+    "extrude-30000",
+    "commit skips IDs already present in editor state",
+  );
+  assert.equal(
+    preview.id,
+    resolved.brushes[0].id,
+    "ID finalization updates every alias held by preview and debug state",
+  );
+  assert.equal(
+    preview.id.startsWith("extrude-preview-"),
+    false,
+    "no temporary ID remains after the synchronous commit boundary",
+  );
+  assert.deepEqual(
+    resolved.brushes[0].vertices,
+    verticesBeforeCommit,
+    "ID finalization does not rebuild or alter resolved geometry",
+  );
+  console.log("collision-limited resolved rails OK");
+}
+
+// --------------------------------------------------------------------
 // Test 14: single-side constraints do not mirror the opposite side
 // --------------------------------------------------------------------
 {
@@ -449,6 +588,161 @@ function approxPoint(a, b, eps = 0.01) {
     "unconstrained side stays on source normal",
   );
   console.log("single-side no-mirror OK");
+}
+
+// --------------------------------------------------------------------
+// Snap can slide one corner on a touched rail and mirror the other side
+// --------------------------------------------------------------------
+{
+  const source = box({ x: 0, y: 0, z: 0 }, { x: 64, y: 64, z: 64 });
+  const result = solveSingleFaceExtrusion({
+    brush: source,
+    faceIndex: 3,
+    distance: 32,
+    activeAxes: ["x", "y"],
+    constraints: [
+      {
+        movingEdge: "sideA",
+        direction: { x: 1, y: 0 },
+        lineOrigin: { x: 0, y: 16 },
+        source: "magnetic",
+      },
+    ],
+    mirrorSingleSide: true,
+  });
+  assert.ok(result, "single magnetic side solve succeeds");
+  assert.ok(approxEqual(result.capA.y, 16), "corner lies on touched rail");
+  const sideA = {
+    x: result.capA.x - result.baseA.x,
+    y: result.capA.y - result.baseA.y,
+  };
+  const sideB = {
+    x: result.capB.x - result.baseB.x,
+    y: result.capB.y - result.baseB.y,
+  };
+  assert.ok(
+    approxPoint(sideA, sideB),
+    "unsnapped side copies the snapped side angle",
+  );
+  const squeezed = solveSingleFaceExtrusion({
+    brush: source,
+    faceIndex: 3,
+    distance: 32,
+    activeAxes: ["x", "y"],
+    constraints: [
+      {
+        movingEdge: "sideA",
+        direction: { x: 1, y: 0 },
+        lineOrigin: { x: 0, y: 16 },
+        cornerSnap: { x: 96, y: 16 },
+        source: "magnetic",
+      },
+      {
+        movingEdge: "sideB",
+        direction: { x: 1, y: 0 },
+        lineOrigin: { x: 0, y: 52 },
+        cornerSnap: { x: 104, y: 52 },
+        source: "magnetic",
+      },
+    ],
+    mirrorSingleSide: true,
+  });
+  assert.ok(squeezed, "two-corner magnetic squeeze succeeds");
+  assert.ok(
+    Math.hypot(
+      squeezed.capB.x - squeezed.capA.x,
+      squeezed.capB.y - squeezed.capA.y,
+    ) < 64,
+    "independent corner contacts shorten the cap",
+  );
+  assert.ok(
+    Math.abs(
+      (squeezed.baseB.x - squeezed.baseA.x) *
+        (squeezed.capB.y - squeezed.capA.y) -
+        (squeezed.baseB.y - squeezed.baseA.y) *
+          (squeezed.capB.x - squeezed.capA.x),
+    ) > 0.0001,
+    "two contacts may rotate the squeezed cap",
+  );
+  console.log("magnetic corner slide and mirror OK");
+}
+
+// --------------------------------------------------------------------
+// Parallel mode follows the source brush's adjacent side faces
+// --------------------------------------------------------------------
+{
+  const source = box({ x: 0, y: 0, z: 0 }, { x: 64, y: 64, z: 64 });
+  source.vertices[2].x = 48;
+  source.vertices[3].x = 16;
+  source.vertices[6].x = 48;
+  source.vertices[7].x = 16;
+  const result = solveSingleFaceExtrusion({
+    brush: source,
+    faceIndex: 4,
+    distance: 16,
+    activeAxes: ["x", "y"],
+    constraints: [],
+    followAdjacentSides: true,
+  });
+  assert.ok(result, "parallel adjacent-side solve succeeds");
+  const capXs = [result.capA.x, result.capB.x].sort((a, b) => a - b);
+  assert.ok(
+    approxEqual(capXs[0], 20),
+    "left cap corner follows its adjacent side",
+  );
+  assert.ok(
+    approxEqual(capXs[1], 44),
+    "right cap corner follows its adjacent side",
+  );
+  const baseDirection = {
+    x: result.baseB.x - result.baseA.x,
+    y: result.baseB.y - result.baseA.y,
+  };
+  const capDirection = {
+    x: result.capB.x - result.capA.x,
+    y: result.capB.y - result.capA.y,
+  };
+  assert.ok(
+    Math.abs(
+      baseDirection.x * capDirection.y -
+        baseDirection.y * capDirection.x,
+    ) < 0.0001,
+    "dragged cap remains parallel to the selected source face",
+  );
+  const snapPreview = extrudeSelectedFaces(
+    [structuredClone(source)],
+    new Set([`${source.id}:f:4`]),
+    16,
+    16,
+    new Set([`${source.id}:f:4`]),
+    "snap",
+  );
+  assert.equal(snapPreview.errors.length, 0, "snap source-side preview is valid");
+  const snapCapXs = [
+    ...new Set(
+      snapPreview.previewBrushes[0].faces[1].map(
+        (index) => snapPreview.previewBrushes[0].vertices[index].x,
+      ),
+    ),
+  ].sort((a, b) => a - b);
+  assert.ok(
+    approxEqual(snapCapXs[0], 20) && approxEqual(snapCapXs[1], 44),
+    "allowed source sides keep both starting seams matched",
+  );
+  const longSnap = extrudeSelectedFaces(
+    [structuredClone(source)],
+    new Set([`${source.id}:f:4`]),
+    128,
+    16,
+    new Set([`${source.id}:f:4`]),
+    "snap",
+  );
+  assert.equal(
+    longSnap.errors.length,
+    0,
+    "shared unmatched angle avoids inward-folding startup failure",
+  );
+  console.log("parallel adjacent-side continuation OK");
 }
 
 // --------------------------------------------------------------------
@@ -546,24 +840,79 @@ function approxPoint(a, b, eps = 0.01) {
   assert.equal(locked[0].canonicalKey, "edge-2", "locked rail survives reorder");
   assert.equal(passesProbeValidation(9.8, 10), true, "probe validation passes");
   assert.equal(passesProbeValidation(9.7, 10), false, "probe validation fails");
+  assert.equal(
+    solvedEdgeMatchesRail(
+      [
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+      ],
+      { x: -4, y: 0 },
+      { x: 20, y: 0 },
+      0.01,
+    ),
+    true,
+    "collinear solved edge matches its target rail",
+  );
+  assert.equal(
+    solvedEdgeMatchesRail(
+      [
+        { x: 0, y: 0 },
+        { x: 10, y: 2 },
+      ],
+      { x: -4, y: 0 },
+      { x: 20, y: 0 },
+      0.01,
+    ),
+    false,
+    "detached V edge cannot be accepted as snapped",
+  );
+  assert.equal(
+    movingCornerTouchesRail(
+      { x: 0, y: 0 },
+      { x: 10, y: 0 },
+      { x: 5, y: -4 },
+      { x: 5, y: 4 },
+    ),
+    true,
+    "swept corner path acquires an intersected rail",
+  );
+  assert.equal(
+    movingCornerTouchesRail(
+      { x: 0, y: 0 },
+      { x: 10, y: 0 },
+      { x: 12, y: -4 },
+      { x: 12, y: 4 },
+    ),
+    false,
+    "rail beyond the swept corner path is not acquired yet",
+  );
   console.log("rail acquisition helper OK");
 }
 
 // --------------------------------------------------------------------
-// Test 19: mode policies are explicit and forward-only is directional
+// Test 19: mode policies separate default cap snapping from side snapping
 // --------------------------------------------------------------------
 {
+  assert.deepEqual(extrusionPolicyForMode("straight"), {
+    externalSnap: true,
+    sideSnap: false,
+    groupedRegion: false,
+  });
   assert.deepEqual(extrusionPolicyForMode("snap"), {
     externalSnap: true,
+    sideSnap: true,
     groupedRegion: false,
-    forwardOnly: false,
   });
   assert.deepEqual(extrusionPolicyForMode("parallel"), {
     externalSnap: false,
+    sideSnap: false,
     groupedRegion: true,
-    forwardOnly: false,
   });
-  assert.equal(extrusionPolicyForMode("forward-snap").forwardOnly, true);
+  assert.deepEqual(
+    extrusionPolicyForMode("forward-snap"),
+    extrusionPolicyForMode("straight"),
+    "removed mode falls back to straight",
+  );
   const outward = { x: 1, y: 0 };
   const base = { x: 0, y: 0 };
   assert.equal(isForwardTarget({ x: 8, y: 0 }, base, outward), true, "ahead target accepted");

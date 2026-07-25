@@ -16,14 +16,41 @@ const state = {
   projectName: "untitled.json",
 };
 
-const VALID_MODES = ["snap", "parallel", "forward-snap"];
+const VALID_MODES = ["straight", "snap", "parallel"];
 const getPersistedMode = () => {
   try {
     const v = typeof localStorage !== "undefined" ? localStorage.getItem("faceExtrudeMode") : null;
+    if (v === "forward-snap") return "straight";
     return VALID_MODES.includes(v) ? v : null;
   } catch { return null; }
 };
-let faceExtrusionMode = state.faceExtrusionMode || getPersistedMode() || "snap";
+const getPersistedRailAngle = () => {
+  try {
+    const value = Number(
+      typeof localStorage !== "undefined"
+        ? localStorage.getItem("faceRailMaxAngle")
+        : 89,
+    );
+    return Number.isFinite(value) ? Math.max(15, Math.min(89, value)) : 89;
+  } catch {
+    return 89;
+  }
+};
+state.faceRailMaxAngle = getPersistedRailAngle();
+const getPersistedSourceAngle = () => {
+  try {
+    const value = Number(
+      typeof localStorage !== "undefined"
+        ? localStorage.getItem("faceSourceMaxAngle")
+        : 135,
+    );
+    return Number.isFinite(value) ? Math.max(90, Math.min(179, value)) : 135;
+  } catch {
+    return 135;
+  }
+};
+state.faceSourceMaxAngle = getPersistedSourceAngle();
+let faceExtrusionMode = state.faceExtrusionMode || getPersistedMode() || "straight";
 
 Object.defineProperty(state, "faceExtrusionMode", {
   enumerable: true,
@@ -33,7 +60,7 @@ Object.defineProperty(state, "faceExtrusionMode", {
   },
   set(value) {
     const prev = faceExtrusionMode;
-    faceExtrusionMode = VALID_MODES.includes(value) ? value : "snap";
+    faceExtrusionMode = VALID_MODES.includes(value) ? value : "straight";
     if (faceExtrusionMode !== prev) {
       try { localStorage.setItem("faceExtrudeMode", faceExtrusionMode); } catch {}
     }
