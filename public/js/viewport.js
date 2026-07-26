@@ -12,7 +12,10 @@ import {
   resolveExtrusion,
   solveSingleFaceExtrusion,
 } from "./face-extrusion.js";
-import { extrusionPolicyForMode } from "./extrusion-policy.js";
+import {
+  extrusionPolicyForMode,
+  railWithinAngleLimit,
+} from "./extrusion-policy.js";
 import { duplicateBrushes } from "./geometry-model.js";
 import {
   dedupeFirst,
@@ -1322,9 +1325,14 @@ export class Viewport {
           source === "attached",
         );
         if (!boundaryFace) continue;
-        // Physical finite rails are governed by their usable segment and the
-        // solved convex result. Do not discard a nearby rail solely because
-        // its support direction exceeds the optional magnetic angle hint.
+        if (
+          !railWithinAngleLimit(
+            railDirection,
+            sourceNormalDir,
+            this.state.faceRailMaxAngle,
+          )
+        )
+          continue;
         const forwardStart =
           (start.x - baseCornerWorld.x) * sourceNormalDir.x +
           (start.y - baseCornerWorld.y) * sourceNormalDir.y;
@@ -1351,6 +1359,42 @@ export class Viewport {
           freeCapWorld2D.y - closestWorld.point.y,
         );
         let capProjectedT = closestWorld.t;
+        const startEndpointDistance = Math.hypot(
+          freeCapScreen.x - group.startScreen.x,
+          freeCapScreen.y - group.startScreen.y,
+        );
+        const endEndpointDistance = Math.hypot(
+          freeCapScreen.x - group.endScreen.x,
+          freeCapScreen.y - group.endScreen.y,
+        );
+        const endpointDistance = Math.min(
+          startEndpointDistance,
+          endEndpointDistance,
+        );
+        const finiteSegmentLength = Math.hypot(
+          end.x - start.x,
+          end.y - start.y,
+        );
+        const endpointAlongDistance =
+          Math.min(closestWorld.t, 1 - closestWorld.t) *
+          finiteSegmentLength *
+          this.scale;
+        const pastFiniteEnd =
+          (closestWorld.rawT < 0 || closestWorld.rawT > 1) &&
+          segmentDistanceWorld * this.scale > RELEASE_RADIUS;
+        const lockedKey = this.drag?.sideRailLocks?.[movingEdge];
+        const endpointLocked =
+          this.drag?.sideRailEndpointLocks?.[movingEdge] === group.key;
+        const endpointReleased =
+          lockedKey === group.key &&
+          endpointLocked &&
+          (pastFiniteEnd || endpointDistance > RELEASE_RADIUS);
+        const endpointSnapActive =
+          (source === "attached"
+            ? endpointAlongDistance <= RELEASE_RADIUS
+            : endpointDistance <= RELEASE_RADIUS) &&
+          (closestWorld.t <= 0.05 || closestWorld.t >= 0.95) &&
+          !endpointReleased;
         const attach = projectPointToSegment(baseCornerWorld, start, end);
         const finiteAttachDistance = Math.hypot(
           baseCornerWorld.x - attach.point.x,
@@ -1431,7 +1475,7 @@ export class Viewport {
             }
             attachmentKind = "source-chain";
           }
-          if (usableForwardLength <= 0.01) {
+          if (usableForwardLength <= 0.01 && !endpointReleased) {
             rejectedRailCandidates.push({
               movingEdge,
               targetBrushId: group.brush.id,
@@ -1464,6 +1508,8 @@ export class Viewport {
             });
             continue;
           }
+          group.endpointSnapActive = endpointSnapActive;
+          group.endpointSnapReleased = endpointReleased;
           distancePx = lineDistanceWorld;
         } else {
           if (Math.max(forwardStart, forwardEnd) <= 0.05)
@@ -1493,9 +1539,6 @@ export class Viewport {
             start,
             end,
           );
-          const pastFiniteEnd =
-            (closest.rawT < 0 || closest.rawT > 1) &&
-            segmentDistancePx > 18;
           const magneticUsableForwardLength = availableForwardSegmentLength(
             closestWorld.point,
             start,
@@ -1505,25 +1548,6 @@ export class Viewport {
           candidateAttachmentPoint = closestWorld.point;
           candidateRawSegmentT = closestWorld.rawT;
           candidateAvailableForwardLength = magneticUsableForwardLength;
-          const lockedKey = this.drag?.sideRailLocks?.[movingEdge];
-          const startEndpointDistance = Math.hypot(
-            freeCapScreen.x - group.startScreen.x,
-            freeCapScreen.y - group.startScreen.y,
-          );
-          const endEndpointDistance = Math.hypot(
-            freeCapScreen.x - group.endScreen.x,
-            freeCapScreen.y - group.endScreen.y,
-          );
-          const endpointDistance = Math.min(
-            startEndpointDistance,
-            endEndpointDistance,
-          );
-          const endpointLocked =
-            this.drag?.sideRailEndpointLocks?.[movingEdge] === group.key;
-          const endpointReleased =
-            lockedKey === group.key &&
-            endpointLocked &&
-            (pastFiniteEnd || endpointDistance > RELEASE_RADIUS);
           const retained =
             lockedKey === group.key && candidateDistance <= 18;
           if (
@@ -1560,9 +1584,7 @@ export class Viewport {
             continue;
           }
           distancePx = Math.min(capLineDistancePx, segmentDistancePx);
-          if (
-            endpointDistance <= RELEASE_RADIUS && !endpointReleased
-          ) {
+          if (endpointDistance <= RELEASE_RADIUS && !endpointReleased) {
             const endpoint =
               startEndpointDistance <= endEndpointDistance
                 ? group.start
@@ -1576,6 +1598,8 @@ export class Viewport {
             group.cornerSnap = closestWorld.point;
           }
           if (endpointReleased) group.cornerSnap = undefined;
+          group.endpointSnapActive =
+            endpointDistance <= RELEASE_RADIUS && !endpointReleased;
           group.endpointSnapReleased = endpointReleased;
         }
         candidates.push({
@@ -1599,6 +1623,7 @@ export class Viewport {
           availableForwardSegmentLength: candidateAvailableForwardLength,
           capProjectedT,
           cornerSnap: group.cornerSnap,
+          endpointSnapActive: Boolean(group.endpointSnapActive),
           endpointSnapReleased: Boolean(group.endpointSnapReleased),
           corridorSideScore: boundaryFace.corridorSide,
           signedForwardDirection: Math.max(forwardStart, forwardEnd),
@@ -1634,15 +1659,19 @@ export class Viewport {
         freeCapScreen,
         "magnetic",
       );
-    const findAttachedEdges = (movingEdge, baseCornerWorld, freeCapWorld2D) =>
-      resolveProjectedRailCandidates(
+    const findAttachedEdges = (movingEdge, baseCornerWorld, freeCapWorld2D) => {
+      const freeCapWorld = { x: 0, y: 0, z: 0 };
+      freeCapWorld[axisX] = freeCapWorld2D.x;
+      freeCapWorld[axisY] = freeCapWorld2D.y;
+      return resolveProjectedRailCandidates(
         movingEdge,
         baseCornerWorld,
         freeCapWorld2D,
         freeCapWorld2D,
-        null,
+        this.screen(freeCapWorld),
         "attached",
       );
+    };
 
     const railSnappingEnabled = (this.drag?.selection?.size || 1) === 1;
     const sideRailSnappingEnabled =
@@ -1753,6 +1782,7 @@ export class Viewport {
       availableForwardSegmentLength: snap.availableForwardSegmentLength,
       capProjectedT: snap.capProjectedT,
       cornerSnap: snap.endpointSnapReleased ? undefined : snap.cornerSnap,
+      endpointSnapActive: Boolean(snap.endpointSnapActive),
       endpointSnapReleased: Boolean(snap.endpointSnapReleased),
     });
     const solvedEdgesMatchTargets = (solved, constraints) =>
@@ -1787,7 +1817,11 @@ export class Viewport {
           SIDE_BASE_TOLERANCE + 0.01,
         ))
           return false;
-        if (constraint.source !== "attached") return true;
+        if (
+          constraint.source !== "attached" ||
+          constraint.endpointSnapReleased
+        )
+          return true;
         const capPoint =
           constraint.movingEdge === "sideA" ? edge[1] : edge[0];
         const capProjection = projectPointToSegment(
@@ -2255,8 +2289,9 @@ export class Viewport {
       for (const constraint of result.snapTarget.conforming) {
         if (constraint.movingEdge === "cap") continue;
         if (
-          constraint.source === "magnetic" &&
-          constraint.cornerSnap &&
+          (constraint.source === "magnetic" ||
+            constraint.source === "attached") &&
+          constraint.endpointSnapActive &&
           !constraint.endpointSnapReleased
         )
           endpointLocks[constraint.movingEdge] = constraint.canonicalKey;
