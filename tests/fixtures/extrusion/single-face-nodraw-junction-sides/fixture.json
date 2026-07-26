@@ -1,0 +1,300 @@
+{
+  "schemaVersion": 1,
+  "name": "single-face-nodraw-junction-sides",
+  "sourceVmf": "center_test_snap_fail.vmf",
+  "issue": "Hard attached rails on physical nodraw seam faces must guide generated cap and side extrusions, and a forward junction rail must outrank the backward rail.",
+  "editor": {
+    "brushes": [
+      {
+        "id": "imported-50004",
+        "material": "tools/toolsnodraw",
+        "faceMaterials": [
+          "tools/toolsnodraw",
+          "tools/toolsnodraw",
+          "tools/toolsnodraw",
+          "tools/toolsnodraw",
+          "tools/toolsnodraw",
+          "tools/toolsnodraw"
+        ],
+        "vertices": [
+          { "x": -110, "y": -36, "z": 0 },
+          { "x": -134, "y": -82, "z": 0 },
+          { "x": -134, "y": -82, "z": -64 },
+          { "x": -189.8000163929767, "y": -44.97883527773662, "z": 0 },
+          { "x": -171.73057319505014, "y": -10.345735815044094, "z": 0 },
+          { "x": -171.73057319505014, "y": -10.345735815044094, "z": -64 },
+          { "x": -189.8000163929767, "y": -44.97883527773662, "z": -64 },
+          { "x": -110, "y": -36, "z": -64 }
+        ],
+        "faces": [
+          [0, 1, 2, 7],
+          [3, 4, 5, 6],
+          [1, 0, 4, 3],
+          [1, 3, 6, 2],
+          [7, 2, 6, 5],
+          [4, 0, 7, 5]
+        ]
+      },
+      {
+        "id": "imported-50001",
+        "material": "TOOLS/TOOLSNODRAW",
+        "faceMaterials": [
+          "TOOLS/TOOLSNODRAW",
+          "dev/top",
+          "TOOLS/TOOLSNODRAW",
+          "TOOLS/TOOLSNODRAW",
+          "dev/outer",
+          "tools/toolsnodraw"
+        ],
+        "vertices": [
+          { "x": 74, "y": -220, "z": -64 },
+          { "x": 121, "y": -132, "z": -64 },
+          { "x": -110, "y": -36, "z": -64 },
+          { "x": 121, "y": -132, "z": 0 },
+          { "x": 74, "y": -220, "z": 0 },
+          { "x": -134, "y": -82, "z": 0 },
+          { "x": -110, "y": -36, "z": 0 },
+          { "x": -134, "y": -82, "z": -64 }
+        ],
+        "faces": [
+          [0, 1, 2, 7],
+          [3, 4, 5, 6],
+          [5, 4, 0, 7],
+          [3, 6, 2, 1],
+          [4, 3, 1, 0],
+          [6, 5, 7, 2]
+        ]
+      },
+      {
+        "id": "imported-50002",
+        "material": "TOOLS/TOOLSNODRAW",
+        "faceMaterials": [
+          "TOOLS/TOOLSNODRAW",
+          "dev/top",
+          "TOOLS/TOOLSNODRAW",
+          "TOOLS/TOOLSNODRAW",
+          "dev/outer",
+          "tools/toolsnodraw"
+        ],
+        "vertices": [
+          { "x": 121, "y": -132, "z": -64 },
+          { "x": 150, "y": -36, "z": -64 },
+          { "x": -95, "y": 13, "z": -64 },
+          { "x": 150, "y": -36, "z": 0 },
+          { "x": 121, "y": -132, "z": 0 },
+          { "x": -110, "y": -36, "z": 0 },
+          { "x": -95, "y": 13, "z": 0 },
+          { "x": -110, "y": -36, "z": -64 }
+        ],
+        "faces": [
+          [0, 1, 2, 7],
+          [3, 4, 5, 6],
+          [5, 4, 0, 7],
+          [3, 6, 2, 1],
+          [4, 3, 1, 0],
+          [6, 5, 7, 2]
+        ]
+      }
+    ],
+    "hiddenBrushes": [],
+    "view": "top",
+    "grid": 16,
+    "extrusionMode": "snap",
+    "faceRailMaxAngle": 15,
+    "faceSourceMaxAngle": 90
+  },
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "scale": 1,
+    "offset": { "x": 0, "y": 0 }
+  },
+  "scenarios": [
+    {
+      "name": "generated-cap",
+      "faceSelection": ["imported-50004:f:1"],
+      "pointerStart": { "x": 219.2347052059866, "y": 327.66228554639036 },
+      "pointerEnd": { "x": 205.0493476673393, "y": 320.26122943927004 },
+      "rawDistance": 16.000000000000007,
+      "expected": {
+        "movingEdge": "sideB",
+        "targetBrushId": "imported-50002",
+        "targetFaceIndex": 2,
+        "finalDistance": 16.000000000000007,
+        "candidatePools": {
+          "sideB": [
+            {
+              "targetBrushId": "imported-50002",
+              "targetFaceIndex": 2,
+              "source": "attached",
+              "attachmentKind": "source-chain",
+              "signedForwardDirection": -66.59618127857298
+            }
+          ]
+        },
+        "finalCorners": {
+          "baseA": { "x": -189.8000163929767, "y": -44.97883527773662 },
+          "baseB": { "x": -171.73057319505014, "y": -10.345735815044094 },
+          "capA": { "x": -204.63103451080661, "y": -38.815295280716384 },
+          "capB": { "x": -186.56159131288007, "y": -4.18219581802386 }
+        },
+        "solvedEdges": {
+          "base": [
+            { "x": -189.8000163929767, "y": -44.97883527773662 },
+            { "x": -171.73057319505014, "y": -10.345735815044094 }
+          ],
+          "sideA": [
+            { "x": -189.8000163929767, "y": -44.97883527773662 },
+            { "x": -204.63103451080661, "y": -38.815295280716384 }
+          ],
+          "cap": [
+            { "x": -204.63103451080661, "y": -38.815295280716384 },
+            { "x": -186.56159131288007, "y": -4.18219581802386 }
+          ],
+          "sideB": [
+            { "x": -186.56159131288007, "y": -4.18219581802386 },
+            { "x": -171.73057319505014, "y": -10.345735815044094 }
+          ]
+        },
+        "previewVertices": [
+          { "x": -189.8000163929767, "y": -44.97883527773662, "z": 0 },
+          { "x": -171.73057319505014, "y": -10.345735815044094, "z": 0 },
+          { "x": -171.73057319505014, "y": -10.345735815044094, "z": -64 },
+          { "x": -189.8000163929767, "y": -44.97883527773662, "z": -64 },
+          { "x": -204.63103451080661, "y": -38.815295280716384, "z": 0 },
+          { "x": -186.56159131288007, "y": -4.18219581802386, "z": 0 },
+          { "x": -186.56159131288007, "y": -4.18219581802386, "z": -64 },
+          { "x": -204.63103451080661, "y": -38.815295280716384, "z": -64 }
+        ],
+        "commitUsesPreviewResult": true
+      }
+    },
+    {
+      "name": "free-side",
+      "faceSelection": ["imported-50004:f:3"],
+      "pointerStart": { "x": 238.09999180351167, "y": 363.4894176388683 },
+      "pointerEnd": { "x": 229.25439451532733, "y": 376.8219121022186 },
+      "rawDistance": 16.00000000000001,
+      "expected": {
+        "movingEdge": "sideA",
+        "targetBrushId": "imported-50001",
+        "targetFaceIndex": 5,
+        "finalDistance": 16.00000000000001,
+        "candidatePools": {
+          "sideA": [
+            {
+              "targetBrushId": "imported-50001",
+              "targetFaceIndex": 5,
+              "source": "attached",
+              "attachmentKind": "direct",
+              "signedForwardDirection": 0
+            }
+          ]
+        },
+        "finalCorners": {
+          "baseA": { "x": -134, "y": -82 },
+          "baseB": { "x": -189.8000163929767, "y": -44.97883527773662 },
+          "capA": { "x": -141.44195889592478, "y": -96.26375455052252 },
+          "capB": { "x": -197.24197528890147, "y": -59.24258982825914 }
+        },
+        "solvedEdges": {
+          "base": [
+            { "x": -134, "y": -82 },
+            { "x": -189.8000163929767, "y": -44.97883527773662 }
+          ],
+          "sideA": [
+            { "x": -134, "y": -82 },
+            { "x": -141.44195889592478, "y": -96.26375455052252 }
+          ],
+          "cap": [
+            { "x": -141.44195889592478, "y": -96.26375455052252 },
+            { "x": -197.24197528890147, "y": -59.24258982825914 }
+          ],
+          "sideB": [
+            { "x": -197.24197528890147, "y": -59.24258982825914 },
+            { "x": -189.8000163929767, "y": -44.97883527773662 }
+          ]
+        },
+        "previewVertices": [
+          { "x": -134, "y": -82, "z": 0 },
+          { "x": -189.8000163929767, "y": -44.97883527773662, "z": 0 },
+          { "x": -189.8000163929767, "y": -44.97883527773662, "z": -64 },
+          { "x": -134, "y": -82, "z": -64 },
+          { "x": -141.44195889592478, "y": -96.26375455052252, "z": 0 },
+          { "x": -197.24197528890147, "y": -59.24258982825914, "z": 0 },
+          { "x": -197.24197528890147, "y": -59.24258982825914, "z": -64 },
+          { "x": -141.44195889592478, "y": -96.26375455052252, "z": -64 }
+        ],
+        "commitUsesPreviewResult": true
+      }
+    },
+    {
+      "name": "forward-junction-side",
+      "faceSelection": ["imported-50004:f:5"],
+      "pointerStart": { "x": 259.1347134024749, "y": 323.17286790752205 },
+      "pointerEnd": { "x": 265.27493219195495, "y": 308.3979664453357 },
+      "rawDistance": 16.000000000000007,
+      "expected": {
+        "movingEdge": "sideB",
+        "targetBrushId": "imported-50002",
+        "targetFaceIndex": 5,
+        "finalDistance": 16.000000000000007,
+        "rejectedBackwardTargetBrushId": "imported-50001",
+        "candidatePools": {
+          "sideB": [
+            {
+              "targetBrushId": "imported-50001",
+              "targetFaceIndex": 5,
+              "source": "attached",
+              "attachmentKind": "direct",
+              "signedForwardDirection": 0
+            },
+            {
+              "targetBrushId": "imported-50002",
+              "targetFaceIndex": 5,
+              "source": "attached",
+              "attachmentKind": "direct",
+              "signedForwardDirection": 51.00459084308323
+            }
+          ]
+        },
+        "finalCorners": {
+          "baseA": { "x": -171.73057319505014, "y": -10.345735815044094 },
+          "baseB": { "x": -110, "y": -36 },
+          "capA": { "x": -167.02511441118565, "y": 5.025429545579879 },
+          "capB": { "x": -105.29454121613551, "y": -20.62883463937603 }
+        },
+        "solvedEdges": {
+          "base": [
+            { "x": -171.73057319505014, "y": -10.345735815044094 },
+            { "x": -110, "y": -36 }
+          ],
+          "sideA": [
+            { "x": -171.73057319505014, "y": -10.345735815044094 },
+            { "x": -167.02511441118565, "y": 5.025429545579879 }
+          ],
+          "cap": [
+            { "x": -167.02511441118565, "y": 5.025429545579879 },
+            { "x": -105.29454121613551, "y": -20.62883463937603 }
+          ],
+          "sideB": [
+            { "x": -105.29454121613551, "y": -20.62883463937603 },
+            { "x": -110, "y": -36 }
+          ]
+        },
+        "previewVertices": [
+          { "x": -171.73057319505014, "y": -10.345735815044094, "z": 0 },
+          { "x": -110, "y": -36, "z": 0 },
+          { "x": -110, "y": -36, "z": -64 },
+          { "x": -171.73057319505014, "y": -10.345735815044094, "z": -64 },
+          { "x": -167.02511441118565, "y": 5.025429545579879, "z": 0 },
+          { "x": -105.29454121613551, "y": -20.62883463937603, "z": 0 },
+          { "x": -105.29454121613551, "y": -20.62883463937603, "z": -64 },
+          { "x": -167.02511441118565, "y": 5.025429545579879, "z": -64 }
+        ],
+        "commitUsesPreviewResult": true
+      }
+    }
+  ],
+  "screenshot": "regression.png"
+}

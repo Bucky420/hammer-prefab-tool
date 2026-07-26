@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Nodraw junction side fixture</title>
+    <style>
+      body {
+        margin: 0;
+        background: #101419;
+        color: #edf3f8;
+        font:
+          15px Consolas,
+          monospace;
+      }
+      main {
+        width: 1200px;
+        height: 720px;
+        padding: 28px 32px;
+      }
+      h1 {
+        font: 700 25px Arial;
+        margin: 0 0 6px;
+      }
+      .sub {
+        color: #aebdca;
+        margin-bottom: 18px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+      }
+      section {
+        border: 1px solid #3b4650;
+        background: #171d23;
+        padding: 14px;
+      }
+      h2 {
+        font: 700 16px Arial;
+        color: #56e69d;
+      }
+      canvas {
+        background: #0c1014;
+        border: 1px solid #2c3740;
+        width: 100%;
+        height: 360px;
+      }
+      pre {
+        white-space: pre-wrap;
+        color: #c9d4dc;
+        font-size: 13px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Single-Face Snap: Nodraw Junction Sides</h1>
+      <div class="sub">
+        center_test_snap_fail.vmf · Top · Grid 16 · Snap 15°/90° · exact
+        exported state
+      </div>
+      <div class="grid">
+        <section>
+          <h2>Generated Cap</h2>
+          <canvas id="a" width="350" height="360"></canvas>
+          <pre>
+Expected sideB rail:
+imported-50002:f:5
+Full distance 16</pre>
+        </section>
+        <section>
+          <h2>Free Side</h2>
+          <canvas id="b" width="350" height="360"></canvas>
+          <pre>
+Expected sideA rail:
+imported-50001:f:5
+Full distance 16</pre>
+        </section>
+        <section>
+          <h2>Forward Junction</h2>
+          <canvas id="c" width="350" height="360"></canvas>
+          <pre>
+Reject backward rail 50001
+Select forward rail 50002
+No 0.05-unit collision stall</pre>
+        </section>
+      </div>
+      <script>
+        const base = [
+            [-110, -36],
+            [-134, -82],
+            [-189.8, -44.98],
+            [-171.73, -10.35],
+          ],
+          faces = [1, 3, 5];
+        function draw(id, n) {
+          const c = document.getElementById(id).getContext("2d"),
+            p = (q) => ({ x: 210 + q[0] * 1.35, y: 210 - q[1] * 1.35 });
+          c.strokeStyle = "#26323b";
+          for (let i = 0; i < 350; i += 32) {
+            c.beginPath();
+            c.moveTo(i, 0);
+            c.lineTo(i, 360);
+            c.stroke();
+            c.beginPath();
+            c.moveTo(0, i);
+            c.lineTo(350, i);
+            c.stroke();
+          }
+          const poly = [base[0], base[1], base[2], base[3]];
+          c.beginPath();
+          let q = p(poly[0]);
+          c.moveTo(q.x, q.y);
+          for (const v of poly.slice(1)) {
+            q = p(v);
+            c.lineTo(q.x, q.y);
+          }
+          c.closePath();
+          c.fillStyle = "rgba(243,206,70,.25)";
+          c.fill();
+          c.strokeStyle = "#f3ce46";
+          c.lineWidth = 3;
+          c.stroke();
+          const edges = [
+              [
+                [-189.8, -44.98],
+                [-171.73, -10.35],
+              ],
+              [
+                [-134, -82],
+                [-189.8, -44.98],
+              ],
+              [
+                [-171.73, -10.35],
+                [-110, -36],
+              ],
+            ],
+            e = edges[n];
+          q = p(e[0]);
+          let r = p(e[1]);
+          c.strokeStyle = "#ff5267";
+          c.lineWidth = 6;
+          c.beginPath();
+          c.moveTo(q.x, q.y);
+          c.lineTo(r.x, r.y);
+          c.stroke();
+          if (n === 2) {
+            q = p([-110, -36]);
+            r = p([-95, 13]);
+            c.strokeStyle = "#47e191";
+            c.beginPath();
+            c.moveTo(q.x, q.y);
+            c.lineTo(r.x, r.y);
+            c.stroke();
+          }
+        }
+        draw("a", 0);
+        draw("b", 1);
+        draw("c", 2);
+      </script>
+    </main>
+  </body>
+</html>

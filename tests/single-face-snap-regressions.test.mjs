@@ -147,6 +147,71 @@ const assertConvexPair = (result, label) => {
 }
 
 {
+  const { data: fixture, url } = loadFixture("single-face-nodraw-junction-sides");
+  for (const scenario of fixture.scenarios) {
+    const replayFixture = structuredClone(fixture);
+    replayFixture.editor.faceSelection = scenario.faceSelection;
+    replayFixture.gesture = {
+      pointerStart: scenario.pointerStart,
+      pointerEnd: scenario.pointerEnd,
+    };
+    const { rawDistance, resolved, viewport } = replay(replayFixture);
+    assert.ok(
+      Math.abs(rawDistance - scenario.rawDistance) < 0.000001,
+      `${scenario.name}: raw distance`,
+    );
+    assert.ok(resolved, `${scenario.name}: resolved extrusion`);
+    const side = resolved.constraints.find(
+      (constraint) => constraint.movingEdge === scenario.expected.movingEdge,
+    );
+    assert.ok(side, `${scenario.name}: expected attached side rail`);
+    assert.equal(side.targetBrushId, scenario.expected.targetBrushId);
+    assert.equal(side.targetFaceIndex, scenario.expected.targetFaceIndex);
+    assertClose(
+      viewport.extrusionAcquisitionDebug,
+      scenario.expected.candidatePools,
+      `${scenario.name}: recorded candidate pools`,
+    );
+    assert.ok(
+      Math.abs(resolved.finalDistance - scenario.expected.finalDistance) < 0.000001,
+      `${scenario.name}: full requested distance`,
+    );
+    assert.equal(resolved.blocked, false);
+    assertClose(
+      resolved.finalCorners,
+      scenario.expected.finalCorners,
+      `${scenario.name}: final corners`,
+    );
+    assertClose(
+      resolved.solvedEdges,
+      scenario.expected.solvedEdges,
+      `${scenario.name}: solved edges`,
+    );
+    assertClose(
+      resolved.previewBrushes[0].vertices,
+      scenario.expected.previewVertices,
+      `${scenario.name}: preview geometry`,
+    );
+    if (scenario.expected.commitUsesPreviewResult)
+      assert.equal(resolved.previewBrushes[0], resolved.brushes[0]);
+    if (scenario.expected.rejectedBackwardTargetBrushId) {
+      const selectedCandidate = viewport.extrusionAcquisitionDebug[
+        scenario.expected.movingEdge
+      ].find((candidate) => candidate.targetBrushId === scenario.expected.targetBrushId);
+      const backwardCandidate = viewport.extrusionAcquisitionDebug[
+        scenario.expected.movingEdge
+      ].find(
+        (candidate) =>
+          candidate.targetBrushId === scenario.expected.rejectedBackwardTargetBrushId,
+      );
+      assert.ok(selectedCandidate.signedForwardDirection > 0);
+      assert.ok(backwardCandidate.signedForwardDirection <= 0);
+    }
+  }
+  assert.ok(existsSync(new URL(fixture.screenshot, url)));
+}
+
+{
   const { data: fixture, url } = loadFixture("single-face-inward-angled-squeeze");
   const { viewport, rawDistance, resolved } = replay(fixture);
   assert.ok(Math.abs(rawDistance - fixture.expected.rawDistance) < 0.000001);

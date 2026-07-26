@@ -1319,6 +1319,7 @@ export class Viewport {
           axisY,
           isNoDrawMaterial,
           faceDirection,
+          source === "attached",
         );
         if (!boundaryFace) continue;
         if (
@@ -1676,6 +1677,12 @@ export class Viewport {
           // Evaluate cross-product first, then fall back to a single hard rail.
           let bestPair = null;
           let bestScore = Infinity;
+          const hasForwardA = hardAPool.some(
+            (candidate) => candidate.signedForwardDirection > 0.05,
+          );
+          const hasForwardB = hardBPool.some(
+            (candidate) => candidate.signedForwardDirection > 0.05,
+          );
           const evalSet = hardAPool.length && hardBPool.length
             ? hardAPool.flatMap((sA) =>
                 hardBPool.map((sB) => ({ sideA: sA, sideB: sB })),
@@ -1735,6 +1742,8 @@ export class Viewport {
               };
               const d = distancePointToLine(freeCapA2D, origin, end);
               score += d;
+              if (hasForwardA && pair.sideA.signedForwardDirection <= 0.05)
+                score += 1000;
             }
             if (pair.sideB) {
               const origin = pair.sideB.lineOrigin || baseB;
@@ -1744,6 +1753,8 @@ export class Viewport {
               };
               const d = distancePointToLine(freeCapB2D, origin, end);
               score += d;
+              if (hasForwardB && pair.sideB.signedForwardDirection <= 0.05)
+                score += 1000;
             }
             if (score < bestScore) {
               bestScore = score;

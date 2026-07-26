@@ -85,6 +85,7 @@ export function projectedRailKey(start, end, axisX, axisY) {
  * @param {Axis} axisY
  * @param {(material: unknown) => boolean} isNoDraw
  * @param {(brush: Brush, face: Face) => Vector3 | null} faceDirection
+ * @param {boolean} [allowNoDraw]
  * @returns {ProjectedBoundaryFace | null}
  */
 export function chooseProjectedBoundaryFace(
@@ -95,9 +96,10 @@ export function chooseProjectedBoundaryFace(
   axisY,
   isNoDraw,
   faceDirection,
+  allowNoDraw = false,
 ) {
   return records
-    .filter((record) => !isNoDraw(record.brush.faceMaterials?.[record.faceIndex] || record.brush.material))
+    .filter((record) => allowNoDraw || !isNoDraw(record.brush.faceMaterials?.[record.faceIndex] || record.brush.material))
     .map((record) => {
       const normal = faceDirection(record.brush, record.face);
       const projected = { x: normal?.[axisX] || 0, y: normal?.[axisY] || 0 };
