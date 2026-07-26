@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Inner-corner V rejection fixture</title><style>
+body{margin:0;background:#101419;color:#edf3f8;font:15px Consolas,monospace}main{width:1200px;height:720px;padding:28px 32px}h1{font:700 25px Arial;margin:0 0 6px}.sub{color:#aebdca;margin-bottom:20px}.panels{display:grid;grid-template-columns:1fr 1fr;gap:20px}section{border:1px solid #3b4650;background:#171d23;padding:16px}h2{font:700 17px Arial}.bad{color:#ff6677}.good{color:#56e69d}canvas{background:#0c1014;border:1px solid #2c3740;width:100%;height:360px}pre{white-space:pre-wrap;color:#c9d4dc}</style></head><body><main>
+<h1>Single-Face Snap: Inner-Corner V Rejection</h1><div class="sub">center_test.vmf · Top · Grid 16 · Snap · rail 15° · source 90° · imported-50000:f:2</div>
+<div class="panels"><section><h2 class="bad">Observed Raw V</h2><canvas id="before" width="540" height="360"></canvas><pre>cap match → imported-50030:f:3
+raw cap spans a distant radial boundary
+collision result collapses sides to 0.005–0.0102
+ResolvedExtrusion.blocked: false</pre></section><section><h2 class="good">Expected Blocked Preview</h2><canvas id="after" width="540" height="360"></canvas><pre>Candidate diagnostics retained
+collapsed cross-section rejected
+red preview allowed
+committed brushes: 0</pre></section></div>
+<script>function draw(id,blocked){const c=document.getElementById(id).getContext('2d'),s=1.6,o={x:-300,y:105};const p=q=>({x:o.x+q.x*s,y:o.y-q.y*s});c.strokeStyle='#26323b';for(let x=200;x<540;x+=16){c.beginPath();c.moveTo(p({x,y:-220}).x,20);c.lineTo(p({x,y:80}).x,340);c.stroke()}for(let y=-208;y<64;y+=16){c.beginPath();c.moveTo(20,p({x:0,y}).y);c.lineTo(520,p({x:0,y}).y);c.stroke()}const poly=[{x:262,y:0},{x:512,y:0},{x:492.385,y:-98.077},{x:257,y:-51}];c.beginPath();let a=p(poly[0]);c.moveTo(a.x,a.y);for(const q of poly.slice(1)){a=p(q);c.lineTo(a.x,a.y)}c.closePath();c.fillStyle='rgba(255,82,103,.32)';c.fill();c.strokeStyle='#ff5267';c.lineWidth=3;c.stroke();a=p({x:502,y:-100});let b=p({x:257,y:-51});c.strokeStyle='#cb7cff';c.lineWidth=6;c.beginPath();c.moveTo(a.x,a.y);c.lineTo(b.x,b.y);c.stroke();if(blocked){c.fillStyle='#ff5267';c.font='bold 22px Arial';c.fillText('BLOCKED',300,315)}}draw('before',false);draw('after',true)</script></main></body></html>

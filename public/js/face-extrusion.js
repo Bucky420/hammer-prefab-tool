@@ -2335,8 +2335,38 @@ export function resolveExtrusion(options) {
         )
       : { brushes: [], previewBrushes: [], errors: [] };
   const errors = result.errors || [];
+  const crossSectionError = (() => {
+    if (!finalCorners) return null;
+    const sideA = Math.hypot(
+      finalCorners.capA.x - finalCorners.baseA.x,
+      finalCorners.capA.y - finalCorners.baseA.y,
+    );
+    const sideB = Math.hypot(
+      finalCorners.capB.x - finalCorners.baseB.x,
+      finalCorners.capB.y - finalCorners.baseB.y,
+    );
+    const cap = Math.hypot(
+      finalCorners.capB.x - finalCorners.capA.x,
+      finalCorners.capB.y - finalCorners.capA.y,
+    );
+    if (sideA <= 0.01 || sideB <= 0.01 || cap <= 0.01)
+      return "collapsed single-face cross-section after collision limiting";
+    if (
+      !isStrictlyConvex([
+        finalCorners.baseA,
+        finalCorners.baseB,
+        finalCorners.capB,
+        finalCorners.capA,
+      ])
+    )
+      return "invalid single-face cross-section after collision limiting";
+    return null;
+  })();
   const blocked =
-    finalDistance <= 0.0001 || !result.brushes.length || errors.length > 0;
+    finalDistance <= 0.0001 ||
+    !result.brushes.length ||
+    errors.length > 0 ||
+    Boolean(crossSectionError);
   const constraints = snapTarget?.conforming || [];
   const targetBrushIds = [
     ...new Set(
@@ -2362,12 +2392,13 @@ export function resolveExtrusion(options) {
     finalCorners,
     targetBrushIds,
     previewBrushes: result.previewBrushes || result.brushes,
-    brushes: result.brushes,
+    brushes: blocked ? [] : result.brushes,
     solvedEdges,
     snapTarget: finalTarget,
     blocked,
     blockedReason:
       errors[0] ||
+      crossSectionError ||
       (finalDistance <= 0.0001 ? "blocked by an adjacent brush" : null),
     errors,
   };

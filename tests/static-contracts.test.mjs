@@ -127,6 +127,7 @@ for (const transientName of [
   "previewBrushes",
   "resolvedExtrusion",
   "extrusionCandidate",
+  "extrusionAcquisitionDebug",
   "extrusionMatchDebug",
   "extrusionSolvedDebug",
 ])
@@ -206,6 +207,7 @@ for (const cleanup of [
   "this.previewBrushes = []",
   "this.drag = null",
   "this.extrusionCandidate = null",
+  "this.extrusionAcquisitionDebug = null",
   "this.extrusionMatchDebug = []",
   "this.extrusionSolvedDebug = null",
 ])

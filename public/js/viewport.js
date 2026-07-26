@@ -106,6 +106,7 @@ export class Viewport {
     this.extrusionCandidate = null;
     this.extrusionMatchDebug = [];
     this.extrusionSolvedDebug = null;
+    this.extrusionAcquisitionDebug = null;
     this.hoverFaceIds = new Set();
     this.hoverFillPolygon = null;
     this.drawFrame = 0;
@@ -162,6 +163,7 @@ export class Viewport {
     this.extrusionCandidate = null;
     this.extrusionMatchDebug = [];
     this.extrusionSolvedDebug = null;
+    this.extrusionAcquisitionDebug = null;
     if (this.drag) {
       this.drag.geometryBlocked = false;
       this.drag.geometryBlockedReason = null;
@@ -913,6 +915,7 @@ export class Viewport {
     if (!extrusionPolicy.externalSnap) {
       this.extrusionMatchDebug = [];
       this.extrusionSolvedDebug = null;
+      this.extrusionAcquisitionDebug = null;
       this.extrusionCandidate = null;
       if (this.drag) this.drag.extrusionCandidate = null;
       return rawDistance;
@@ -958,6 +961,46 @@ export class Viewport {
       sourceNormalDir.x *= -1;
       sourceNormalDir.y *= -1;
     }
+    const angleDifferenceDegrees = (first, second) => {
+      const firstLength = Math.hypot(first.x, first.y);
+      const secondLength = Math.hypot(second.x, second.y);
+      if (firstLength < 0.000001 || secondLength < 0.000001) return null;
+      const alignment = Math.max(
+        -1,
+        Math.min(
+          1,
+          Math.abs(
+            (first.x * second.x + first.y * second.y) /
+              (firstLength * secondLength),
+          ),
+        ),
+      );
+      return (Math.acos(alignment) * 180) / Math.PI;
+    };
+    const adjacentSourceDirection = (group) => {
+      const adjacent = brush.faces.find(
+        (candidate, index) =>
+          index !== faceIndex &&
+          group.filter((vertexIndex) => candidate.includes(vertexIndex)).length >= 2,
+      );
+      const adjacentNormal = adjacent && faceDirection(brush, adjacent);
+      if (!adjacentNormal) return sourceNormalDir;
+      const direction = {
+        x: -(adjacentNormal[axisY] || 0),
+        y: adjacentNormal[axisX] || 0,
+      };
+      const directionLength = Math.hypot(direction.x, direction.y);
+      return directionLength < 0.0001
+        ? sourceNormalDir
+        : {
+            x: direction.x / directionLength,
+            y: direction.y / directionLength,
+          };
+    };
+    const sourceSideDirections = {
+      sideA: adjacentSourceDirection(groupA),
+      sideB: adjacentSourceDirection(groupB),
+    };
 
     // Find the best target edge for the cap to lie on. The cap
     // is always parallel to the base, at some perpendicular offset.
@@ -1083,12 +1126,34 @@ export class Viewport {
             );
             if (dist > cornerRadius * 3) continue;
             results.push({
+              movingEdge: "cap",
               targetBrushId: targetBrush.id,
               targetFaceIndex: fi,
               targetStartWorld: { ...sW },
               targetEndWorld: { ...eW },
               direction: tDir,
+              canonicalKey: `${targetBrush.id}:${projectedRailKey(sW, eW, axisX, axisY)}`,
+              source: "magnetic",
               cornerSnap: { x: snapX, y: snapY },
+              corridorSideScore: null,
+              signedForwardDirection:
+                (snapX - baseCorner.x) * sourceNormalDir.x +
+                (snapY - baseCorner.y) * sourceNormalDir.y,
+              sourceAngleDifferenceDegrees: angleDifferenceDegrees(
+                tDir,
+                sourceBaseDir,
+              ),
+              railAngleDifferenceDegrees: angleDifferenceDegrees(
+                tDir,
+                sourceBaseDir,
+              ),
+              finiteSegmentDistancePx: Math.hypot(
+                cornerScr.x -
+                  closestPointOnSegment(cornerScr, sScr, eScr).point.x,
+                cornerScr.y -
+                  closestPointOnSegment(cornerScr, sScr, eScr).point.y,
+              ),
+              infiniteLineDistancePx: dist,
               distance: dist,
             });
           }
@@ -1138,34 +1203,82 @@ export class Viewport {
       source,
     ) => {
       const groups = new Map();
-      for (const edge of this.exposedEdges()) {
-        const records = [...edge.faceIds]
-          .map((id) => {
-            const match = id.match(/^(.*):f:(\d+)$/);
-            const brush = match && this.state.brushes.find((item) => item.id === match[1]);
-            const faceIndex = Number(match?.[2]);
-            return brush?.faces[faceIndex]
-              ? { brush, faceIndex, face: brush.faces[faceIndex] }
-              : null;
-          })
-          .filter(Boolean);
-        if (records.length !== 2) continue;
-        if (sourceBrushIds.has(records[0].brush.id)) continue;
-        if (records.every((record) => isNoDrawMaterial(record.brush.faceMaterials?.[record.faceIndex] || record.brush.material)))
-          continue;
-        const key = `${records[0].brush.id}:${projectedRailKey(edge.start, edge.end, axisX, axisY)}`;
+      const addProjectedEdge = (brush, faceIndex, face, edgeStart, edgeEnd) => {
+        if (sourceBrushIds.has(brush.id)) return;
+        const projectedKey = projectedRailKey(
+          edgeStart,
+          edgeEnd,
+          axisX,
+          axisY,
+        );
+        const startKey = `${edgeStart[axisX].toFixed(5)},${edgeStart[axisY].toFixed(5)}`;
+        const endKey = `${edgeEnd[axisX].toFixed(5)},${edgeEnd[axisY].toFixed(5)}`;
+        const start = startKey <= endKey ? edgeStart : edgeEnd;
+        const end = startKey <= endKey ? edgeEnd : edgeStart;
+        if (
+          Math.hypot(
+            end[axisX] - start[axisX],
+            end[axisY] - start[axisY],
+          ) < 0.0001
+        )
+          return;
+        const key = `${brush.id}:${projectedKey}`;
         const group = groups.get(key) || {
           key,
-          brush: records[0].brush,
-          start: edge.start,
-          end: edge.end,
-          startScreen: edge.startScreen,
-          endScreen: edge.endScreen,
+          brush,
+          start,
+          end,
+          startScreen: this.screen(start),
+          endScreen: this.screen(end),
           records: new Map(),
         };
-        for (const record of records)
-          group.records.set(`${record.brush.id}:f:${record.faceIndex}`, record);
+        group.records.set(`${brush.id}:f:${faceIndex}`, {
+          brush,
+          faceIndex,
+          face,
+        });
         groups.set(key, group);
+      };
+      if (source === "attached") {
+        for (const targetBrush of this.visibleBrushes()) {
+          if (sourceBrushIds.has(targetBrush.id)) continue;
+          for (let faceIndex = 0; faceIndex < targetBrush.faces.length; faceIndex++) {
+            const face = targetBrush.faces[faceIndex];
+            for (let edgeIndex = 0; edgeIndex < face.length; edgeIndex++)
+              addProjectedEdge(
+                targetBrush,
+                faceIndex,
+                face,
+                targetBrush.vertices[face[edgeIndex]],
+                targetBrush.vertices[face[(edgeIndex + 1) % face.length]],
+              );
+          }
+        }
+      } else {
+        for (const edge of this.exposedEdges()) {
+          const records = [...edge.faceIds]
+            .map((id) => {
+              const match = id.match(/^(.*):f:(\d+)$/);
+              const brush = match && this.state.brushes.find((item) => item.id === match[1]);
+              const faceIndex = Number(match?.[2]);
+              return brush?.faces[faceIndex]
+                ? { brush, faceIndex, face: brush.faces[faceIndex] }
+                : null;
+            })
+            .filter(Boolean);
+          if (records.length !== 2) continue;
+          if (sourceBrushIds.has(records[0].brush.id)) continue;
+          if (records.every((record) => isNoDrawMaterial(record.brush.faceMaterials?.[record.faceIndex] || record.brush.material)))
+            continue;
+          for (const record of records)
+            addProjectedEdge(
+              record.brush,
+              record.faceIndex,
+              record.face,
+              edge.start,
+              edge.end,
+            );
+        }
       }
       const candidates = [];
       for (const group of groups.values()) {
@@ -1194,15 +1307,33 @@ export class Viewport {
           )
         )
           continue;
+        const forwardStart =
+          (start.x - baseCornerWorld.x) * sourceNormalDir.x +
+          (start.y - baseCornerWorld.y) * sourceNormalDir.y;
+        const forwardEnd =
+          (end.x - baseCornerWorld.x) * sourceNormalDir.x +
+          (end.y - baseCornerWorld.y) * sourceNormalDir.y;
+        const lineDistanceWorld = distancePointToLine(
+          freeCapWorld2D,
+          start,
+          end,
+        );
+        const closestWorld = closestPointOnSegment(
+          freeCapWorld2D,
+          start,
+          end,
+        );
+        const segmentDistanceWorld = Math.hypot(
+          freeCapWorld2D.x - closestWorld.point.x,
+          freeCapWorld2D.y - closestWorld.point.y,
+        );
         let distancePx;
         if (source === "attached") {
           const attach = closestPointOnSegment(baseCornerWorld, start, end);
           if (Math.hypot(baseCornerWorld.x - attach.point.x, baseCornerWorld.y - attach.point.y) > EPSILON_ATTACH)
             continue;
-          distancePx = distancePointToLine(freeCapWorld2D, start, end);
+          distancePx = lineDistanceWorld;
         } else {
-          const forwardStart = (start.x - baseCornerWorld.x) * sourceNormalDir.x + (start.y - baseCornerWorld.y) * sourceNormalDir.y;
-          const forwardEnd = (end.x - baseCornerWorld.x) * sourceNormalDir.x + (end.y - baseCornerWorld.y) * sourceNormalDir.y;
           if (Math.max(forwardStart, forwardEnd) <= 0.05)
             continue;
           const capLineDistancePx = distancePointToLine(freeCapScreen, group.startScreen, group.endScreen);
@@ -1258,6 +1389,18 @@ export class Viewport {
           canonicalKey: group.key,
           source,
           cornerSnap: group.cornerSnap,
+          corridorSideScore: boundaryFace.corridorSide,
+          signedForwardDirection: Math.max(forwardStart, forwardEnd),
+          sourceAngleDifferenceDegrees: angleDifferenceDegrees(
+            railDirection,
+            sourceSideDirections[movingEdge],
+          ),
+          railAngleDifferenceDegrees: angleDifferenceDegrees(
+            railDirection,
+            sourceNormalDir,
+          ),
+          finiteSegmentDistancePx: segmentDistanceWorld * this.scale,
+          infiniteLineDistancePx: lineDistanceWorld * this.scale,
           distancePx,
           lineDistancePx: distancePx,
         });
@@ -1350,6 +1493,11 @@ export class Viewport {
       ...attachedBCandidates,
       ...sideBSnaps,
     ]).slice(0, 6);
+    this.extrusionAcquisitionDebug = {
+      cap: capSnaps,
+      sideA: sideAPool,
+      sideB: sideBPool,
+    };
     this.extrusionMatchDebug = [...sideAPool, ...sideBPool];
     const bestCap = capSnaps[0] || null;
     const allActiveAxes = this.axes();
@@ -1531,6 +1679,14 @@ export class Viewport {
 
     // Try constraint combinations in priority order (most→least constrained).
     const tryConstraints = (candidates) => {
+      const sideConstraints = candidates.filter(
+        (candidate) => candidate.movingEdge !== "cap",
+      );
+      if (
+        sideConstraints.length === 2 &&
+        sideConstraints[0].canonicalKey === sideConstraints[1].canonicalKey
+      )
+        return null;
       const sol = solveSingleFaceExtrusion({
         brush, faceIndex, distance: rawDistance,
         activeAxes: allActiveAxes,
@@ -1564,7 +1720,7 @@ export class Viewport {
         snapTarget,
         maxSourceAngleDegrees: this.state.faceSourceMaxAngle,
       });
-      if (resolved.blocked) return null;
+      if (resolved.blocked && !resolved.previewBrushes.length) return null;
       let attractionScore = 0;
       for (const candidate of candidates) {
         if (candidate.movingEdge === "sideA") {
@@ -1593,6 +1749,7 @@ export class Viewport {
           .join("|") || "",
         snapTarget,
         resolved,
+        blocked: resolved.blocked,
       };
     };
 
@@ -1604,6 +1761,10 @@ export class Viewport {
       if (!candidate) return;
       if (!result) {
         result = candidate;
+        return;
+      }
+      if (candidate.blocked !== result.blocked) {
+        if (!candidate.blocked) result = candidate;
         return;
       }
       const safeA = candidate.safeDistance ?? 0;
@@ -1687,9 +1848,12 @@ export class Viewport {
     // Keep the rail lock through a temporary invalid distance. Only this
     // pointer frame is blocked, so moving back to valid geometry recovers.
     if (this.drag) {
-      this.drag.geometryBlocked = !result && Boolean(hardSideA || hardSideB);
+      this.drag.geometryBlocked =
+        Boolean(result?.resolved.blocked) ||
+        (!result && Boolean(hardSideA || hardSideB));
       this.drag.geometryBlockedReason = this.drag.geometryBlocked
-        ? "locked support rails have no valid solution at this distance"
+        ? result?.resolved.blockedReason ||
+          "locked support rails have no valid solution at this distance"
         : null;
       if (result && this.drag.startRailPair)
         this.drag.startRailState = "locked";
@@ -2075,9 +2239,11 @@ export class Viewport {
           this.drag.start,
           this.drag.current,
         );
-        const resolved = this.drag.geometryBlocked
-          ? null
-          : this.drag.extrusionCandidate?.resolved ||
+        const resolved =
+          this.drag.extrusionCandidate?.resolved ||
+          (this.drag.geometryBlocked
+            ? null
+            :
             resolveExtrusion({
               sourceBrushes: this.state.brushes,
               selection: this.drag.selection,
@@ -2087,11 +2253,15 @@ export class Viewport {
               mode: this.state.faceExtrusionMode,
               snapTarget: null,
               maxSourceAngleDegrees: this.state.faceSourceMaxAngle,
-            });
+            }));
         this.drag.resolvedExtrusion = resolved;
         this.drag.distance = resolved?.finalDistance || 0;
         this.previewBrushes = resolved?.previewBrushes || [];
-        this.previewErrors = resolved?.errors || [];
+        this.previewErrors = resolved?.errors?.length
+          ? resolved.errors
+          : resolved?.blockedReason
+            ? [resolved.blockedReason]
+            : [];
         this.extrusionSolvedDebug = resolved?.solvedEdges
           ? this.toScreenEdges(resolved.solvedEdges)
           : null;
@@ -2291,6 +2461,7 @@ export class Viewport {
         this.extrusionCandidate = null;
         this.extrusionMatchDebug = [];
         this.extrusionSolvedDebug = null;
+        this.extrusionAcquisitionDebug = null;
         this.requestDraw();
         return;
       }

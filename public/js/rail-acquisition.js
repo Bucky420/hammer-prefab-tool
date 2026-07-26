@@ -36,6 +36,12 @@
  * @property {Vector3} targetEndWorld
  * @property {number} distancePx
  * @property {number} lineDistancePx
+ * @property {number} finiteSegmentDistancePx
+ * @property {number} infiniteLineDistancePx
+ * @property {number} corridorSideScore
+ * @property {number} signedForwardDirection
+ * @property {number | null} sourceAngleDifferenceDegrees
+ * @property {number | null} railAngleDifferenceDegrees
  * @property {string} canonicalKey
  * @property {"attached" | "magnetic"} source
  * @property {number} [targetEdgeIndex]

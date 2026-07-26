@@ -1,0 +1,270 @@
+{
+  "schemaVersion": 1,
+  "name": "single-face-dual-brush-squeeze",
+  "sourceVmf": "center_test.vmf",
+  "issue": "Snap must acquire the two physical neighboring brush boundaries instead of silently relying on source-side continuation.",
+  "setupNote": "Geometry is the center_test radial triplet. Only the two intended target seam faces are marked usable so candidate provenance is unambiguous.",
+  "editor": {
+    "brushes": [
+      {
+        "id": "imported-50000",
+        "material": "TOOLS/TOOLSNODRAW",
+        "faceMaterials": [
+          "TOOLS/TOOLSNODRAW",
+          "dev/source",
+          "TOOLS/TOOLSNODRAW",
+          "TOOLS/TOOLSNODRAW",
+          "dev/outer",
+          "dev/inner"
+        ],
+        "vertices": [
+          { "x": 512, "y": 0, "z": -64 },
+          { "x": 502, "y": 100, "z": -64 },
+          { "x": 257, "y": 51, "z": -64 },
+          { "x": 262, "y": 0, "z": 0 },
+          { "x": 257, "y": 51, "z": 0 },
+          { "x": 502, "y": 100, "z": 0 },
+          { "x": 512, "y": 0, "z": 0 },
+          { "x": 262, "y": 0, "z": -64 }
+        ],
+        "faces": [
+          [0, 1, 2, 7],
+          [5, 6, 3, 4],
+          [3, 6, 0, 7],
+          [5, 4, 2, 1],
+          [6, 5, 1, 0],
+          [4, 3, 7, 2]
+        ]
+      },
+      {
+        "id": "imported-50001",
+        "material": "TOOLS/TOOLSNODRAW",
+        "faceMaterials": [
+          "TOOLS/TOOLSNODRAW",
+          "dev/top",
+          "dev/rail",
+          "dev/side",
+          "dev/outer",
+          "dev/inner"
+        ],
+        "vertices": [
+          { "x": 502, "y": 100, "z": -64 },
+          { "x": 473, "y": 196, "z": -64 },
+          { "x": 242, "y": 100, "z": -64 },
+          { "x": 257, "y": 51, "z": 0 },
+          { "x": 242, "y": 100, "z": 0 },
+          { "x": 473, "y": 196, "z": 0 },
+          { "x": 502, "y": 100, "z": 0 },
+          { "x": 257, "y": 51, "z": -64 }
+        ],
+        "faces": [
+          [0, 1, 2, 7],
+          [5, 6, 3, 4],
+          [3, 6, 0, 7],
+          [5, 4, 2, 1],
+          [6, 5, 1, 0],
+          [4, 3, 7, 2]
+        ]
+      },
+      {
+        "id": "imported-50031",
+        "material": "TOOLS/TOOLSNODRAW",
+        "faceMaterials": [
+          "TOOLS/TOOLSNODRAW",
+          "dev/top",
+          "TOOLS/TOOLSNODRAW",
+          "dev/rail",
+          "dev/outer",
+          "dev/inner"
+        ],
+        "vertices": [
+          { "x": 502, "y": -100, "z": -64 },
+          { "x": 512, "y": 0, "z": -64 },
+          { "x": 262, "y": 0, "z": -64 },
+          { "x": 257, "y": -51, "z": 0 },
+          { "x": 262, "y": 0, "z": 0 },
+          { "x": 512, "y": 0, "z": 0 },
+          { "x": 502, "y": -100, "z": 0 },
+          { "x": 257, "y": -51, "z": -64 }
+        ],
+        "faces": [
+          [0, 1, 2, 7],
+          [5, 6, 3, 4],
+          [3, 6, 0, 7],
+          [5, 4, 2, 1],
+          [6, 5, 1, 0],
+          [4, 3, 7, 2]
+        ]
+      }
+    ],
+    "faceSelection": ["imported-50000:f:5"],
+    "hiddenBrushes": [],
+    "view": "top",
+    "grid": 16,
+    "extrusionMode": "snap",
+    "faceRailMaxAngle": 15,
+    "faceSourceMaxAngle": 90
+  },
+  "viewport": {
+    "width": 1200,
+    "height": 800,
+    "scale": 1,
+    "offset": { "x": 0, "y": 0 }
+  },
+  "gesture": {
+    "pointerStart": { "x": 859.5, "y": 374.5 },
+    "pointerEnd": { "x": 795.8053743923213, "y": 380.7445711380077 },
+    "rawDistance": 64
+  },
+  "observedBeforeFix": {
+    "candidatePools": { "sideA": [], "sideB": [] },
+    "chosenConstraints": [],
+    "result": "source continuation only"
+  },
+  "acquisition": {
+    "candidatePools": {
+      "cap": [],
+      "sideA": [
+        {
+          "movingEdge": "sideA",
+          "targetBrushId": "imported-50001",
+          "targetFaceIndex": 2,
+          "adjacentFaceIndices": [0, 1, 2],
+          "source": "attached",
+          "canonicalKey": "imported-50001:257.00000,51.00000|502.00000,100.00000",
+          "targetStartWorld": { "x": 257, "y": 51, "z": -64 },
+          "targetEndWorld": { "x": 502, "y": 100, "z": -64 },
+          "corridorSideScore": 22.310978559291957,
+          "signedForwardDirection": 0,
+          "sourceAngleDifferenceDegrees": 0.0000008537736462515939,
+          "railAngleDifferenceDegrees": 5.710593137499633,
+          "finiteSegmentDistancePx": 64.00000000000003,
+          "infiniteLineDistancePx": 6.368238017343933
+        }
+      ],
+      "sideB": [
+        {
+          "movingEdge": "sideB",
+          "targetBrushId": "imported-50031",
+          "targetFaceIndex": 3,
+          "adjacentFaceIndices": [0, 1, 3],
+          "source": "attached",
+          "canonicalKey": "imported-50031:262.00000,0.00000|512.00000,0.00000",
+          "targetStartWorld": { "x": 262, "y": 0, "z": -64 },
+          "targetEndWorld": { "x": 512, "y": 0, "z": -64 },
+          "corridorSideScore": 22.37771443099614,
+          "signedForwardDirection": 0,
+          "sourceAngleDifferenceDegrees": 0,
+          "railAngleDifferenceDegrees": 5.599339336520483,
+          "finiteSegmentDistancePx": 64.00000000000003,
+          "infiniteLineDistancePx": 6.2445711380077205
+        }
+      ]
+    },
+    "chosenConstraints": [
+      {
+        "movingEdge": "sideA",
+        "direction": { "x": 0.9805806756909201, "y": 0.19611613513818402 },
+        "canonicalKey": "imported-50001:257.00000,51.00000|502.00000,100.00000",
+        "lineOrigin": { "x": 257, "y": 51 },
+        "origin": { "x": 257, "y": 51 },
+        "targetBrushId": "imported-50001",
+        "targetFaceIndex": 2,
+        "targetStartWorld": { "x": 257, "y": 51, "z": -64 },
+        "targetEndWorld": { "x": 502, "y": 100, "z": -64 },
+        "source": "attached"
+      },
+      {
+        "movingEdge": "sideB",
+        "direction": { "x": 1, "y": 0 },
+        "canonicalKey": "imported-50031:262.00000,0.00000|512.00000,0.00000",
+        "lineOrigin": { "x": 262, "y": 0 },
+        "origin": { "x": 262, "y": 0 },
+        "targetBrushId": "imported-50031",
+        "targetFaceIndex": 3,
+        "targetStartWorld": { "x": 262, "y": 0, "z": -64 },
+        "targetEndWorld": { "x": 512, "y": 0, "z": -64 },
+        "source": "attached"
+      }
+    ]
+  },
+  "expected": {
+    "targetBrushIds": ["imported-50001", "imported-50031"],
+    "targetFaceIndices": [2, 3],
+    "constraintEdges": ["sideA", "sideB"],
+    "rawDistance": 64,
+    "finalDistance": 64.00000000000003,
+    "finalCorners": {
+      "baseA": { "x": 257, "y": 51 },
+      "baseB": { "x": 262, "y": 0 },
+      "capA": { "x": 193.929831506122, "y": 38.38596630122441 },
+      "capB": { "x": 197.69316153565381, "y": 0 }
+    },
+    "solvedEdges": {
+      "base": [
+        { "x": 257, "y": 51 },
+        { "x": 262, "y": 0 }
+      ],
+      "sideA": [
+        { "x": 257, "y": 51 },
+        { "x": 193.929831506122, "y": 38.38596630122441 }
+      ],
+      "cap": [
+        { "x": 193.929831506122, "y": 38.38596630122441 },
+        { "x": 197.69316153565381, "y": 0 }
+      ],
+      "sideB": [
+        { "x": 197.69316153565381, "y": 0 },
+        { "x": 262, "y": 0 }
+      ]
+    },
+    "blocked": false,
+    "previewGeometry": [
+      {
+        "sourceBrushId": "imported-50000",
+        "vertices": [
+          { "x": 257, "y": 51, "z": 0 },
+          { "x": 262, "y": 0, "z": 0 },
+          { "x": 262, "y": 0, "z": -64 },
+          { "x": 257, "y": 51, "z": -64 },
+          { "x": 193.929831506122, "y": 38.38596630122441, "z": 0 },
+          { "x": 197.69316153565381, "y": 0, "z": 0 },
+          { "x": 197.69316153565381, "y": 0, "z": -64 },
+          { "x": 193.929831506122, "y": 38.38596630122441, "z": -64 }
+        ],
+        "faces": [
+          [0, 1, 2, 3],
+          [7, 6, 5, 4],
+          [4, 5, 1, 0],
+          [5, 6, 2, 1],
+          [6, 7, 3, 2],
+          [7, 4, 0, 3]
+        ]
+      }
+    ],
+    "committedGeometry": [
+      {
+        "sourceBrushId": "imported-50000",
+        "vertices": [
+          { "x": 257, "y": 51, "z": 0 },
+          { "x": 262, "y": 0, "z": 0 },
+          { "x": 262, "y": 0, "z": -64 },
+          { "x": 257, "y": 51, "z": -64 },
+          { "x": 193.929831506122, "y": 38.38596630122441, "z": 0 },
+          { "x": 197.69316153565381, "y": 0, "z": 0 },
+          { "x": 197.69316153565381, "y": 0, "z": -64 },
+          { "x": 193.929831506122, "y": 38.38596630122441, "z": -64 }
+        ],
+        "faces": [
+          [0, 1, 2, 3],
+          [7, 6, 5, 4],
+          [4, 5, 1, 0],
+          [5, 6, 2, 1],
+          [6, 7, 3, 2],
+          [7, 4, 0, 3]
+        ]
+      }
+    ],
+    "screenshot": "regression.png"
+  }
+}
