@@ -1479,6 +1479,8 @@ export class Viewport {
           canonicalKey: group.key,
           source,
           attachmentKind,
+          baseContactDistance:
+            source === "attached" ? baseLineDistanceWorld : undefined,
           cornerSnap: group.cornerSnap,
           corridorSideScore: boundaryFace.corridorSide,
           signedForwardDirection: Math.max(forwardStart, forwardEnd),
@@ -1627,6 +1629,7 @@ export class Viewport {
       targetStartWorld: snap.targetStartWorld,
       targetEndWorld: snap.targetEndWorld,
       source: snap.source,
+      baseContactDistance: snap.baseContactDistance,
       cornerSnap: snap.cornerSnap,
     });
     const solvedEdgesMatchTargets = (solved, constraints) =>

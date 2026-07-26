@@ -1,0 +1,191 @@
+{
+  "schemaVersion": 1,
+  "name": "single-face-near-seam-contact",
+  "sourceVmf": "failtest2.vmf",
+  "issue": "An attached target seam inside the 0.5-unit acquisition tolerance must not be rejected by the constrained-target collision plane check.",
+  "editor": {
+    "brushes": [
+      {
+        "id": "imported-50003",
+        "material": "TOOLS/TOOLSNODRAW",
+        "faceMaterials": [
+          "TOOLS/TOOLSNODRAW",
+          "dev/top",
+          "TOOLS/TOOLSNODRAW",
+          "TOOLS/TOOLSNODRAW",
+          "dev/outer",
+          "dev/inner"
+        ],
+        "vertices": [
+          { "x": 262, "y": -68, "z": -64 },
+          { "x": 272, "y": 32, "z": -64 },
+          { "x": 22, "y": 32, "z": -64 },
+          { "x": 272, "y": 32, "z": 0 },
+          { "x": 262, "y": -68, "z": 0 },
+          { "x": 17, "y": -19, "z": 0 },
+          { "x": 22, "y": 32, "z": 0 },
+          { "x": 17, "y": -19, "z": -64 }
+        ],
+        "faces": [
+          [0, 1, 2, 7],
+          [3, 4, 5, 6],
+          [5, 4, 0, 7],
+          [3, 6, 2, 1],
+          [4, 3, 1, 0],
+          [6, 5, 7, 2]
+        ]
+      },
+      {
+        "id": "imported-50005",
+        "material": "tools/toolsnodraw",
+        "faceMaterials": [
+          "tools/toolsnodraw",
+          "dev/inner",
+          "dev/side",
+          "dev/side",
+          "dev/side",
+          "dev/side"
+        ],
+        "vertices": [
+          { "x": 2, "y": -68, "z": -64 },
+          { "x": 2, "y": -68, "z": 0 },
+          { "x": -76.2108873102776, "y": -35.49677410481971, "z": 0 },
+          { "x": -61.19610578145364, "y": 13.55151222267206, "z": -64 },
+          { "x": -61.19610578145364, "y": 13.55151222267206, "z": 0 },
+          { "x": 17.014781528824017, "y": -18.951713672508234, "z": 0 },
+          { "x": -76.2108873102776, "y": -35.49677410481971, "z": -64 },
+          { "x": 17.014781528824017, "y": -18.951713672508234, "z": -64 }
+        ],
+        "faces": [
+          [1, 2, 6, 0],
+          [4, 5, 7, 3],
+          [2, 4, 3, 6],
+          [1, 5, 4, 2],
+          [5, 1, 0, 7],
+          [7, 0, 6, 3]
+        ]
+      },
+      {
+        "id": "imported-50006",
+        "material": "tools/toolsnodraw",
+        "faceMaterials": [
+          "tools/toolsnodraw",
+          "dev/inner",
+          "dev/side",
+          "dev/side",
+          "dev/side",
+          "dev/side"
+        ],
+        "vertices": [
+          { "x": 17, "y": 83, "z": 0 },
+          { "x": 22, "y": 32, "z": 0 },
+          { "x": 22, "y": 32, "z": -64 },
+          { "x": -62.880897132141456, "y": 67.02382057357171, "z": -64 },
+          { "x": -59.44718923277168, "y": 32, "z": -64 },
+          { "x": -59.44718923277168, "y": 32, "z": 0 },
+          { "x": -62.880897132141456, "y": 67.02382057357171, "z": 0 },
+          { "x": 17, "y": 83, "z": -64 }
+        ],
+        "faces": [
+          [0, 1, 2, 7],
+          [5, 6, 3, 4],
+          [1, 0, 6, 5],
+          [1, 5, 4, 2],
+          [7, 2, 4, 3],
+          [6, 0, 7, 3]
+        ]
+      }
+    ],
+    "faceSelection": ["imported-50003:f:5"],
+    "hiddenBrushes": [],
+    "view": "top",
+    "grid": 16,
+    "extrusionMode": "snap",
+    "faceRailMaxAngle": 89,
+    "faceSourceMaxAngle": 135
+  },
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "scale": 1,
+    "offset": { "x": 0, "y": 0 }
+  },
+  "gesture": {
+    "pointerStart": { "x": 419.5, "y": 293.5 },
+    "pointerEnd": { "x": 403.576344, "y": 291.938857 }
+  },
+  "expected": {
+    "rawDistance": 16,
+    "constraintEdges": ["sideA", "sideB"],
+    "targetBrushIds": ["imported-50006", "imported-50005"],
+    "targetFaceIndices": [3, 1],
+    "maximumSeamOffset": 0.5,
+    "finalDistance": 16,
+    "attachedCandidatePools": {
+      "sideA": [
+        {
+          "targetBrushId": "imported-50006",
+          "targetFaceIndex": 3,
+          "attachmentKind": "direct",
+          "baseContactDistance": 0,
+          "signedForwardDirection": 81.05856601529928
+        }
+      ],
+      "sideB": [
+        {
+          "targetBrushId": "imported-50005",
+          "targetFaceIndex": 1,
+          "attachmentKind": "direct",
+          "baseContactDistance": 0.05026172198026111,
+          "signedForwardDirection": 80.99909242894273
+        }
+      ]
+    },
+    "finalCorners": {
+      "baseA": { "x": 22, "y": 32 },
+      "baseB": { "x": 17, "y": -19 },
+      "capA": { "x": 5.923290764705886, "y": 32 },
+      "capB": { "x": 1.5526701328602872, "y": -12.580330444825062 }
+    },
+    "solvedEdges": {
+      "base": [
+        { "x": 22, "y": 32 },
+        { "x": 17, "y": -19 }
+      ],
+      "sideA": [
+        { "x": 22, "y": 32 },
+        { "x": 5.923290764705886, "y": 32 }
+      ],
+      "cap": [
+        { "x": 5.923290764705886, "y": 32 },
+        { "x": 1.5526701328602872, "y": -12.580330444825062 }
+      ],
+      "sideB": [
+        { "x": 1.5526701328602872, "y": -12.580330444825062 },
+        { "x": 17, "y": -19 }
+      ]
+    },
+    "previewGeometry": {
+      "vertices": [
+        { "x": 22, "y": 32, "z": 0 },
+        { "x": 17, "y": -19, "z": 0 },
+        { "x": 17, "y": -19, "z": -64 },
+        { "x": 22, "y": 32, "z": -64 },
+        { "x": 5.923290764705886, "y": 32, "z": 0 },
+        { "x": 1.5526701328602872, "y": -12.580330444825062, "z": 0 },
+        { "x": 1.5526701328602872, "y": -12.580330444825062, "z": -64 },
+        { "x": 5.923290764705886, "y": 32, "z": -64 }
+      ],
+      "faces": [
+        [0, 1, 2, 3],
+        [7, 6, 5, 4],
+        [4, 5, 1, 0],
+        [5, 6, 2, 1],
+        [6, 7, 3, 2],
+        [7, 4, 0, 3]
+      ]
+    },
+    "commitUsesPreviewResult": true,
+    "screenshot": "regression.png"
+  }
+}

@@ -29,6 +29,7 @@ import { validateBrush } from "./brush-validation.js";
  * @property {Vector3} [targetStartWorld]
  * @property {Vector3} [targetEndWorld]
  * @property {"attached" | "magnetic"} [source]
+ * @property {number} [baseContactDistance]
  */
 
 /**
@@ -2156,7 +2157,13 @@ export function limitExtrusionDistance(
               candidate,
               obstacle,
               constraint.targetFaceIndex,
-              TARGET_CONTACT_EPSILON,
+              constraint.source === "attached"
+                ? Math.max(
+                    TARGET_CONTACT_EPSILON,
+                    (constraint.baseContactDistance || 0) +
+                      TARGET_CONTACT_EPSILON,
+                  )
+                : TARGET_CONTACT_EPSILON,
             ),
           );
         }

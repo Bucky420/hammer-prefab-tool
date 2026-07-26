@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Near-seam attached rail fixture</title>
+    <style>
+      body { margin: 0; background: #0d1217; color: #e8f0f6; font: 15px Consolas, monospace; }
+      main { width: 900px; height: 620px; padding: 30px; }
+      h1 { margin: 0 0 8px; font: 700 25px Arial; }
+      p { color: #a9bac7; }
+      canvas { width: 820px; height: 430px; border: 1px solid #35434e; background: #131a20; }
+      strong { color: #59e69c; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Single-Face Snap: Near-Seam Contact</h1>
+      <p>failtest2.vmf, middle inner face, default 89/135 degree limits</p>
+      <canvas width="820" height="430"></canvas>
+      <p><strong>Expected:</strong> both forward rails lock and the 16-unit preview remains committable.</p>
+      <script>
+        const context = document.querySelector("canvas").getContext("2d");
+        const point = ([x, y]) => ({ x: 390 + x * 2.2, y: 215 - y * 2.2 });
+        const polygon = (points, fill, stroke) => {
+          context.beginPath();
+          points.forEach((value, index) => {
+            const p = point(value);
+            index ? context.lineTo(p.x, p.y) : context.moveTo(p.x, p.y);
+          });
+          context.closePath(); context.fillStyle = fill; context.fill();
+          context.strokeStyle = stroke; context.lineWidth = 3; context.stroke();
+        };
+        polygon([[22,32],[17,-19],[262,-68],[272,32]], "#26343f", "#7f95a5");
+        polygon([[17.0148,-18.9517],[-61.1961,13.5515],[-76.2109,-35.4968],[2,-68]], "#1d4738", "#4ed394");
+        polygon([[22,32],[-59.4472,32],[-62.8809,67.0238],[17,83]], "#1d4738", "#4ed394");
+        polygon([[22,32],[17,-19],[1.5527,-12.5803],[5.9233,32]], "rgba(255,198,57,.42)", "#ffc639");
+        const a = point([17,-19]), b = point([17.0148,-18.9517]);
+        context.strokeStyle = "#ff536b"; context.lineWidth = 5; context.beginPath(); context.moveTo(a.x,a.y); context.lineTo(b.x,b.y); context.stroke();
+      </script>
+    </main>
+  </body>
+</html>

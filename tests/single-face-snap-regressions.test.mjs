@@ -212,6 +212,44 @@ const assertConvexPair = (result, label) => {
 }
 
 {
+  const { data: fixture, url } = loadFixture("single-face-near-seam-contact");
+  const { rawDistance, resolved, viewport } = replay(fixture);
+  assert.ok(Math.abs(rawDistance - fixture.expected.rawDistance) < 0.000001);
+  assert.ok(resolved, "near-seam attached rails resolve");
+  const sides = resolved.constraints.filter((item) => item.movingEdge !== "cap");
+  assert.deepEqual(sides.map((item) => item.movingEdge), fixture.expected.constraintEdges);
+  assert.deepEqual(sides.map((item) => item.targetBrushId), fixture.expected.targetBrushIds);
+  assert.deepEqual(sides.map((item) => item.targetFaceIndex), fixture.expected.targetFaceIndices);
+  assertClose(
+    {
+      sideA: viewport.extrusionAcquisitionDebug.sideA.filter(
+        (candidate) => candidate.source === "attached",
+      ),
+      sideB: viewport.extrusionAcquisitionDebug.sideB.filter(
+        (candidate) => candidate.source === "attached",
+      ),
+    },
+    fixture.expected.attachedCandidatePools,
+    "recorded near-seam candidate pools",
+  );
+  assert.ok(Math.abs(resolved.finalDistance - fixture.expected.finalDistance) < 0.000001);
+  assert.equal(resolved.blocked, false);
+  assertClose(resolved.finalCorners, fixture.expected.finalCorners, "near-seam corners");
+  assertClose(resolved.solvedEdges, fixture.expected.solvedEdges, "near-seam edges");
+  assertClose(
+    {
+      vertices: resolved.previewBrushes[0].vertices,
+      faces: resolved.previewBrushes[0].faces,
+    },
+    fixture.expected.previewGeometry,
+    "near-seam preview geometry",
+  );
+  if (fixture.expected.commitUsesPreviewResult)
+    assert.equal(resolved.previewBrushes[0], resolved.brushes[0]);
+  assert.ok(existsSync(new URL(fixture.expected.screenshot, url)));
+}
+
+{
   const { data: fixture, url } = loadFixture("single-face-inward-angled-squeeze");
   const { viewport, rawDistance, resolved } = replay(fixture);
   assert.ok(Math.abs(rawDistance - fixture.expected.rawDistance) < 0.000001);
