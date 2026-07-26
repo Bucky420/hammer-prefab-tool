@@ -350,7 +350,7 @@ const geometry = (brushes) =>
     const finalSides = final.resolved.constraints.filter(
       (constraint) => constraint.movingEdge !== "cap",
     );
-    if (scenario.endpointSide && !scenario.endpointReleaseDistance) {
+    if (scenario.endpointSide) {
       const endpointSide = finalSides.find(
         (side) => side.movingEdge === scenario.endpointSide,
       );
@@ -360,29 +360,12 @@ const geometry = (brushes) =>
         `${scenario.name}: magnetic cap reaches finite endpoint`,
       );
     }
-    if (scenario.endpointReleaseDistance) {
-      const released = snapshots.find(
-        (snapshot) => snapshot.distance === scenario.endpointReleaseDistance,
+    if (scenario.expectedFinalCap)
+      assertClose(
+        final.resolved.solvedEdges.cap,
+        scenario.expectedFinalCap,
+        `${scenario.name}: both endpoints fill the corridor`,
       );
-      const releasedSide = released.resolved.constraints.find(
-        (side) => side.movingEdge === scenario.endpointSide,
-      );
-      assert.equal(
-        releasedSide.endpointSnapReleased,
-        true,
-        `${scenario.name}: endpoint snap releases past the endpoint`,
-      );
-      assert.equal(
-        releasedSide.cornerSnap,
-        undefined,
-        `${scenario.name}: released rail no longer pins the endpoint`,
-      );
-      assert.ok(
-        finalSides.find((side) => side.movingEdge === scenario.endpointSide)
-          .capProjectedT > 0,
-        `${scenario.name}: support line continues after release`,
-      );
-    }
     const reversed = finalSides.map((constraint) => ({
       ...constraint,
       direction: { x: -constraint.direction.x, y: -constraint.direction.y },

@@ -1330,7 +1330,9 @@ export function solveSingleFaceExtrusion(options) {
   };
 
   let capA =
-    sideAConstraint?.source === "magnetic" && sideAConstraint.cornerSnap
+    sideAConstraint?.cornerSnap &&
+    (sideAConstraint.source === "magnetic" ||
+      sideAConstraint.endpointSnapActive)
       ? { ...sideAConstraint.cornerSnap }
       : lineIntersection2D(
     sideALine.origin,
@@ -1339,7 +1341,9 @@ export function solveSingleFaceExtrusion(options) {
     capDir,
   );
   let capB =
-    sideBConstraint?.source === "magnetic" && sideBConstraint.cornerSnap
+    sideBConstraint?.cornerSnap &&
+    (sideBConstraint.source === "magnetic" ||
+      sideBConstraint.endpointSnapActive)
       ? { ...sideBConstraint.cornerSnap }
       : lineIntersection2D(
     sideBLine.origin,

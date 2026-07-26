@@ -1355,6 +1355,7 @@ export class Viewport {
           freeCapWorld2D.x - closestWorld.point.x,
           freeCapWorld2D.y - closestWorld.point.y,
         );
+        const attach = projectPointToSegment(baseCornerWorld, start, end);
         let capProjectedT = closestWorld.t;
         const startEndpointDistance = Math.hypot(
           freeCapScreen.x - group.startScreen.x,
@@ -1385,12 +1386,14 @@ export class Viewport {
         const endpointReleased =
           lockedKey === group.key &&
           endpointLocked &&
-          (pastFiniteEnd || endpointDistance > RELEASE_RADIUS);
+          pastFiniteEnd;
         const endpointSnapActive =
           (source === "attached"
             ? endpointAlongDistance <= RELEASE_RADIUS
             : endpointDistance <= RELEASE_RADIUS) &&
           (closestWorld.t <= 0.05 || closestWorld.t >= 0.95) &&
+          (source !== "attached" ||
+            Math.abs(closestWorld.t - attach.t) > 0.5) &&
           !endpointReleased;
         const endpointAngleBypass =
           source === "magnetic" &&
@@ -1408,7 +1411,6 @@ export class Viewport {
           !endpointAngleBypass
         )
           continue;
-        const attach = projectPointToSegment(baseCornerWorld, start, end);
         const finiteAttachDistance = Math.hypot(
           baseCornerWorld.x - attach.point.x,
           baseCornerWorld.y - attach.point.y,
@@ -1520,6 +1522,14 @@ export class Viewport {
               infiniteLineDistancePx: lineDistanceWorld * this.scale,
             });
             continue;
+          }
+          if (endpointSnapActive) {
+            const endpoint = closestWorld.t <= 0.5 ? group.start : group.end;
+            group.cornerSnap = {
+              x: endpoint[axisX],
+              y: endpoint[axisY],
+            };
+            capProjectedT = closestWorld.t <= 0.5 ? 0 : 1;
           }
           group.endpointSnapActive = endpointSnapActive;
           group.endpointSnapReleased = endpointReleased;
@@ -1991,7 +2001,10 @@ export class Viewport {
       const current = pool.find(
         (candidate) => candidate.canonicalKey === rail.canonicalKey,
       );
-      return current?.endpointSnapReleased ? current : rail;
+      if (!current) return rail;
+      if (current.endpointSnapReleased) return current;
+      if (rail.endpointSnapActive) return rail;
+      return current;
     };
     if (hardPair && this.drag) {
       const refreshedPair = {
@@ -2037,7 +2050,7 @@ export class Viewport {
         sideConstraints[0].canonicalKey === sideConstraints[1].canonicalKey
       )
         return null;
-      const sol = solveSingleFaceExtrusion({
+      let sol = solveSingleFaceExtrusion({
         brush, faceIndex, distance: rawDistance,
         activeAxes: allActiveAxes,
         constraints: candidates,
@@ -2046,6 +2059,64 @@ export class Viewport {
           this.state.faceExtrusionMode === "snap" && sideConstraints.length > 1,
         maxSourceAngleDegrees: this.state.faceSourceMaxAngle,
       });
+      if (sol?.cap) {
+        let endpointUpgraded = false;
+        for (const candidate of sideConstraints) {
+          if (
+            candidate.endpointSnapReleased ||
+            !candidate.targetStartWorld ||
+            !candidate.targetEndWorld
+          )
+            continue;
+          const edge = sol.solvedEdges?.[candidate.movingEdge];
+          if (!edge) continue;
+          const capPoint =
+            candidate.movingEdge === "sideA" ? edge[1] : edge[0];
+          const targetStart = {
+            x: candidate.targetStartWorld[axisX],
+            y: candidate.targetStartWorld[axisY],
+          };
+          const targetEnd = {
+            x: candidate.targetEndWorld[axisX],
+            y: candidate.targetEndWorld[axisY],
+          };
+          const projection = projectPointToSegment(
+            capPoint,
+            targetStart,
+            targetEnd,
+          );
+          const endpointT = projection.t <= 0.5 ? 0 : 1;
+          const endpoint = endpointT === 0 ? targetStart : targetEnd;
+          const endpointDistancePx =
+            Math.hypot(capPoint.x - endpoint.x, capPoint.y - endpoint.y) *
+            this.scale;
+          const attachedAtOppositeEndpoint =
+            candidate.source !== "attached" ||
+            Math.abs(endpointT - (candidate.rawSegmentT || 0)) > 0.5;
+          if (
+            endpointDistancePx <= RELEASE_RADIUS &&
+            attachedAtOppositeEndpoint
+          ) {
+            candidate.cornerSnap = endpoint;
+            candidate.capProjectedT = endpointT;
+            candidate.endpointSnapActive = true;
+            endpointUpgraded = true;
+          }
+        }
+        if (endpointUpgraded)
+          sol = solveSingleFaceExtrusion({
+            brush,
+            faceIndex,
+            distance: rawDistance,
+            activeAxes: allActiveAxes,
+            constraints: candidates,
+            followAdjacentSides: this.state.faceExtrusionMode === "snap",
+            mirrorSingleSide:
+              this.state.faceExtrusionMode === "snap" &&
+              sideConstraints.length > 1,
+            maxSourceAngleDegrees: this.state.faceSourceMaxAngle,
+          });
+      }
       if (!sol?.cap || !solvedEdgesMatchTargets(sol, candidates)) return null;
       for (const candidate of candidates) {
         const solvedEdge = sol.solvedEdges[candidate.movingEdge];
