@@ -310,6 +310,16 @@
         "paired",
         "paired"
       ]
+    },
+    {
+      "name": "lower-neighbor-pointer-acquisition",
+      "faceSelection": ["imported-50005:f:1"],
+      "distances": [2, 8],
+      "tangentOffsets": [0, 12],
+      "singleEdge": "sideB",
+      "singleTarget": "imported-50003",
+      "compareWithoutTangent": true,
+      "states": ["single-sideB", "single-sideB"]
     }
   ],
   "screenshot": "regression.png"

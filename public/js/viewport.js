@@ -1927,7 +1927,6 @@ export class Viewport {
               mirrorSingleSide:
                 this.state.faceExtrusionMode === "snap" && cands.length > 1,
               maxSourceAngleDegrees: this.state.faceSourceMaxAngle,
-              tangentOffset: pointerTangentOffset,
             });
             if (!sol?.cap || !solvedEdgesMatchTargets(sol, cands)) continue;
             const snapTarget = {
@@ -1941,7 +1940,6 @@ export class Viewport {
                 capB: sol.capB,
               },
               distance: rawDistance,
-              tangentOffset: pointerTangentOffset,
             };
             const selection = this.drag?.selection || new Set([id]);
             const resolved = resolveExtrusion({
@@ -2079,6 +2077,8 @@ export class Viewport {
     recordDuplicateProjectedRails(attachedBCandidates);
     this.extrusionAcquisitionDebug.rawDistance = rawDistance;
     this.extrusionAcquisitionDebug.probeDistance = probeDistance;
+    this.extrusionAcquisitionDebug.pointerTangentOffset =
+      pointerTangentOffset;
     this.extrusionAcquisitionDebug.lockState = this.drag?.startRailState || "pending";
 
     // Try constraint combinations in priority order (most→least constrained).
@@ -2099,7 +2099,6 @@ export class Viewport {
         mirrorSingleSide:
           this.state.faceExtrusionMode === "snap" && sideConstraints.length > 1,
         maxSourceAngleDegrees: this.state.faceSourceMaxAngle,
-        tangentOffset: pointerTangentOffset,
       });
       if (sol?.cap) {
         let endpointUpgraded = false;
@@ -2157,7 +2156,6 @@ export class Viewport {
               this.state.faceExtrusionMode === "snap" &&
               sideConstraints.length > 1,
             maxSourceAngleDegrees: this.state.faceSourceMaxAngle,
-            tangentOffset: pointerTangentOffset,
           });
       }
       if (!sol?.cap || !solvedEdgesMatchTargets(sol, candidates)) return null;
@@ -2192,7 +2190,6 @@ export class Viewport {
         },
         targetBrushIds: [...new Set(candidates.map((c) => c.targetBrushId))],
         distance: rawDistance,
-        tangentOffset: pointerTangentOffset,
       };
       const resolved = resolveExtrusion({
         sourceBrushes: this.state.brushes,
@@ -2811,15 +2808,7 @@ export class Viewport {
               grid: this.state.grid,
               guideSelection: this.drag.guideSelection,
               mode: this.state.faceExtrusionMode,
-              snapTarget:
-                this.state.faceExtrusionMode === "snap" &&
-                Math.abs(this.drag.pointerTangentOffset || 0) > 0.0001
-                  ? {
-                      type: "pointer-offset",
-                      activeAxes: this.axes(),
-                      tangentOffset: this.drag.pointerTangentOffset,
-                    }
-                  : null,
+              snapTarget: null,
               maxSourceAngleDegrees: this.state.faceSourceMaxAngle,
             }));
         this.drag.resolvedExtrusion = resolved;

@@ -86,12 +86,28 @@ const replaySequence = (fixture, scenario) => {
   const normal = viewport.faceNormal(brush, face);
   const length = Math.hypot(normal.x, normal.y);
   const direction = { x: normal.x / length, y: normal.y / length };
+  const first = brush.vertices[face[0]];
+  const tangentEnd = face
+    .map((index) => brush.vertices[index])
+    .find(
+      (point) =>
+        Math.hypot(point.x - first.x, point.y - first.y) > 0.0001,
+    );
+  const tangentLength = Math.hypot(
+    tangentEnd.x - first.x,
+    tangentEnd.y - first.y,
+  );
+  const tangent = {
+    x: (tangentEnd.x - first.x) / tangentLength,
+    y: (tangentEnd.y - first.y) / tangentLength,
+  };
   const start = viewport.screen(center);
   const distances = scenario.distances || fixture.distances;
-  const snapshots = distances.map((distance) => {
+  const snapshots = distances.map((distance, index) => {
+    const tangentOffset = scenario.tangentOffsets?.[index] || 0;
     const current = viewport.screen({
-      x: center.x + direction.x * distance,
-      y: center.y + direction.y * distance,
+      x: center.x + direction.x * distance + tangent.x * tangentOffset,
+      y: center.y + direction.y * distance + tangent.y * tangentOffset,
       z: center.z,
     });
     const rawDistance = viewport.faceExtrusionDistance(id, start, current);
@@ -103,6 +119,7 @@ const replaySequence = (fixture, scenario) => {
       lockState: viewport.drag.startRailState,
       pair: viewport.drag.startRailPair,
       solvedOverlay: structuredClone(viewport.extrusionSolvedDebug),
+      tangentOffset,
     };
   });
   return { viewport, brush, faceIndex: Number(match[2]), snapshots };
@@ -390,6 +407,22 @@ const geometry = (brushes) =>
         scenario.expectedFinalCap,
         `${scenario.name}: both endpoints fill the corridor`,
       );
+    if (scenario.compareWithoutTangent) {
+      const reference = replaySequence(fixture, {
+        ...scenario,
+        tangentOffsets: scenario.tangentOffsets.map(() => 0),
+        compareWithoutTangent: false,
+      }).snapshots.at(-1);
+      assert.ok(
+        Math.abs(final.debug.pointerTangentOffset) > 0.0001,
+        `${scenario.name}: angled pointer reaches rail acquisition`,
+      );
+      assertClose(
+        final.resolved.finalCorners,
+        reference.resolved.finalCorners,
+        `${scenario.name}: angled pointer does not open an unmatched gap`,
+      );
+    }
     const reversed = finalSides.map((constraint) => ({
       ...constraint,
       direction: { x: -constraint.direction.x, y: -constraint.direction.y },

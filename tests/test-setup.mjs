@@ -397,51 +397,6 @@ function approxPoint(a, b, eps = 0.01) {
 }
 
 // --------------------------------------------------------------------
-// Test 12b: unmatched Snap corners follow tangential mouse movement
-// --------------------------------------------------------------------
-{
-  const s = buildRotatedBox({ x: 0, y: 0, z: 0 }, { x: 64, y: 64, z: 64 }, 30);
-  const normal = solveSingleFaceExtrusion({
-    brush: s,
-    faceIndex: 3,
-    distance: 16,
-    activeAxes: ["x", "y"],
-    constraints: [],
-  });
-  const shifted = solveSingleFaceExtrusion({
-    brush: s,
-    faceIndex: 3,
-    distance: 16,
-    activeAxes: ["x", "y"],
-    constraints: [],
-    tangentOffset: 12,
-  });
-  assert.ok(normal && shifted, "pointer-offset solves succeed");
-  const base = {
-    x: normal.baseB.x - normal.baseA.x,
-    y: normal.baseB.y - normal.baseA.y,
-  };
-  const deltaA = {
-    x: shifted.capA.x - normal.capA.x,
-    y: shifted.capA.y - normal.capA.y,
-  };
-  const deltaB = {
-    x: shifted.capB.x - normal.capB.x,
-    y: shifted.capB.y - normal.capB.y,
-  };
-  assert.ok(
-    approxEqual(Math.hypot(deltaA.x, deltaA.y), 12) &&
-      Math.abs(deltaA.x * base.y - deltaA.y * base.x) < 0.01,
-    "free side A follows the face tangent",
-  );
-  assert.ok(
-    approxPoint(deltaB, deltaA),
-    "free side B follows the same pointer offset",
-  );
-  console.log("pointer tangential offset OK");
-}
-
-// --------------------------------------------------------------------
 // Test 13: two independent support lines produce a narrowing cap
 // --------------------------------------------------------------------
 {
