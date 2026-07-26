@@ -1361,7 +1361,7 @@ export class Viewport {
           freeCapWorld2D.x - closestWorld.point.x,
           freeCapWorld2D.y - closestWorld.point.y,
         );
-        const capProjectedT = closestWorld.t;
+        let capProjectedT = closestWorld.t;
         const attach = projectPointToSegment(baseCornerWorld, start, end);
         const finiteAttachDistance = Math.hypot(
           baseCornerWorld.x - attach.point.x,
@@ -1513,7 +1513,30 @@ export class Viewport {
           )
             continue;
           distancePx = Math.min(capLineDistancePx, segmentDistancePx);
-          group.cornerSnap = closestWorld.point;
+          const startEndpointDistance = Math.hypot(
+            freeCapScreen.x - group.startScreen.x,
+            freeCapScreen.y - group.startScreen.y,
+          );
+          const endEndpointDistance = Math.hypot(
+            freeCapScreen.x - group.endScreen.x,
+            freeCapScreen.y - group.endScreen.y,
+          );
+          if (
+            Math.min(startEndpointDistance, endEndpointDistance) <=
+            RELEASE_RADIUS
+          ) {
+            const endpoint =
+              startEndpointDistance <= endEndpointDistance
+                ? group.start
+                : group.end;
+            group.cornerSnap = {
+              x: endpoint[axisX],
+              y: endpoint[axisY],
+            };
+            capProjectedT = startEndpointDistance <= endEndpointDistance ? 0 : 1;
+          } else {
+            group.cornerSnap = closestWorld.point;
+          }
         }
         candidates.push({
           movingEdge,

@@ -351,6 +351,16 @@ const geometry = (brushes) =>
     const finalSides = final.resolved.constraints.filter(
       (constraint) => constraint.movingEdge !== "cap",
     );
+    if (scenario.endpointSide) {
+      const endpointSide = finalSides.find(
+        (side) => side.movingEdge === scenario.endpointSide,
+      );
+      assert.equal(
+        endpointSide.capProjectedT,
+        0,
+        `${scenario.name}: magnetic cap reaches finite endpoint`,
+      );
+    }
     const reversed = finalSides.map((constraint) => ({
       ...constraint,
       direction: { x: -constraint.direction.x, y: -constraint.direction.y },
