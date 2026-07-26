@@ -1825,7 +1825,7 @@ export class Viewport {
     });
     const makeSideConstraint = (snap) => ({
       movingEdge: snap.movingEdge,
-      direction: snap.railDirection,
+      direction: snap.endpointSnapReleased ? extNormal : snap.railDirection,
       canonicalKey: snap.canonicalKey,
       lineOrigin: snap.lineOrigin,
       origin: {
@@ -1836,7 +1836,7 @@ export class Viewport {
       targetFaceIndex: snap.targetFaceIndex,
       targetStartWorld: snap.targetStartWorld,
       targetEndWorld: snap.targetEndWorld,
-      source: snap.source,
+      source: snap.endpointSnapReleased ? "released" : snap.source,
       baseContactDistance: snap.baseContactDistance,
       attachmentPoint: snap.attachmentPoint,
       rawSegmentT: snap.rawSegmentT,
@@ -1849,6 +1849,7 @@ export class Viewport {
     const solvedEdgesMatchTargets = (solved, constraints) =>
       constraints.every((constraint) => {
         if (constraint.movingEdge === "cap") return true;
+        if (constraint.endpointSnapReleased) return true;
         const edge = solved.solvedEdges?.[constraint.movingEdge];
         if (
           !edge ||

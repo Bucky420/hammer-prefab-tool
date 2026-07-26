@@ -430,7 +430,16 @@ const geometry = (brushes) =>
         `${scenario.name}: angled pointer does not open an unmatched gap`,
       );
     }
-    if (scenario.compareWithoutTangent) continue;
+    if (Number.isInteger(scenario.recoveryIndex)) {
+      const before = snapshots[scenario.recoverySourceIndex];
+      const recovered = snapshots[scenario.recoveryIndex];
+      assertClose(
+        recovered.resolved.finalCorners,
+        before.resolved.finalCorners,
+        `${scenario.name}: backward movement recovers original geometry`,
+      );
+    }
+    if (scenario.compareWithoutTangent || scenario.skipReversed) continue;
     const reversed = finalSides.map((constraint) => ({
       ...constraint,
       direction: { x: -constraint.direction.x, y: -constraint.direction.y },

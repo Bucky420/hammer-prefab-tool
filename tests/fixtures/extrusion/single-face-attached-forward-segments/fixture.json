@@ -320,6 +320,29 @@
       "singleTarget": "imported-50003",
       "compareWithoutTangent": true,
       "states": ["single-sideB", "single-sideB"]
+    },
+    {
+      "name": "upper-forward-fill-backward-recovery",
+      "faceSelection": ["imported-50006:f:3"],
+      "distances": [2, 8, 16, 32, 48, 80, 16, 80],
+      "singleEdge": "sideA",
+      "singleTarget": "imported-50003",
+      "pair": ["imported-50003", "imported-50005"],
+      "pairFaces": [5, 1],
+      "endpointSide": "sideB",
+      "recoverySourceIndex": 2,
+      "recoveryIndex": 6,
+      "skipReversed": true,
+      "states": [
+        "single-sideA",
+        "single-sideA",
+        "paired",
+        "paired",
+        "paired",
+        "paired",
+        "paired",
+        "paired"
+      ]
     }
   ],
   "screenshot": "regression.png"
