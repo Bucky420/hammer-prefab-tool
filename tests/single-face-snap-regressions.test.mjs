@@ -392,6 +392,13 @@ const geometry = (brushes) =>
         undefined,
         `${scenario.name}: backward movement follows the pointer again`,
       );
+      assert.equal(
+        backward.resolved.constraints.filter(
+          (side) => side.movingEdge !== "cap" && side.endpointSnapActive,
+        ).length,
+        0,
+        `${scenario.name}: paired endpoint pins release together`,
+      );
       const reacquiredSide = finalSides.find(
         (side) => side.movingEdge === scenario.endpointSide,
       );

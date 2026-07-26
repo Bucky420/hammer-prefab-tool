@@ -819,6 +819,15 @@ export class Viewport {
     const pixels =
       ((current.x - start.x) * dx + (current.y - start.y) * dy) / screenLength;
     const rawDistance = Math.max(0, pixels / this.scale);
+    const endpointReleaseDistance = 18 / Math.max(this.scale, 0.0001);
+    const endpointPairRetreat =
+      this.drag?.startRailState === "paired" &&
+      Object.values(this.drag.sideRailEndpointDistances || {}).some(
+        (distance) =>
+          Number.isFinite(distance) &&
+          rawDistance < distance - endpointReleaseDistance,
+      );
+    if (this.drag) this.drag.endpointPairRetreat = endpointPairRetreat;
     const sourceBrushIds = new Set(
       [...(this.drag?.selection || [])].map(
         (faceId) => faceId.match(/^(.*):f:\d+$/)?.[1],
@@ -1410,7 +1419,7 @@ export class Viewport {
         const endpointLockDistance =
           this.drag?.sideRailEndpointDistances?.[movingEdge];
         const endpointReleasedBackward =
-          endpointLocked &&
+          (endpointLocked || endpointPairRetreat) &&
           Number.isFinite(endpointLockDistance) &&
           rawDistance <
             endpointLockDistance - RELEASE_RADIUS / Math.max(this.scale, 0.0001);
@@ -2032,7 +2041,7 @@ export class Viewport {
       const endpointLockDistance =
         this.drag?.sideRailEndpointDistances?.[movingEdge];
       if (
-        rail.endpointSnapActive &&
+        (rail.endpointSnapActive || this.drag?.endpointPairRetreat) &&
         Number.isFinite(endpointLockDistance) &&
         rawDistance <
           endpointLockDistance - RELEASE_RADIUS / Math.max(this.scale, 0.0001)
