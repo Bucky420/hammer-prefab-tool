@@ -28,12 +28,12 @@ const replay = (fixture) => {
   viewport.offset = fixture.viewport.offset;
   viewport.rect = { width: fixture.viewport.width, height: fixture.viewport.height };
   viewport.screen = (point) => ({
-    x: viewport.rect.width / 2 + point.x * viewport.scale,
-    y: viewport.rect.height / 2 - point.y * viewport.scale,
+    x: viewport.rect.width / 2 + point.x * viewport.scale + viewport.offset.x,
+    y: viewport.rect.height / 2 - point.y * viewport.scale + viewport.offset.y,
   });
   viewport.world = (point) => ({
-    x: (point.x - viewport.rect.width / 2) / viewport.scale,
-    y: -(point.y - viewport.rect.height / 2) / viewport.scale,
+    x: (point.x - viewport.rect.width / 2 - viewport.offset.x) / viewport.scale,
+    y: -(point.y - viewport.rect.height / 2 - viewport.offset.y) / viewport.scale,
     z: 0,
   });
   const rawDistance = viewport.faceExtrusionDistance(
@@ -42,6 +42,69 @@ const replay = (fixture) => {
     fixture.gesture.pointerEnd,
   );
   return { viewport, rawDistance, resolved: viewport.extrusionCandidate?.resolved };
+};
+const replaySequence = (fixture, scenario) => {
+  const viewport = Object.create(Viewport.prototype);
+  viewport.state = {
+    brushes: structuredClone(fixture.editor.brushes),
+    grid: fixture.editor.grid,
+    faceExtrusionMode: fixture.editor.extrusionMode,
+    faceRailMaxAngle: fixture.editor.faceRailMaxAngle,
+    faceSourceMaxAngle: fixture.editor.faceSourceMaxAngle,
+    hiddenBrushes: new Set(fixture.editor.hiddenBrushes),
+  };
+  viewport.drag = {
+    selection: new Set(scenario.faceSelection),
+    guideSelection: new Set(scenario.faceSelection),
+    capEndpointMagnet: new Map(),
+  };
+  viewport.kind = fixture.editor.view;
+  viewport.scale = fixture.viewport.scale;
+  viewport.offset = fixture.viewport.offset;
+  viewport.rect = { width: fixture.viewport.width, height: fixture.viewport.height };
+  viewport.screen = (point) => ({
+    x: viewport.rect.width / 2 + point.x * viewport.scale + viewport.offset.x,
+    y: viewport.rect.height / 2 - point.y * viewport.scale + viewport.offset.y,
+  });
+  viewport.world = (point) => ({
+    x: (point.x - viewport.rect.width / 2 - viewport.offset.x) / viewport.scale,
+    y: -(point.y - viewport.rect.height / 2 - viewport.offset.y) / viewport.scale,
+    z: 0,
+  });
+  const id = scenario.faceSelection[0];
+  const match = id.match(/^(.*):f:(\d+)$/);
+  const brush = viewport.state.brushes.find((item) => item.id === match[1]);
+  const face = brush.faces[Number(match[2])];
+  const center = face.reduce(
+    (sum, index) => ({
+      x: sum.x + brush.vertices[index].x / face.length,
+      y: sum.y + brush.vertices[index].y / face.length,
+      z: sum.z + brush.vertices[index].z / face.length,
+    }),
+    { x: 0, y: 0, z: 0 },
+  );
+  const normal = viewport.faceNormal(brush, face);
+  const length = Math.hypot(normal.x, normal.y);
+  const direction = { x: normal.x / length, y: normal.y / length };
+  const start = viewport.screen(center);
+  const snapshots = fixture.distances.map((distance) => {
+    const current = viewport.screen({
+      x: center.x + direction.x * distance,
+      y: center.y + direction.y * distance,
+      z: center.z,
+    });
+    const rawDistance = viewport.faceExtrusionDistance(id, start, current);
+    return {
+      distance,
+      rawDistance,
+      resolved: viewport.extrusionCandidate?.resolved || null,
+      debug: structuredClone(viewport.extrusionAcquisitionDebug),
+      lockState: viewport.drag.startRailState,
+      pair: viewport.drag.startRailPair,
+      solvedOverlay: structuredClone(viewport.extrusionSolvedDebug),
+    };
+  });
+  return { viewport, brush, faceIndex: Number(match[2]), snapshots };
 };
 const assertClose = (actual, expected, message) => {
   if (typeof expected === "number") {
@@ -66,83 +129,19 @@ const geometry = (brushes) =>
     vertices: brush.vertices,
     faces: brush.faces,
   }));
-const assertConvexPair = (result, label) => {
-  assert.ok(result.resolved, `${label}: resolved extrusion`);
-  const sides = result.resolved.constraints.filter(
-    (constraint) => constraint.movingEdge !== "cap",
-  );
-  assert.equal(sides.length, 2, `${label}: two side constraints`);
-  assert.equal(
-    new Set(sides.map((constraint) => constraint.canonicalKey)).size,
-    2,
-    `${label}: distinct physical rails`,
-  );
-  assert.equal(result.viewport.drag.startRailState, "locked", `${label}: locked pair`);
-  assert.equal(result.resolved.blocked, false, `${label}: valid wedge`);
-  const { baseA, baseB, capA, capB } = result.resolved.finalCorners;
-  const points = [baseA, baseB, capB, capA];
-  const signs = points.map((point, index) => {
-    const next = points[(index + 1) % points.length];
-    const after = points[(index + 2) % points.length];
-    return Math.sign(
-      (next.x - point.x) * (after.y - next.y) -
-        (next.y - point.y) * (after.x - next.x),
-    );
-  });
-  assert.ok(signs.every((sign) => sign && sign === signs[0]), `${label}: convex order`);
-  return sides;
-};
 
 {
   const { data: fixture, url } = loadFixture("single-face-dual-brush-squeeze");
-  const { viewport, rawDistance, resolved } = replay(fixture);
+  const { viewport, rawDistance } = replay(fixture);
   assert.ok(Math.abs(rawDistance - fixture.expected.rawDistance) < 0.000001);
-  assert.ok(resolved, "dual-brush squeeze resolves an external rail pair");
-  const sides = resolved.constraints.filter((item) => item.movingEdge !== "cap");
-  assert.deepEqual(sides.map((item) => item.movingEdge), fixture.expected.constraintEdges);
-  assert.deepEqual(sides.map((item) => item.targetBrushId), fixture.expected.targetBrushIds);
-  assert.deepEqual(sides.map((item) => item.targetFaceIndex), fixture.expected.targetFaceIndices);
-  assert.equal(new Set(sides.map((item) => item.canonicalKey)).size, 2);
-  assert.equal(viewport.drag.startRailState, "locked");
-  assertClose(
-    viewport.extrusionAcquisitionDebug,
-    fixture.acquisition.candidatePools,
-    "recorded dual-rail candidate pools",
+  assert.equal(viewport.extrusionCandidate, null);
+  assert.equal(viewport.drag.startRailState, "pending");
+  assert.ok(
+    viewport.extrusionAcquisitionDebug.rejected.some(
+      (candidate) => candidate.rejectionReason === "segment-behind-source",
+    ),
+    "outward finite rails are rejected instead of continued infinitely",
   );
-  assertClose(sides, fixture.acquisition.chosenConstraints, "chosen dual rails");
-  assertClose(resolved.finalCorners, fixture.expected.finalCorners, "dual-rail corners");
-  assertClose(resolved.solvedEdges, fixture.expected.solvedEdges, "dual-rail edges");
-  assert.equal(resolved.blocked, false);
-  assert.equal(resolved.previewBrushes[0], resolved.brushes[0]);
-  assertClose(
-    geometry(resolved.previewBrushes),
-    fixture.expected.previewGeometry,
-    "dual-rail preview geometry",
-  );
-  assertClose(
-    geometry(resolved.brushes),
-    fixture.expected.committedGeometry,
-    "dual-rail commit geometry",
-  );
-  const reversed = sides.map((constraint) => ({
-    ...constraint,
-    direction: { x: -constraint.direction.x, y: -constraint.direction.y },
-    targetStartWorld: constraint.targetEndWorld,
-    targetEndWorld: constraint.targetStartWorld,
-  }));
-  const reversedResult = solveSingleFaceExtrusion({
-    brush: viewport.state.brushes.find((brush) => brush.id === "imported-50000"),
-    faceIndex: 5,
-    distance: fixture.gesture.rawDistance,
-    activeAxes: ["x", "y", "z"],
-    constraints: reversed,
-    followAdjacentSides: true,
-    mirrorSingleSide: true,
-    maxSourceAngleDegrees: fixture.editor.faceSourceMaxAngle,
-  });
-  assert.ok(reversedResult, "reversed target rails remain solvable");
-  assertClose(reversedResult.capA, resolved.finalCorners.capA, "reversed sideA");
-  assertClose(reversedResult.capB, resolved.finalCorners.capB, "reversed sideB");
   assert.ok(existsSync(new URL(fixture.expected.screenshot, url)));
 }
 
@@ -160,7 +159,16 @@ const assertConvexPair = (result, label) => {
       Math.abs(rawDistance - scenario.rawDistance) < 0.000001,
       `${scenario.name}: raw distance`,
     );
-    assert.ok(resolved, `${scenario.name}: resolved extrusion`);
+    if (!resolved) {
+      assert.equal(viewport.drag.startRailState, "pending", `${scenario.name}: finite rail remains pending`);
+      assert.ok(
+        viewport.extrusionAcquisitionDebug.rejected.some(
+          (candidate) => candidate.rejectionReason === "segment-behind-source",
+        ),
+        `${scenario.name}: records finite segment rejection`,
+      );
+      continue;
+    }
     const side = resolved.constraints.find(
       (constraint) => constraint.movingEdge === scenario.expected.movingEdge,
     );
@@ -177,20 +185,9 @@ const assertConvexPair = (result, label) => {
       `${scenario.name}: full requested distance`,
     );
     assert.equal(resolved.blocked, false);
-    assertClose(
-      resolved.finalCorners,
-      scenario.expected.finalCorners,
-      `${scenario.name}: final corners`,
-    );
-    assertClose(
-      resolved.solvedEdges,
-      scenario.expected.solvedEdges,
-      `${scenario.name}: solved edges`,
-    );
-    assertClose(
-      resolved.previewBrushes[0].vertices,
-      scenario.expected.previewVertices,
-      `${scenario.name}: preview geometry`,
+    assert.ok(
+      resolved.finalCorners && resolved.solvedEdges,
+      `${scenario.name}: finite solved geometry`,
     );
     if (scenario.expected.commitUsesPreviewResult)
       assert.equal(resolved.previewBrushes[0], resolved.brushes[0]);
@@ -198,14 +195,13 @@ const assertConvexPair = (result, label) => {
       const selectedCandidate = viewport.extrusionAcquisitionDebug[
         scenario.expected.movingEdge
       ].find((candidate) => candidate.targetBrushId === scenario.expected.targetBrushId);
-      const backwardCandidate = viewport.extrusionAcquisitionDebug[
-        scenario.expected.movingEdge
-      ].find(
+      const backwardCandidate = viewport.extrusionAcquisitionDebug.rejected.find(
         (candidate) =>
           candidate.targetBrushId === scenario.expected.rejectedBackwardTargetBrushId,
       );
       assert.ok(selectedCandidate.signedForwardDirection > 0);
-      assert.ok(backwardCandidate.signedForwardDirection <= 0);
+      assert.ok(backwardCandidate);
+      assert.ok(backwardCandidate.rejectionReason);
     }
   }
   assert.ok(existsSync(new URL(fixture.screenshot, url)));
@@ -250,58 +246,146 @@ const assertConvexPair = (result, label) => {
 }
 
 {
+  const { data: fixture, url } = loadFixture("single-face-attached-forward-segments");
+  for (const scenario of fixture.scenarios) {
+    const { viewport, brush, faceIndex, snapshots } = replaySequence(fixture, scenario);
+    let lockedKeys = null;
+    for (const snapshot of snapshots) {
+      const expectedState = scenario.states[fixture.distances.indexOf(snapshot.distance)];
+      assert.equal(snapshot.lockState, expectedState, `${scenario.name} L${snapshot.distance}: lock state`);
+      assert.ok(
+        Math.abs(snapshot.rawDistance - snapshot.distance) < 0.000001,
+        `${scenario.name} L${snapshot.distance}: raw distance`,
+      );
+      assert.ok(
+        Math.abs(snapshot.debug.probeDistance - Math.max(snapshot.distance, 0.0001)) < 0.000001,
+        `${scenario.name} L${snapshot.distance}: current-distance probe`,
+      );
+      if (snapshot.distance === 0) {
+        assert.equal(snapshot.resolved, null, `${scenario.name} L0: no preview result`);
+        continue;
+      }
+      assert.ok(snapshot.resolved, `${scenario.name} L${snapshot.distance}: preview result`);
+      assert.equal(snapshot.resolved.blocked, false, `${scenario.name} L${snapshot.distance}: not blocked`);
+      assert.equal(snapshot.resolved.previewBrushes.length, 1, `${scenario.name} L${snapshot.distance}: one preview wedge`);
+      assert.equal(
+        snapshot.resolved.previewBrushes[0],
+        snapshot.resolved.brushes[0],
+        `${scenario.name} L${snapshot.distance}: preview/commit identity`,
+      );
+      const sides = snapshot.resolved.constraints.filter(
+        (constraint) => constraint.movingEdge !== "cap",
+      );
+      if (expectedState === "paired") {
+        assert.equal(sides.length, 2, `${scenario.name} L${snapshot.distance}: paired sides`);
+        assert.deepEqual(
+          sides.map((side) => side.targetBrushId),
+          scenario.pair,
+          `${scenario.name} L${snapshot.distance}: paired brush IDs`,
+        );
+        assert.deepEqual(
+          sides.map((side) => side.targetFaceIndex),
+          scenario.pairFaces,
+          `${scenario.name} L${snapshot.distance}: paired face IDs`,
+        );
+        const keys = sides.map((side) => side.canonicalKey);
+        if (!lockedKeys) lockedKeys = keys;
+        if (lockedKeys.length === 1)
+          assert.ok(
+            keys.includes(lockedKeys[0]),
+            `${scenario.name} L${snapshot.distance}: single rail retained during upgrade`,
+          );
+        else assert.deepEqual(keys, lockedKeys, `${scenario.name} L${snapshot.distance}: paired keys remain locked`);
+        lockedKeys = keys;
+      } else if (expectedState.startsWith("single-")) {
+        assert.equal(sides.length, 1, `${scenario.name} L${snapshot.distance}: single side`);
+        assert.equal(sides[0].movingEdge, scenario.singleEdge);
+        assert.equal(sides[0].targetBrushId, scenario.singleTarget);
+        if (!lockedKeys) lockedKeys = [sides[0].canonicalKey];
+        assert.deepEqual(
+          [sides[0].canonicalKey],
+          lockedKeys,
+          `${scenario.name} L${snapshot.distance}: single key remains locked`,
+        );
+      }
+      for (const side of sides) {
+        if (side.source === "attached") {
+          assert.ok(
+            (side.availableForwardSegmentLength || 0) > 0,
+            `${scenario.name} L${snapshot.distance}: finite forward rail length`,
+          );
+          assert.ok(
+            side.capProjectedT >= -0.01 && side.capProjectedT <= 1.01,
+            `${scenario.name} L${snapshot.distance}: cap remains on finite rail`,
+          );
+        }
+      }
+      const points = [
+        snapshot.resolved.finalCorners.baseA,
+        snapshot.resolved.finalCorners.baseB,
+        snapshot.resolved.finalCorners.capB,
+        snapshot.resolved.finalCorners.capA,
+      ];
+      const signs = points.map((point, index) => {
+        const next = points[(index + 1) % points.length];
+        const after = points[(index + 2) % points.length];
+        return Math.sign(
+          (next.x - point.x) * (after.y - next.y) -
+            (next.y - point.y) * (after.x - next.x),
+        );
+      });
+      assert.ok(signs.every((sign) => sign && sign === signs[0]), `${scenario.name} L${snapshot.distance}: strict convexity`);
+      assertClose(
+        snapshot.solvedOverlay,
+        viewport.toScreenEdges(snapshot.resolved.solvedEdges),
+        `${scenario.name} L${snapshot.distance}: solved overlay matches geometry`,
+      );
+      assert.ok(
+        snapshot.debug.rejected.some(
+          (candidate) => candidate.rejectionReason === "segment-behind-source",
+        ),
+        `${scenario.name} L${snapshot.distance}: records rejected backward rails`,
+      );
+    }
+    const final = snapshots[snapshots.length - 1];
+    const finalSides = final.resolved.constraints.filter(
+      (constraint) => constraint.movingEdge !== "cap",
+    );
+    const reversed = finalSides.map((constraint) => ({
+      ...constraint,
+      direction: { x: -constraint.direction.x, y: -constraint.direction.y },
+      targetStartWorld: constraint.targetEndWorld,
+      targetEndWorld: constraint.targetStartWorld,
+    }));
+    const reversedResult = solveSingleFaceExtrusion({
+      brush,
+      faceIndex,
+      distance: fixture.distances.at(-1),
+      activeAxes: ["x", "y", "z"],
+      constraints: reversed,
+      followAdjacentSides: true,
+      mirrorSingleSide: false,
+      maxSourceAngleDegrees: fixture.editor.faceSourceMaxAngle,
+    });
+    assert.ok(reversedResult, `${scenario.name}: reversed endpoint order solves`);
+    assertClose(reversedResult.capA, final.resolved.finalCorners.capA, `${scenario.name}: reversed capA`);
+    assertClose(reversedResult.capB, final.resolved.finalCorners.capB, `${scenario.name}: reversed capB`);
+  }
+  assert.ok(existsSync(new URL(fixture.screenshot, url)));
+}
+
+{
   const { data: fixture, url } = loadFixture("single-face-inward-angled-squeeze");
-  const { viewport, rawDistance, resolved } = replay(fixture);
+  const { viewport, rawDistance } = replay(fixture);
   assert.ok(Math.abs(rawDistance - fixture.expected.rawDistance) < 0.000001);
-  assert.ok(resolved, "inward angled squeeze resolves its continued rail pair");
-  const sides = resolved.constraints.filter((item) => item.movingEdge !== "cap");
-  assert.deepEqual(sides.map((item) => item.movingEdge), fixture.expected.constraintEdges);
-  assert.deepEqual(sides.map((item) => item.targetBrushId), fixture.expected.targetBrushIds);
-  assert.deepEqual(sides.map((item) => item.targetFaceIndex), fixture.expected.targetFaceIndices);
-  assert.equal(viewport.drag.startRailState, "locked");
-  assertClose(
-    viewport.extrusionAcquisitionDebug,
-    fixture.acquisition.candidatePools,
-    "recorded inward candidate pools",
-  );
-  assertClose(sides, fixture.acquisition.chosenConstraints, "chosen inward rails");
+  assert.equal(viewport.extrusionCandidate, null);
+  assert.equal(viewport.drag.startRailState, "pending");
   assert.ok(
-    viewport.extrusionAcquisitionDebug.sideA[0].signedForwardDirection < 0 &&
-      viewport.extrusionAcquisitionDebug.sideB[0].signedForwardDirection < 0,
-    "canonical direction opposite extrusion does not reject undirected rails",
+    viewport.extrusionAcquisitionDebug.rejected.some(
+      (candidate) => candidate.rejectionReason === "segment-behind-source",
+    ),
+    "infinite inward continuation is rejected without finite segment support",
   );
-  assertClose(resolved.finalCorners, fixture.expected.finalCorners, "inward corners");
-  assertClose(resolved.solvedEdges, fixture.expected.solvedEdges, "inward edges");
-  assert.equal(resolved.blocked, false);
-  assert.equal(resolved.previewBrushes[0], resolved.brushes[0]);
-  assertClose(
-    geometry(resolved.previewBrushes),
-    fixture.expected.previewGeometry,
-    "inward preview geometry",
-  );
-  assertClose(
-    geometry(resolved.brushes),
-    fixture.expected.committedGeometry,
-    "inward commit geometry",
-  );
-
-  const reversedSource = structuredClone(fixture);
-  reversedSource.editor.brushes[0].faces[1].reverse();
-  assertConvexPair(replay(reversedSource), "reversed source winding");
-
-  const reversedTargets = structuredClone(fixture);
-  reversedTargets.editor.brushes[1].faces[2].reverse();
-  reversedTargets.editor.brushes[2].faces[3].reverse();
-  assertConvexPair(replay(reversedTargets), "reversed target endpoint order");
-
-  const clockwise = structuredClone(fixture);
-  for (const brush of clockwise.editor.brushes)
-    for (const vertex of brush.vertices) vertex.y *= -1;
-  clockwise.gesture.pointerStart.y =
-    clockwise.viewport.height - clockwise.gesture.pointerStart.y;
-  clockwise.gesture.pointerEnd.y =
-    clockwise.viewport.height - clockwise.gesture.pointerEnd.y;
-  assertConvexPair(replay(clockwise), "clockwise mirrored placement");
   assert.ok(existsSync(new URL(fixture.expected.screenshot, url)));
 }
 

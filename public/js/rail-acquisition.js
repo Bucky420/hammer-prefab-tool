@@ -49,6 +49,11 @@
  * @property {number} [targetEdgeIndex]
  * @property {Vector3} [targetFaceNormal]
  * @property {string} [projectedRailKey]
+ * @property {Vector2} [attachmentPoint]
+ * @property {number} [rawSegmentT]
+ * @property {number} [availableForwardSegmentLength]
+ * @property {number} [capProjectedT]
+ * @property {string} [rejectionReason]
  */
 
 /**
@@ -189,6 +194,49 @@ export function solvedEdgeMatchesRail(
       ) /
         length <=
       tolerance,
+  );
+}
+
+/**
+ * @param {Vector2} point
+ * @param {Vector2} start
+ * @param {Vector2} end
+ * @returns {{ point: Vector2, t: number, rawT: number }}
+ */
+export function projectPointToSegment(point, start, end) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared < 0.000001)
+    return { point: { ...start }, t: 0, rawT: 0 };
+  const rawT =
+    ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared;
+  const t = Math.max(0, Math.min(1, rawT));
+  return {
+    point: { x: start.x + dx * t, y: start.y + dy * t },
+    t,
+    rawT,
+  };
+}
+
+/**
+ * @param {Vector2} attachmentPoint
+ * @param {Vector2} start
+ * @param {Vector2} end
+ * @param {Vector2} movementDirection
+ * @returns {number}
+ */
+export function availableForwardSegmentLength(
+  attachmentPoint,
+  start,
+  end,
+  movementDirection,
+) {
+  return Math.max(
+    (start.x - attachmentPoint.x) * movementDirection.x +
+      (start.y - attachmentPoint.y) * movementDirection.y,
+    (end.x - attachmentPoint.x) * movementDirection.x +
+      (end.y - attachmentPoint.y) * movementDirection.y,
   );
 }
 

@@ -25,6 +25,8 @@ import {
   chooseProjectedBoundaryFace,
   movingCornerTouchesRail,
   solvedEdgeMatchesRail,
+  projectPointToSegment,
+  availableForwardSegmentLength,
 } from "./rail-acquisition.js";
 import { assertBrushesGeometry } from "./geometry-runtime.js";
 
@@ -1355,14 +1357,21 @@ export class Viewport {
           freeCapWorld2D.x - closestWorld.point.x,
           freeCapWorld2D.y - closestWorld.point.y,
         );
+        const capProjectedT = closestWorld.t;
+        const attach = projectPointToSegment(baseCornerWorld, start, end);
+        const finiteAttachDistance = Math.hypot(
+          baseCornerWorld.x - attach.point.x,
+          baseCornerWorld.y - attach.point.y,
+        );
+        const usableForwardLength = availableForwardSegmentLength(
+          attach.point,
+          start,
+          end,
+          extNormal,
+        );
         let distancePx;
         let attachmentKind;
         if (source === "attached") {
-          const attach = closestPointOnSegment(baseCornerWorld, start, end);
-          const finiteAttachDistance = Math.hypot(
-            baseCornerWorld.x - attach.point.x,
-            baseCornerWorld.y - attach.point.y,
-          );
           if (finiteAttachDistance <= EPSILON_ATTACH) {
             attachmentKind = "direct";
           } else {
@@ -1405,6 +1414,10 @@ export class Viewport {
                 source,
                 rejectionReason:
                   "base corner is outside the target segment and has no collinear source-side chain",
+                attachmentPoint: attach.point,
+                rawSegmentT: attach.rawT,
+                availableForwardSegmentLength: usableForwardLength,
+                capProjectedT,
                 corridorSideScore: boundaryFace.corridorSide,
                 signedForwardDirection: Math.max(forwardStart, forwardEnd),
                 sourceAngleDifferenceDegrees: angleDifferenceDegrees(
@@ -1421,6 +1434,39 @@ export class Viewport {
               continue;
             }
             attachmentKind = "source-chain";
+          }
+          if (usableForwardLength <= 0.01) {
+            rejectedRailCandidates.push({
+              movingEdge,
+              targetBrushId: group.brush.id,
+              targetFaceIndex: boundaryFace.faceIndex,
+              canonicalKey: group.key,
+              projectedRailKey: projectedRailKey(
+                group.start,
+                group.end,
+                axisX,
+                axisY,
+              ),
+              source,
+              rejectionReason: "segment-behind-source",
+              attachmentPoint: attach.point,
+              rawSegmentT: attach.rawT,
+              availableForwardSegmentLength: usableForwardLength,
+              capProjectedT,
+              corridorSideScore: boundaryFace.corridorSide,
+              signedForwardDirection: Math.max(forwardStart, forwardEnd),
+              sourceAngleDifferenceDegrees: angleDifferenceDegrees(
+                railDirection,
+                sourceSideDirections[movingEdge],
+              ),
+              railAngleDifferenceDegrees: angleDifferenceDegrees(
+                railDirection,
+                sourceNormalDir,
+              ),
+              finiteSegmentDistancePx: segmentDistanceWorld * this.scale,
+              infiniteLineDistancePx: lineDistanceWorld * this.scale,
+            });
+            continue;
           }
           distancePx = lineDistanceWorld;
         } else {
@@ -1481,6 +1527,11 @@ export class Viewport {
           attachmentKind,
           baseContactDistance:
             source === "attached" ? baseLineDistanceWorld : undefined,
+          attachmentPoint: source === "attached" ? attach.point : undefined,
+          rawSegmentT: source === "attached" ? attach.rawT : undefined,
+          availableForwardSegmentLength:
+            source === "attached" ? usableForwardLength : undefined,
+          capProjectedT,
           cornerSnap: group.cornerSnap,
           corridorSideScore: boundaryFace.corridorSide,
           signedForwardDirection: Math.max(forwardStart, forwardEnd),
@@ -1630,6 +1681,10 @@ export class Viewport {
       targetEndWorld: snap.targetEndWorld,
       source: snap.source,
       baseContactDistance: snap.baseContactDistance,
+      attachmentPoint: snap.attachmentPoint,
+      rawSegmentT: snap.rawSegmentT,
+      availableForwardSegmentLength: snap.availableForwardSegmentLength,
+      capProjectedT: snap.capProjectedT,
       cornerSnap: snap.cornerSnap,
     });
     const solvedEdgesMatchTargets = (solved, constraints) =>
@@ -1656,45 +1711,61 @@ export class Viewport {
                 constraint.movingEdge === "sideA" ? edge[1] : edge[0],
                 constraint.movingEdge === "sideA" ? edge[1] : edge[0],
               ]
-            : edge;
-        return solvedEdgeMatchesRail(
+              : edge;
+        if (!solvedEdgeMatchesRail(
           constrainedEdge,
           targetStart,
           targetEnd,
           SIDE_BASE_TOLERANCE + 0.01,
+        ))
+          return false;
+        if (constraint.source !== "attached") return true;
+        const capPoint =
+          constraint.movingEdge === "sideA" ? edge[1] : edge[0];
+        const capProjection = projectPointToSegment(
+          capPoint,
+          targetStart,
+          targetEnd,
         );
+        const endpointTolerance = 0.01;
+        if (
+          capProjection.rawT < -endpointTolerance ||
+          capProjection.rawT > 1 + endpointTolerance
+        ) {
+          constraint.capProjectedT = capProjection.rawT;
+          constraint.rejectionReason =
+            capProjection.rawT < 0 ? "cap-before-start" : "cap-past-end";
+          rejectedRailCandidates.push({
+            ...constraint,
+            rejectionReason: constraint.rejectionReason,
+          });
+          return false;
+        }
+        constraint.capProjectedT = capProjection.rawT;
+        return true;
       });
 
-    // Starting rail state: evaluates cross-product of attached
-    // candidates after the drag moves a few pixels, locks the best
-    // valid pair together. Once locked, hard rails are mandatory.
+    // Starting rail state upgrades monotonically from no rail, to one hard
+    // rail, to a paired hard lock. Probe the distance the pointer actually
+    // moved; a grid-sized probe makes short drags appear blocked until they
+    // happen to reach the probe length.
     const screenDist = Math.hypot(current.x - start.x, current.y - start.y);
+    const probeDistance = Math.max(rawDistance, 0.0001);
     if (this.drag) {
       this.drag.startRailState ||= "pending";
       if (this.drag.startRailState === "pending") {
-        const probeDistance = Math.max(
-          this.state.grid || 1,
-          8 / Math.max(this.scale, 0.0001),
-        );
         if (screenDist > 3 && (hardAPool.length || hardBPool.length)) {
-          // Evaluate cross-product first, then fall back to a single hard rail.
           let bestPair = null;
-          let bestScore = Infinity;
-          const hasForwardA = hardAPool.some(
-            (candidate) => candidate.signedForwardDirection > 0.05,
-          );
-          const hasForwardB = hardBPool.some(
-            (candidate) => candidate.signedForwardDirection > 0.05,
-          );
-          const evalSet = hardAPool.length && hardBPool.length
-            ? hardAPool.flatMap((sA) =>
-                hardBPool.map((sB) => ({ sideA: sA, sideB: sB })),
-              )
-            : [];
-          if (!evalSet.length && !(hardAPool.length && hardBPool.length)) {
-            for (const sA of hardAPool) evalSet.push({ sideA: sA, sideB: null });
-            for (const sB of hardBPool) evalSet.push({ sideA: null, sideB: sB });
-          }
+          let bestPairScore = Infinity;
+          let bestSingle = null;
+          let bestSingleScore = Infinity;
+          const evalSet = [
+            ...hardAPool.flatMap((sA) =>
+              hardBPool.map((sB) => ({ sideA: sA, sideB: sB })),
+            ),
+            ...hardAPool.map((sideA) => ({ sideA, sideB: null })),
+            ...hardBPool.map((sideB) => ({ sideA: null, sideB })),
+          ];
           for (const pair of evalSet) {
             const cands = [];
             if (pair.sideA) cands.push(makeSideConstraint(pair.sideA));
@@ -1703,7 +1774,8 @@ export class Viewport {
               brush, faceIndex, distance: probeDistance,
               activeAxes: allActiveAxes, constraints: cands,
               followAdjacentSides: this.state.faceExtrusionMode === "snap",
-              mirrorSingleSide: this.state.faceExtrusionMode === "snap",
+              mirrorSingleSide:
+                this.state.faceExtrusionMode === "snap" && cands.length > 1,
               maxSourceAngleDegrees: this.state.faceSourceMaxAngle,
             });
             if (!sol?.cap || !solvedEdgesMatchTargets(sol, cands)) continue;
@@ -1745,8 +1817,6 @@ export class Viewport {
               };
               const d = distancePointToLine(freeCapA2D, origin, end);
               score += d;
-              if (hasForwardA && pair.sideA.signedForwardDirection <= 0.05)
-                score += 1000;
             }
             if (pair.sideB) {
               const origin = pair.sideB.lineOrigin || baseB;
@@ -1756,32 +1826,72 @@ export class Viewport {
               };
               const d = distancePointToLine(freeCapB2D, origin, end);
               score += d;
-              if (hasForwardB && pair.sideB.signedForwardDirection <= 0.05)
-                score += 1000;
             }
-            if (score < bestScore) {
-              bestScore = score;
-              bestPair = pair;
+            if (pair.sideA && pair.sideB) {
+              if (score < bestPairScore) {
+                bestPairScore = score;
+                bestPair = pair;
+              }
+            } else if (score < bestSingleScore) {
+              bestSingleScore = score;
+              bestSingle = pair;
             }
           }
-          if (bestPair) {
-            this.drag.startRailPair = bestPair;
-            this.drag.startRailState = "locked";
+          const selected = bestPair || bestSingle;
+          if (selected) {
+            this.drag.startRailPair = selected;
+            this.drag.startRailState = bestPair
+              ? "paired"
+              : selected.sideA
+                ? "single-sideA"
+                : "single-sideB";
             this.drag.geometryBlocked = false;
             this.drag.geometryBlockedReason = null;
-          } else if (hardAPool.length && hardBPool.length) {
+          } else {
             this.drag.geometryBlocked = true;
             this.drag.geometryBlockedReason =
-              "no valid hard-rail pair at probe distance";
-          } else if (!hardAPool.length && !hardBPool.length) {
-            this.drag.startRailState = "none";
+              hardAPool.length && hardBPool.length
+                ? "invalid-pair"
+                : "no valid hard rail at probe distance";
+            rejectedRailCandidates.push({
+              movingEdge: "sideA+sideB",
+              source: "attached",
+              rejectionReason: hardAPool.length && hardBPool.length
+                ? "invalid-pair"
+                : "no-valid-hard-rail",
+              candidateKeys: [
+                ...hardAPool.map((candidate) => candidate.canonicalKey),
+                ...hardBPool.map((candidate) => candidate.canonicalKey),
+              ],
+            });
           }
-        }
+        // Stay pending when no usable hard rail exists. The lock state only
+        // advances; it never needs a terminal "none" state.
       }
     }
+    }
     const hardPair = this.drag?.startRailPair || null;
-    const hardSideA = hardPair?.sideA || null;
-    const hardSideB = hardPair?.sideB || null;
+    let hardSideA = hardPair?.sideA || null;
+    let hardSideB = hardPair?.sideB || null;
+
+    const recordDuplicateProjectedRails = (candidates) => {
+      const firstByRail = new Map();
+      for (const candidate of candidates) {
+        if (!candidate.projectedRailKey) continue;
+        const first = firstByRail.get(candidate.projectedRailKey);
+        if (first && first.canonicalKey !== candidate.canonicalKey)
+          rejectedRailCandidates.push({
+            ...candidate,
+            rejectionReason: "duplicate-projected-rail",
+          });
+        else firstByRail.set(candidate.projectedRailKey, candidate);
+      }
+    };
+    recordDuplicateProjectedRails(attachedACandidates);
+    recordDuplicateProjectedRails(attachedBCandidates);
+    this.extrusionAcquisitionDebug.rawDistance = rawDistance;
+    this.extrusionAcquisitionDebug.probeDistance = probeDistance;
+    this.extrusionAcquisitionDebug.lockState = this.drag?.startRailState || "pending";
 
     // Try constraint combinations in priority order (most→least constrained).
     const tryConstraints = (candidates) => {
@@ -1798,7 +1908,8 @@ export class Viewport {
         activeAxes: allActiveAxes,
         constraints: candidates,
         followAdjacentSides: this.state.faceExtrusionMode === "snap",
-        mirrorSingleSide: this.state.faceExtrusionMode === "snap",
+        mirrorSingleSide:
+          this.state.faceExtrusionMode === "snap" && sideConstraints.length > 1,
         maxSourceAngleDegrees: this.state.faceSourceMaxAngle,
       });
       if (!sol?.cap || !solvedEdgesMatchTargets(sol, candidates)) return null;
@@ -1877,6 +1988,45 @@ export class Viewport {
       };
     };
 
+    // A single hard rail may drive the preview while the opposite rail is
+    // still outside magnetic range. Upgrade only when the exact pair solves
+    // at the current pointer distance; never replace a paired lock with a
+    // softer or unconstrained result.
+    if (
+      this.drag &&
+      (this.drag.startRailState === "single-sideA" ||
+        this.drag.startRailState === "single-sideB")
+    ) {
+      const fixed =
+        this.drag.startRailState === "single-sideA" ? hardSideA : hardSideB;
+      const oppositePool =
+        this.drag.startRailState === "single-sideA" ? sideBPool : sideAPool;
+      let upgrade = null;
+      for (const candidate of oppositePool) {
+        if (!candidate || candidate.canonicalKey === fixed?.canonicalKey)
+          continue;
+        const fixedConstraint = makeSideConstraint(fixed);
+        const oppositeConstraint = makeSideConstraint(candidate);
+        const evaluated = tryConstraints([fixedConstraint, oppositeConstraint]);
+        if (evaluated && !evaluated.blocked) {
+          upgrade = { candidate, evaluated };
+          break;
+        }
+      }
+      if (upgrade) {
+        const pair =
+          this.drag.startRailState === "single-sideA"
+            ? { sideA: fixed, sideB: upgrade.candidate }
+            : { sideA: upgrade.candidate, sideB: fixed };
+        this.drag.startRailPair = pair;
+        this.drag.startRailState = "paired";
+        hardSideA = pair.sideA;
+        hardSideB = pair.sideB;
+      }
+    }
+    this.extrusionAcquisitionDebug.lockState =
+      this.drag?.startRailState || "pending";
+
     // Evaluate candidate combinations. Starting rails (hardSideA/B)
     // are mandatory for the entire drag and must appear in every
     // combination. Fallback cannot drop a hard rail.
@@ -1922,8 +2072,8 @@ export class Viewport {
         if (capCon.length) consider(tryConstraints([...capCon, cA, cB]));
         consider(tryConstraints([cA, cB]));
       }
-      if (!sideBPool.length && capCon.length) consider(tryConstraints([...capCon, cA]));
-      if (!sideBPool.length) consider(tryConstraints([cA]));
+       if (!sideBPool.length && capCon.length) consider(tryConstraints([...capCon, cA]));
+       consider(tryConstraints([cA]));
     } else if (hardSideB) {
       // Hard sideB exists: must include it. Try with each soft sideA.
       const cB = makeSideConstraint(hardSideB);
@@ -1932,8 +2082,8 @@ export class Viewport {
         if (capCon.length) consider(tryConstraints([...capCon, cA, cB]));
         consider(tryConstraints([cA, cB]));
       }
-      if (!sideAPool.length && capCon.length) consider(tryConstraints([...capCon, cB]));
-      if (!sideAPool.length) consider(tryConstraints([cB]));
+       if (!sideAPool.length && capCon.length) consider(tryConstraints([...capCon, cB]));
+       consider(tryConstraints([cB]));
     } else {
       // No hard rails: free cross-product fallback.
       if (sideAPool.length && sideBPool.length) {
@@ -1966,12 +2116,26 @@ export class Viewport {
           consider(tryConstraints([makeSideConstraint(sB)]));
         }
       }
+      // An attached rail may produce a valid preview before the opposite
+      // magnetic rail enters range. Do not let a distant magnetic candidate
+      // suppress this single-side fallback.
+      for (const sA of attachedACandidates)
+        consider(tryConstraints([makeSideConstraint(sA)]));
+      for (const sB of attachedBCandidates)
+        consider(tryConstraints([makeSideConstraint(sB)]));
       if (capCon.length) consider(tryConstraints(capCon));
     }
 
     // Keep the rail lock through a temporary invalid distance. Only this
     // pointer frame is blocked, so moving back to valid geometry recovers.
     if (this.drag) {
+      if (!result && hardSideA && hardSideB)
+        rejectedRailCandidates.push({
+          movingEdge: "sideA+sideB",
+          source: "attached",
+          rejectionReason: "invalid-pair",
+          candidateKeys: [hardSideA.canonicalKey, hardSideB.canonicalKey],
+        });
       this.drag.geometryBlocked =
         Boolean(result?.resolved.blocked) ||
         (!result && Boolean(hardSideA || hardSideB));
@@ -1979,8 +2143,6 @@ export class Viewport {
         ? result?.resolved.blockedReason ||
           "locked support rails have no valid solution at this distance"
         : null;
-      if (result && this.drag.startRailPair)
-        this.drag.startRailState = "locked";
     }
 
     this.extrusionCandidate = result

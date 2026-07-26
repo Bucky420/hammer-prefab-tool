@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Attached forward finite segments</title>
+    <style>
+      body { margin: 0; background: #101820; color: #e8f0f6; font: 15px Consolas, monospace; }
+      main { width: 900px; padding: 28px; }
+      h1 { margin: 0 0 8px; font: 700 24px Arial; }
+      p { color: #a9bac7; }
+      canvas { width: 768px; height: 768px; border: 1px solid #40515e; background: #101820; }
+      strong { color: #59e69c; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>failtest2: finite attached forward segments</h1>
+      <p><strong>Expected:</strong> short drags preview continuously, then upgrade to paired rails.</p>
+      <canvas width="768" height="768"></canvas>
+      <script>
+        const c = document.querySelector("canvas").getContext("2d");
+        const scale = 1.765625, ox = -130, oy = -146;
+        const p = (x, y) => ({ x: 384 + ox + x * scale, y: 384 + oy - y * scale });
+        const line = (points, color, width = 3) => {
+          c.strokeStyle = color; c.lineWidth = width; c.beginPath();
+          points.forEach(([x, y], i) => { const q = p(x, y); i ? c.lineTo(q.x, q.y) : c.moveTo(q.x, q.y); });
+          c.stroke();
+        };
+        line([[22,32],[17,-19],[262,-68],[272,32],[22,32]], "#f4f7fa", 4);
+        line([[17,83],[22,32],[-59.447,32],[-62.88,67.02],[17,83]], "#f4f7fa", 3);
+        line([[17,-19],[22,32],[-59.447,32]], "#4dabf7", 8);
+        line([[17,-19],[-61.196,13.552]], "#ff4266", 8);
+        line([[22,32],[-59.447,32]], "#c86cff", 6);
+        line([[17,-19],[-61.196,13.552]], "#c86cff", 6);
+      </script>
+    </main>
+  </body>
+</html>

@@ -243,13 +243,6 @@
         "candidatePools": {
           "sideB": [
             {
-              "targetBrushId": "imported-50001",
-              "targetFaceIndex": 5,
-              "source": "attached",
-              "attachmentKind": "direct",
-              "signedForwardDirection": 0
-            },
-            {
               "targetBrushId": "imported-50002",
               "targetFaceIndex": 5,
               "source": "attached",
