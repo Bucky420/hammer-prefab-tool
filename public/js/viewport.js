@@ -1324,7 +1324,11 @@ export class Viewport {
           source === "attached",
         );
         if (!boundaryFace) continue;
+        // A physically attached rail is already anchored to the source
+        // corner; its finite direction and solved geometry remain the hard
+        // safeguards. The angle gate is for magnetic acquisition only.
         if (
+          source !== "attached" &&
           !railWithinAngleLimit(
             railDirection,
             sourceNormalDir,
