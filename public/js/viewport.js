@@ -1373,6 +1373,9 @@ export class Viewport {
           end,
           extNormal,
         );
+        let candidateAttachmentPoint = attach.point;
+        let candidateRawSegmentT = attach.rawT;
+        let candidateAvailableForwardLength = usableForwardLength;
         let distancePx;
         let attachmentKind;
         if (source === "attached") {
@@ -1504,14 +1507,47 @@ export class Viewport {
           const pastFiniteEnd =
             (closest.rawT < 0 || closest.rawT > 1) &&
             segmentDistancePx > 18;
+          const magneticUsableForwardLength = availableForwardSegmentLength(
+            closestWorld.point,
+            start,
+            end,
+            extNormal,
+          );
+          candidateAttachmentPoint = closestWorld.point;
+          candidateRawSegmentT = closestWorld.rawT;
+          candidateAvailableForwardLength = magneticUsableForwardLength;
           const lockedKey = this.drag?.sideRailLocks?.[movingEdge];
           const retained =
             lockedKey === group.key && candidateDistance <= 18;
           if (
             pastFiniteEnd ||
+            magneticUsableForwardLength <= 0.01 ||
             (!touches && !capTouches && candidateDistance > 12 && !retained)
-          )
+          ) {
+            if (magneticUsableForwardLength <= 0.01)
+              rejectedRailCandidates.push({
+                movingEdge,
+                targetBrushId: group.brush.id,
+                targetFaceIndex: boundaryFace.faceIndex,
+                canonicalKey: group.key,
+                projectedRailKey: projectedRailKey(
+                  group.start,
+                  group.end,
+                  axisX,
+                  axisY,
+                ),
+                source,
+                rejectionReason: "segment-behind-source",
+                attachmentPoint: closestWorld.point,
+                rawSegmentT: closestWorld.rawT,
+                availableForwardSegmentLength: magneticUsableForwardLength,
+                capProjectedT: closestWorld.t,
+                corridorSideScore: boundaryFace.corridorSide,
+                finiteSegmentDistancePx: segmentDistancePx,
+                infiniteLineDistancePx: capLineDistancePx,
+              });
             continue;
+          }
           distancePx = Math.min(capLineDistancePx, segmentDistancePx);
           const startEndpointDistance = Math.hypot(
             freeCapScreen.x - group.startScreen.x,
@@ -1554,10 +1590,9 @@ export class Viewport {
           attachmentKind,
           baseContactDistance:
             source === "attached" ? baseLineDistanceWorld : undefined,
-          attachmentPoint: source === "attached" ? attach.point : undefined,
-          rawSegmentT: source === "attached" ? attach.rawT : undefined,
-          availableForwardSegmentLength:
-            source === "attached" ? usableForwardLength : undefined,
+          attachmentPoint: candidateAttachmentPoint,
+          rawSegmentT: candidateRawSegmentT,
+          availableForwardSegmentLength: candidateAvailableForwardLength,
           capProjectedT,
           cornerSnap: group.cornerSnap,
           corridorSideScore: boundaryFace.corridorSide,

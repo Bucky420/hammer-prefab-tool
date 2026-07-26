@@ -309,16 +309,14 @@ const geometry = (brushes) =>
         );
       }
       for (const side of sides) {
-        if (side.source === "attached") {
-          assert.ok(
-            (side.availableForwardSegmentLength || 0) > 0,
-            `${scenario.name} L${snapshot.distance}: finite forward rail length`,
-          );
-          assert.ok(
-            side.capProjectedT >= -0.01 && side.capProjectedT <= 1.01,
-            `${scenario.name} L${snapshot.distance}: cap remains on finite rail`,
-          );
-        }
+        assert.ok(
+          (side.availableForwardSegmentLength || 0) > 0,
+          `${scenario.name} L${snapshot.distance}: finite forward rail length`,
+        );
+        assert.ok(
+          side.capProjectedT >= -0.01 && side.capProjectedT <= 1.01,
+          `${scenario.name} L${snapshot.distance}: cap remains on finite rail`,
+        );
       }
       const points = [
         snapshot.resolved.finalCorners.baseA,
