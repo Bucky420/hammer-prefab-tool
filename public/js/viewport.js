@@ -1325,14 +1325,11 @@ export class Viewport {
           source === "attached",
         );
         if (!boundaryFace) continue;
-        if (
-          !railWithinAngleLimit(
-            railDirection,
-            sourceNormalDir,
-            this.state.faceRailMaxAngle,
-          )
-        )
-          continue;
+        const railAngleAllowed = railWithinAngleLimit(
+          railDirection,
+          sourceNormalDir,
+          this.state.faceRailMaxAngle,
+        );
         const forwardStart =
           (start.x - baseCornerWorld.x) * sourceNormalDir.x +
           (start.y - baseCornerWorld.y) * sourceNormalDir.y;
@@ -1395,6 +1392,22 @@ export class Viewport {
             : endpointDistance <= RELEASE_RADIUS) &&
           (closestWorld.t <= 0.05 || closestWorld.t >= 0.95) &&
           !endpointReleased;
+        const endpointAngleBypass =
+          source === "magnetic" &&
+          !railAngleAllowed &&
+          endpointDistance <= RELEASE_RADIUS;
+        if (
+          !railAngleAllowed &&
+          source === "attached" &&
+          !endpointAngleBypass
+        )
+          continue;
+        if (
+          !railAngleAllowed &&
+          source === "magnetic" &&
+          !endpointAngleBypass
+        )
+          continue;
         const attach = projectPointToSegment(baseCornerWorld, start, end);
         const finiteAttachDistance = Math.hypot(
           baseCornerWorld.x - attach.point.x,
