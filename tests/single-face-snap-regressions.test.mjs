@@ -360,6 +360,30 @@ const geometry = (brushes) =>
         `${scenario.name}: magnetic cap reaches finite endpoint`,
       );
     }
+    if (Number.isInteger(scenario.backwardReleaseIndex)) {
+      const backward = snapshots[scenario.backwardReleaseIndex];
+      const backwardSide = backward.resolved.constraints.find(
+        (side) => side.movingEdge === scenario.endpointSide,
+      );
+      assert.equal(
+        backwardSide.endpointSnapReleased,
+        true,
+        `${scenario.name}: backward movement releases endpoint pin`,
+      );
+      assert.equal(
+        backwardSide.cornerSnap,
+        undefined,
+        `${scenario.name}: backward movement follows the pointer again`,
+      );
+      const reacquiredSide = finalSides.find(
+        (side) => side.movingEdge === scenario.endpointSide,
+      );
+      assert.equal(
+        reacquiredSide.endpointSnapActive,
+        true,
+        `${scenario.name}: forward movement reacquires endpoint`,
+      );
+    }
     if (scenario.expectedFinalCap)
       assertClose(
         final.resolved.solvedEdges.cap,

@@ -220,8 +220,8 @@
     "view": "top",
     "grid": 16,
     "extrusionMode": "snap",
-    "faceRailMaxAngle": 89,
-    "faceSourceMaxAngle": 135
+    "faceRailMaxAngle": 15,
+    "faceSourceMaxAngle": 90
   },
   "viewport": {
     "width": 768,
@@ -255,12 +255,15 @@
       "pair": ["imported-50006", "imported-50003"],
       "pairFaces": [3, 5],
       "endpointSide": "sideA",
+      "distances": [0, 1, 2, 4, 8, 16, 8, 2, 16],
+      "backwardReleaseIndex": 7,
       "states": [
         "pending",
         "pending",
         "single-sideB",
         "single-sideB",
         "single-sideB",
+        "paired",
         "paired",
         "paired",
         "paired"

@@ -58,6 +58,7 @@ import { validateBrush } from "./brush-validation.js";
  * @property {boolean} [followAdjacentSides]
  * @property {boolean} [mirrorSingleSide]
  * @property {number} [maxSourceAngleDegrees]
+ * @property {number} [tangentOffset]
  */
 
 /**
@@ -126,7 +127,14 @@ import { validateBrush } from "./brush-validation.js";
  */
 
 /**
- * @typedef {RailExtrusionSnapTarget | CornerExtrusionSnapTarget | PlaneExtrusionSnapTarget} ExtrusionSnapTarget
+ * @typedef {object} PointerExtrusionSnapTarget
+ * @property {"pointer-offset"} type
+ * @property {ActiveAxes} activeAxes
+ * @property {number} tangentOffset
+ */
+
+/**
+ * @typedef {RailExtrusionSnapTarget | CornerExtrusionSnapTarget | PlaneExtrusionSnapTarget | PointerExtrusionSnapTarget} ExtrusionSnapTarget
  */
 
 /**
@@ -1176,6 +1184,7 @@ export function solveSingleFaceExtrusion(options) {
     followAdjacentSides = false,
     mirrorSingleSide = false,
     maxSourceAngleDegrees = 135,
+    tangentOffset = 0,
   } = options;
   const face = brush?.faces?.[faceIndex];
   if (!brush || !face || face.length < 3) return null;
@@ -1227,12 +1236,12 @@ export function solveSingleFaceExtrusion(options) {
   const baseDir = dotA >= dotB ? candA : candB;
 
   const freeCapA = {
-    x: baseA.x + srcNormal2D.x * distance,
-    y: baseA.y + srcNormal2D.y * distance,
+    x: baseA.x + srcNormal2D.x * distance + baseDir.x * tangentOffset,
+    y: baseA.y + srcNormal2D.y * distance + baseDir.y * tangentOffset,
   };
   const freeCapB = {
-    x: baseB.x + srcNormal2D.x * distance,
-    y: baseB.y + srcNormal2D.y * distance,
+    x: baseB.x + srcNormal2D.x * distance + baseDir.x * tangentOffset,
+    y: baseB.y + srcNormal2D.y * distance + baseDir.y * tangentOffset,
   };
 
   const adjSideDir = (group) => {
@@ -1271,6 +1280,21 @@ export function solveSingleFaceExtrusion(options) {
 
   let fallbackSideA = followAdjacentSides ? adjSideDir(groupA) : srcNormal2D;
   let fallbackSideB = followAdjacentSides ? adjSideDir(groupB) : srcNormal2D;
+  if (Math.abs(tangentOffset) > 0.0001 && distance > 0.0001) {
+    const pointerDirection = {
+      x: srcNormal2D.x * distance + baseDir.x * tangentOffset,
+      y: srcNormal2D.y * distance + baseDir.y * tangentOffset,
+    };
+    const pointerLength = Math.hypot(pointerDirection.x, pointerDirection.y);
+    if (pointerLength > 0.0001) {
+      const normalizedPointerDirection = {
+        x: pointerDirection.x / pointerLength,
+        y: pointerDirection.y / pointerLength,
+      };
+      if (!sideAConstraint) fallbackSideA = normalizedPointerDirection;
+      if (!sideBConstraint) fallbackSideB = normalizedPointerDirection;
+    }
+  }
   if (followAdjacentSides) {
     const signedLimit = Math.max(
       90,
@@ -1576,6 +1600,7 @@ function offsetFacePlaneCap(
     followAdjacentSides: mode === "parallel" || mode === "snap",
     mirrorSingleSide: mode === "snap",
     maxSourceAngleDegrees,
+    tangentOffset: snapTarget?.tangentOffset || 0,
   };
   let single = solveSingleFaceExtrusion(options);
   if (!single && mode === "snap")

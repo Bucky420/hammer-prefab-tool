@@ -173,6 +173,7 @@ export class Viewport {
       this.drag.startRailState = "pending";
       this.drag.sideRailLocks = null;
       this.drag.sideRailEndpointLocks = null;
+      this.drag.sideRailEndpointDistances = null;
     }
     this.requestDraw();
     return true;
@@ -886,6 +887,17 @@ export class Viewport {
       extNormal.x *= -1;
       extNormal.y *= -1;
     }
+    const pointerStartWorld = this.world(start);
+    const pointerCurrentWorld = this.world(current);
+    const pointerTangentOffset =
+      this.state.faceExtrusionMode === "snap"
+        ? ((pointerCurrentWorld[axisX] - pointerStartWorld[axisX]) *
+            srcDir2D.x +
+            (pointerCurrentWorld[axisY] - pointerStartWorld[axisY]) *
+              srcDir2D.y) /
+          srcLen2D
+        : 0;
+    if (this.drag) this.drag.pointerTangentOffset = pointerTangentOffset;
     const closestPointOnSegment = (point, a, b) => {
       const dx = b.x - a.x,
         dy = b.y - a.y,
@@ -901,12 +913,24 @@ export class Viewport {
     };
 
     const freeCapA2D = {
-      x: baseA.x + extNormal.x * rawDistance,
-      y: baseA.y + extNormal.y * rawDistance,
+      x:
+        baseA.x +
+        extNormal.x * rawDistance +
+        (srcDir2D.x / srcLen2D) * pointerTangentOffset,
+      y:
+        baseA.y +
+        extNormal.y * rawDistance +
+        (srcDir2D.y / srcLen2D) * pointerTangentOffset,
     };
     const freeCapB2D = {
-      x: baseB.x + extNormal.x * rawDistance,
-      y: baseB.y + extNormal.y * rawDistance,
+      x:
+        baseB.x +
+        extNormal.x * rawDistance +
+        (srcDir2D.x / srcLen2D) * pointerTangentOffset,
+      y:
+        baseB.y +
+        extNormal.y * rawDistance +
+        (srcDir2D.y / srcLen2D) * pointerTangentOffset,
     };
 
     // Corner-based snap acquisition.
@@ -1383,10 +1407,17 @@ export class Viewport {
         const lockedKey = this.drag?.sideRailLocks?.[movingEdge];
         const endpointLocked =
           this.drag?.sideRailEndpointLocks?.[movingEdge] === group.key;
+        const endpointLockDistance =
+          this.drag?.sideRailEndpointDistances?.[movingEdge];
+        const endpointReleasedBackward =
+          endpointLocked &&
+          Number.isFinite(endpointLockDistance) &&
+          rawDistance <
+            endpointLockDistance - RELEASE_RADIUS / Math.max(this.scale, 0.0001);
         const endpointReleased =
           lockedKey === group.key &&
           endpointLocked &&
-          pastFiniteEnd;
+          (pastFiniteEnd || endpointReleasedBackward);
         const endpointSnapActive =
           (source === "attached"
             ? endpointAlongDistance <= RELEASE_RADIUS
@@ -1399,12 +1430,6 @@ export class Viewport {
           source === "magnetic" &&
           !railAngleAllowed &&
           endpointDistance <= RELEASE_RADIUS;
-        if (
-          !railAngleAllowed &&
-          source === "attached" &&
-          !endpointAngleBypass
-        )
-          continue;
         if (
           !railAngleAllowed &&
           source === "magnetic" &&
@@ -1902,6 +1927,7 @@ export class Viewport {
               mirrorSingleSide:
                 this.state.faceExtrusionMode === "snap" && cands.length > 1,
               maxSourceAngleDegrees: this.state.faceSourceMaxAngle,
+              tangentOffset: pointerTangentOffset,
             });
             if (!sol?.cap || !solvedEdgesMatchTargets(sol, cands)) continue;
             const snapTarget = {
@@ -1915,6 +1941,7 @@ export class Viewport {
                 capB: sol.capB,
               },
               distance: rawDistance,
+              tangentOffset: pointerTangentOffset,
             };
             const selection = this.drag?.selection || new Set([id]);
             const resolved = resolveExtrusion({
@@ -1996,8 +2023,22 @@ export class Viewport {
     }
     }
     const hardPair = this.drag?.startRailPair || null;
-    const refreshLockedRail = (rail, pool) => {
+    const refreshLockedRail = (rail, pool, movingEdge) => {
       if (!rail) return rail;
+      const endpointLockDistance =
+        this.drag?.sideRailEndpointDistances?.[movingEdge];
+      if (
+        rail.endpointSnapActive &&
+        Number.isFinite(endpointLockDistance) &&
+        rawDistance <
+          endpointLockDistance - RELEASE_RADIUS / Math.max(this.scale, 0.0001)
+      )
+        return {
+          ...rail,
+          cornerSnap: undefined,
+          endpointSnapActive: false,
+          endpointSnapReleased: true,
+        };
       const current = pool.find(
         (candidate) => candidate.canonicalKey === rail.canonicalKey,
       );
@@ -2008,8 +2049,8 @@ export class Viewport {
     };
     if (hardPair && this.drag) {
       const refreshedPair = {
-        sideA: refreshLockedRail(hardPair.sideA, sideAPool),
-        sideB: refreshLockedRail(hardPair.sideB, sideBPool),
+        sideA: refreshLockedRail(hardPair.sideA, sideAPool, "sideA"),
+        sideB: refreshLockedRail(hardPair.sideB, sideBPool, "sideB"),
       };
       if (
         refreshedPair.sideA !== hardPair.sideA ||
@@ -2058,6 +2099,7 @@ export class Viewport {
         mirrorSingleSide:
           this.state.faceExtrusionMode === "snap" && sideConstraints.length > 1,
         maxSourceAngleDegrees: this.state.faceSourceMaxAngle,
+        tangentOffset: pointerTangentOffset,
       });
       if (sol?.cap) {
         let endpointUpgraded = false;
@@ -2115,6 +2157,7 @@ export class Viewport {
               this.state.faceExtrusionMode === "snap" &&
               sideConstraints.length > 1,
             maxSourceAngleDegrees: this.state.faceSourceMaxAngle,
+            tangentOffset: pointerTangentOffset,
           });
       }
       if (!sol?.cap || !solvedEdgesMatchTargets(sol, candidates)) return null;
@@ -2149,6 +2192,7 @@ export class Viewport {
         },
         targetBrushIds: [...new Set(candidates.map((c) => c.targetBrushId))],
         distance: rawDistance,
+        tangentOffset: pointerTangentOffset,
       };
       const resolved = resolveExtrusion({
         sourceBrushes: this.state.brushes,
@@ -2370,6 +2414,9 @@ export class Viewport {
       const endpointLocks = {
         ...(this.drag.sideRailEndpointLocks || {}),
       };
+      const endpointDistances = {
+        ...(this.drag.sideRailEndpointDistances || {}),
+      };
       for (const constraint of result.snapTarget.conforming) {
         if (constraint.movingEdge === "cap") continue;
         if (
@@ -2377,12 +2424,18 @@ export class Viewport {
             constraint.source === "attached") &&
           constraint.endpointSnapActive &&
           !constraint.endpointSnapReleased
-        )
-          endpointLocks[constraint.movingEdge] = constraint.canonicalKey;
-        else if (constraint.endpointSnapReleased)
+        ) {
+          if (endpointLocks[constraint.movingEdge] !== constraint.canonicalKey) {
+            endpointLocks[constraint.movingEdge] = constraint.canonicalKey;
+            endpointDistances[constraint.movingEdge] = rawDistance;
+          }
+        } else if (constraint.endpointSnapReleased) {
           delete endpointLocks[constraint.movingEdge];
+          delete endpointDistances[constraint.movingEdge];
+        }
       }
       this.drag.sideRailEndpointLocks = endpointLocks;
+      this.drag.sideRailEndpointDistances = endpointDistances;
     }
     if (this.drag) this.drag.extrusionCandidate = this.extrusionCandidate;
     if (result?.solvedEdges) {
@@ -2758,7 +2811,15 @@ export class Viewport {
               grid: this.state.grid,
               guideSelection: this.drag.guideSelection,
               mode: this.state.faceExtrusionMode,
-              snapTarget: null,
+              snapTarget:
+                this.state.faceExtrusionMode === "snap" &&
+                Math.abs(this.drag.pointerTangentOffset || 0) > 0.0001
+                  ? {
+                      type: "pointer-offset",
+                      activeAxes: this.axes(),
+                      tangentOffset: this.drag.pointerTangentOffset,
+                    }
+                  : null,
               maxSourceAngleDegrees: this.state.faceSourceMaxAngle,
             }));
         this.drag.resolvedExtrusion = resolved;
@@ -3780,6 +3841,24 @@ export class Viewport {
       drawDebugEdge(solved.sideB, "#4dabf7", 7, true);
       drawDebugEdge(solved.cap, "#19d97a", 7, true);
       drawDebugEdge(solved.base, "#19d97a", 7, true);
+      if (this.drag.current) {
+        const { x, y } = this.drag.current;
+        context.fillStyle = "#ffffff";
+        context.strokeStyle = "#000000";
+        context.lineWidth = 2;
+        context.lineJoin = "round";
+        context.beginPath();
+        context.moveTo(x, y);
+        context.lineTo(x + 1, y + 18);
+        context.lineTo(x + 5, y + 14);
+        context.lineTo(x + 10, y + 22);
+        context.lineTo(x + 14, y + 20);
+        context.lineTo(x + 9, y + 12);
+        context.lineTo(x + 16, y + 12);
+        context.closePath();
+        context.fill();
+        context.stroke();
+      }
       context.lineWidth = 1;
       context.lineCap = "butt";
     }
