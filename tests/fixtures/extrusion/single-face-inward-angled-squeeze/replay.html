@@ -1,0 +1,12 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Inward angled squeeze</title><style>
+body{margin:0;background:#101419;color:#edf3f8;font:15px Consolas,monospace}main{width:1200px;height:720px;padding:28px 32px}h1{font:700 25px Arial;margin:0 0 6px}.sub{color:#aebdca;margin-bottom:20px}.panels{display:grid;grid-template-columns:1fr 1fr;gap:20px}section{border:1px solid #3b4650;background:#171d23;padding:16px}h2{font:700 17px Arial}.bad{color:#ff6677}.good{color:#56e69d}canvas{background:#0c1014;border:1px solid #2c3740;width:100%;height:360px}pre{white-space:pre-wrap;color:#c9d4dc}</style></head><body><main>
+<h1>Single-Face Snap: Inward Angled Squeeze</h1><div class="sub">center_test continuation · Top · Grid 16 · Snap · rail 15° · source 90° · inward-source:f:1</div><div class="panels">
+<section><h2 class="bad">Observed: Pair Lost</h2><canvas id="before" width="540" height="360"></canvas><pre>sideA candidates: 0
+sideB candidates: 0
+The selected yellow cap is already beyond both finite target segments.
+Current behavior falls back to straight extrusion.</pre></section>
+<section><h2 class="good">Expected: Continued Pair</h2><canvas id="after" width="540" height="360"></canvas><pre>sideA → imported-50001:f:2
+sideB → imported-50031:f:3
+Each source side connects back to its physical rail endpoint.
+The mandatory pair continues as a convex narrowing wedge.</pre></section></div>
+<script>function draw(id,ok){const c=document.getElementById(id).getContext('2d'),s=4,o={x:-300,y:255},p=q=>({x:o.x+q.x*s,y:o.y-q.y*s});c.strokeStyle='#26323b';for(let x=96;x<280;x+=16){c.beginPath();c.moveTo(p({x,y:-24}).x,20);c.lineTo(p({x,y:80}).x,340);c.stroke()}for(let y=-16;y<80;y+=16){c.beginPath();c.moveTo(20,p({x:0,y}).y);c.lineTo(520,p({x:0,y}).y);c.stroke()}const line=(a,b,col,w=4)=>{a=p(a);b=p(b);c.strokeStyle=col;c.lineWidth=w;c.beginPath();c.moveTo(a.x,a.y);c.lineTo(b.x,b.y);c.stroke()};line({x:130,y:25.6},{x:257,y:51},'#cb7cff');line({x:133,y:0},{x:262,y:0},'#58a9ef');const old=[{x:257,y:51},{x:262,y:0},{x:197.693,y:0},{x:193.93,y:38.386}],next=ok?[{x:193.93,y:38.386},{x:197.693,y:0},{x:133.386,y:0},{x:130.86,y:25.772}]:[{x:193.93,y:38.386},{x:197.693,y:0},{x:134,y:-6.2},{x:130.2,y:32.1}];for(const [poly,col] of [[old,'#f3ce46'],[next,ok?'#47e191':'#ff5267']]){c.beginPath();let a=p(poly[0]);c.moveTo(a.x,a.y);for(const q of poly.slice(1)){a=p(q);c.lineTo(a.x,a.y)}c.closePath();c.fillStyle=col+'55';c.fill();c.strokeStyle=col;c.lineWidth=3;c.stroke()}}draw('before',false);draw('after',true)</script></main></body></html>

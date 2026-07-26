@@ -42,8 +42,10 @@
  * @property {number} signedForwardDirection
  * @property {number | null} sourceAngleDifferenceDegrees
  * @property {number | null} railAngleDifferenceDegrees
+ * @property {number | null} solvedEdgeToRailDistance
  * @property {string} canonicalKey
  * @property {"attached" | "magnetic"} source
+ * @property {"direct" | "source-chain"} [attachmentKind]
  * @property {number} [targetEdgeIndex]
  * @property {Vector3} [targetFaceNormal]
  * @property {string} [projectedRailKey]

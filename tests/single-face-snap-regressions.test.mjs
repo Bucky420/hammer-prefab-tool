@@ -66,6 +66,32 @@ const geometry = (brushes) =>
     vertices: brush.vertices,
     faces: brush.faces,
   }));
+const assertConvexPair = (result, label) => {
+  assert.ok(result.resolved, `${label}: resolved extrusion`);
+  const sides = result.resolved.constraints.filter(
+    (constraint) => constraint.movingEdge !== "cap",
+  );
+  assert.equal(sides.length, 2, `${label}: two side constraints`);
+  assert.equal(
+    new Set(sides.map((constraint) => constraint.canonicalKey)).size,
+    2,
+    `${label}: distinct physical rails`,
+  );
+  assert.equal(result.viewport.drag.startRailState, "locked", `${label}: locked pair`);
+  assert.equal(result.resolved.blocked, false, `${label}: valid wedge`);
+  const { baseA, baseB, capA, capB } = result.resolved.finalCorners;
+  const points = [baseA, baseB, capB, capA];
+  const signs = points.map((point, index) => {
+    const next = points[(index + 1) % points.length];
+    const after = points[(index + 2) % points.length];
+    return Math.sign(
+      (next.x - point.x) * (after.y - next.y) -
+        (next.y - point.y) * (after.x - next.x),
+    );
+  });
+  assert.ok(signs.every((sign) => sign && sign === signs[0]), `${label}: convex order`);
+  return sides;
+};
 
 {
   const { data: fixture, url } = loadFixture("single-face-dual-brush-squeeze");
@@ -117,6 +143,62 @@ const geometry = (brushes) =>
   assert.ok(reversedResult, "reversed target rails remain solvable");
   assertClose(reversedResult.capA, resolved.finalCorners.capA, "reversed sideA");
   assertClose(reversedResult.capB, resolved.finalCorners.capB, "reversed sideB");
+  assert.ok(existsSync(new URL(fixture.expected.screenshot, url)));
+}
+
+{
+  const { data: fixture, url } = loadFixture("single-face-inward-angled-squeeze");
+  const { viewport, rawDistance, resolved } = replay(fixture);
+  assert.ok(Math.abs(rawDistance - fixture.expected.rawDistance) < 0.000001);
+  assert.ok(resolved, "inward angled squeeze resolves its continued rail pair");
+  const sides = resolved.constraints.filter((item) => item.movingEdge !== "cap");
+  assert.deepEqual(sides.map((item) => item.movingEdge), fixture.expected.constraintEdges);
+  assert.deepEqual(sides.map((item) => item.targetBrushId), fixture.expected.targetBrushIds);
+  assert.deepEqual(sides.map((item) => item.targetFaceIndex), fixture.expected.targetFaceIndices);
+  assert.equal(viewport.drag.startRailState, "locked");
+  assertClose(
+    viewport.extrusionAcquisitionDebug,
+    fixture.acquisition.candidatePools,
+    "recorded inward candidate pools",
+  );
+  assertClose(sides, fixture.acquisition.chosenConstraints, "chosen inward rails");
+  assert.ok(
+    viewport.extrusionAcquisitionDebug.sideA[0].signedForwardDirection < 0 &&
+      viewport.extrusionAcquisitionDebug.sideB[0].signedForwardDirection < 0,
+    "canonical direction opposite extrusion does not reject undirected rails",
+  );
+  assertClose(resolved.finalCorners, fixture.expected.finalCorners, "inward corners");
+  assertClose(resolved.solvedEdges, fixture.expected.solvedEdges, "inward edges");
+  assert.equal(resolved.blocked, false);
+  assert.equal(resolved.previewBrushes[0], resolved.brushes[0]);
+  assertClose(
+    geometry(resolved.previewBrushes),
+    fixture.expected.previewGeometry,
+    "inward preview geometry",
+  );
+  assertClose(
+    geometry(resolved.brushes),
+    fixture.expected.committedGeometry,
+    "inward commit geometry",
+  );
+
+  const reversedSource = structuredClone(fixture);
+  reversedSource.editor.brushes[0].faces[1].reverse();
+  assertConvexPair(replay(reversedSource), "reversed source winding");
+
+  const reversedTargets = structuredClone(fixture);
+  reversedTargets.editor.brushes[1].faces[2].reverse();
+  reversedTargets.editor.brushes[2].faces[3].reverse();
+  assertConvexPair(replay(reversedTargets), "reversed target endpoint order");
+
+  const clockwise = structuredClone(fixture);
+  for (const brush of clockwise.editor.brushes)
+    for (const vertex of brush.vertices) vertex.y *= -1;
+  clockwise.gesture.pointerStart.y =
+    clockwise.viewport.height - clockwise.gesture.pointerStart.y;
+  clockwise.gesture.pointerEnd.y =
+    clockwise.viewport.height - clockwise.gesture.pointerEnd.y;
+  assertConvexPair(replay(clockwise), "clockwise mirrored placement");
   assert.ok(existsSync(new URL(fixture.expected.screenshot, url)));
 }
 

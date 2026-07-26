@@ -1001,6 +1001,29 @@ export class Viewport {
       sideA: adjacentSourceDirection(groupA),
       sideB: adjacentSourceDirection(groupB),
     };
+    const adjacentSourceSegment = (group) => {
+      const base = {
+        x: brush.vertices[group[0]][axisX],
+        y: brush.vertices[group[0]][axisY],
+      };
+      const adjacent = brush.faces.find(
+        (candidate, index) =>
+          index !== faceIndex &&
+          group.filter((vertexIndex) => candidate.includes(vertexIndex)).length >= 2,
+      );
+      if (!adjacent) return null;
+      const other = adjacent
+        .map((vertexIndex) => ({
+          x: brush.vertices[vertexIndex][axisX],
+          y: brush.vertices[vertexIndex][axisY],
+        }))
+        .find((point) => Math.hypot(point.x - base.x, point.y - base.y) > 0.0001);
+      return other ? { base, other } : null;
+    };
+    const sourceSideSegments = {
+      sideA: adjacentSourceSegment(groupA),
+      sideB: adjacentSourceSegment(groupB),
+    };
 
     // Find the best target edge for the cap to lie on. The cap
     // is always parallel to the base, at some perpendicular offset.
@@ -1185,15 +1208,14 @@ export class Viewport {
       const length = Math.hypot(dx, dy);
       return length < 0.0001 ? null : { x: dx / length, y: dy / length };
     };
-    // Attached-edge snapping: returns all deduplicated candidates
-    // whose target edges physically touch the source base corner.
-    // Scored by perpendicular distance from the free cap corner to
-    // the rail line, not by forwardDot (which biases toward straight).
+    // Attached-edge snapping accepts direct contact or a collinear source-side
+    // chain whose opposite endpoint touches the physical target segment.
     const EPSILON_ATTACH = 0.5;
     const SIDE_BASE_TOLERANCE = Math.max(
       EPSILON_ATTACH,
       (this.state.grid || 1) * 0.05,
     );
+    const rejectedRailCandidates = [];
     const resolveProjectedRailCandidates = (
       movingEdge,
       baseCornerWorld,
@@ -1318,6 +1340,11 @@ export class Viewport {
           start,
           end,
         );
+        const baseLineDistanceWorld = distancePointToLine(
+          baseCornerWorld,
+          start,
+          end,
+        );
         const closestWorld = closestPointOnSegment(
           freeCapWorld2D,
           start,
@@ -1328,10 +1355,72 @@ export class Viewport {
           freeCapWorld2D.y - closestWorld.point.y,
         );
         let distancePx;
+        let attachmentKind;
         if (source === "attached") {
           const attach = closestPointOnSegment(baseCornerWorld, start, end);
-          if (Math.hypot(baseCornerWorld.x - attach.point.x, baseCornerWorld.y - attach.point.y) > EPSILON_ATTACH)
-            continue;
+          const finiteAttachDistance = Math.hypot(
+            baseCornerWorld.x - attach.point.x,
+            baseCornerWorld.y - attach.point.y,
+          );
+          if (finiteAttachDistance <= EPSILON_ATTACH) {
+            attachmentKind = "direct";
+          } else {
+            const sourceSegment = sourceSideSegments[movingEdge];
+            const sourceDirection = sourceSegment && {
+              x: sourceSegment.other.x - sourceSegment.base.x,
+              y: sourceSegment.other.y - sourceSegment.base.y,
+            };
+            const sourceLength = sourceDirection &&
+              Math.hypot(sourceDirection.x, sourceDirection.y);
+            const sourceAlignment = sourceLength
+              ? Math.abs(
+                  (sourceDirection.x * railDirection.x +
+                    sourceDirection.y * railDirection.y) /
+                    sourceLength,
+                )
+              : 0;
+            const sourceEndpoint = sourceSegment &&
+              closestPointOnSegment(sourceSegment.other, start, end);
+            if (
+              !sourceSegment ||
+              baseLineDistanceWorld > EPSILON_ATTACH ||
+              sourceAlignment < 0.9999 ||
+              Math.hypot(
+                sourceSegment.other.x - sourceEndpoint.point.x,
+                sourceSegment.other.y - sourceEndpoint.point.y,
+              ) > EPSILON_ATTACH
+            ) {
+              rejectedRailCandidates.push({
+                movingEdge,
+                targetBrushId: group.brush.id,
+                targetFaceIndex: boundaryFace.faceIndex,
+                canonicalKey: group.key,
+                projectedRailKey: projectedRailKey(
+                  group.start,
+                  group.end,
+                  axisX,
+                  axisY,
+                ),
+                source,
+                rejectionReason:
+                  "base corner is outside the target segment and has no collinear source-side chain",
+                corridorSideScore: boundaryFace.corridorSide,
+                signedForwardDirection: Math.max(forwardStart, forwardEnd),
+                sourceAngleDifferenceDegrees: angleDifferenceDegrees(
+                  railDirection,
+                  sourceSideDirections[movingEdge],
+                ),
+                railAngleDifferenceDegrees: angleDifferenceDegrees(
+                  railDirection,
+                  sourceNormalDir,
+                ),
+                finiteSegmentDistancePx: segmentDistanceWorld * this.scale,
+                infiniteLineDistancePx: lineDistanceWorld * this.scale,
+              });
+              continue;
+            }
+            attachmentKind = "source-chain";
+          }
           distancePx = lineDistanceWorld;
         } else {
           if (Math.max(forwardStart, forwardEnd) <= 0.05)
@@ -1388,6 +1477,7 @@ export class Viewport {
           projectedRailKey: projectedRailKey(group.start, group.end, axisX, axisY),
           canonicalKey: group.key,
           source,
+          attachmentKind,
           cornerSnap: group.cornerSnap,
           corridorSideScore: boundaryFace.corridorSide,
           signedForwardDirection: Math.max(forwardStart, forwardEnd),
@@ -1401,6 +1491,7 @@ export class Viewport {
           ),
           finiteSegmentDistancePx: segmentDistanceWorld * this.scale,
           infiniteLineDistancePx: lineDistanceWorld * this.scale,
+          solvedEdgeToRailDistance: null,
           distancePx,
           lineDistancePx: distancePx,
         });
@@ -1497,6 +1588,7 @@ export class Viewport {
       cap: capSnaps,
       sideA: sideAPool,
       sideB: sideBPool,
+      rejected: rejectedRailCandidates,
     };
     this.extrusionMatchDebug = [...sideAPool, ...sideBPool];
     const bestCap = capSnaps[0] || null;
@@ -1696,6 +1788,24 @@ export class Viewport {
         maxSourceAngleDegrees: this.state.faceSourceMaxAngle,
       });
       if (!sol?.cap || !solvedEdgesMatchTargets(sol, candidates)) return null;
+      for (const candidate of candidates) {
+        const solvedEdge = sol.solvedEdges[candidate.movingEdge];
+        if (!solvedEdge || !candidate.targetStartWorld || !candidate.targetEndWorld)
+          continue;
+        const targetStart = {
+          x: candidate.targetStartWorld[axisX],
+          y: candidate.targetStartWorld[axisY],
+        };
+        const targetEnd = {
+          x: candidate.targetEndWorld[axisX],
+          y: candidate.targetEndWorld[axisY],
+        };
+        candidate.solvedEdgeToRailDistance = Math.max(
+          ...solvedEdge.map((point) =>
+            distancePointToLine(point, targetStart, targetEnd),
+          ),
+        );
+      }
       const selection = this.drag?.selection || new Set([id]);
       const snapTarget = {
         type: "cross-section-rails",
