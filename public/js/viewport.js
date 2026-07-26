@@ -12,10 +12,7 @@ import {
   resolveExtrusion,
   solveSingleFaceExtrusion,
 } from "./face-extrusion.js";
-import {
-  extrusionPolicyForMode,
-  railWithinAngleLimit,
-} from "./extrusion-policy.js";
+import { extrusionPolicyForMode } from "./extrusion-policy.js";
 import { duplicateBrushes } from "./geometry-model.js";
 import {
   dedupeFirst,
@@ -1324,18 +1321,9 @@ export class Viewport {
           source === "attached",
         );
         if (!boundaryFace) continue;
-        // A physically attached rail is already anchored to the source
-        // corner; its finite direction and solved geometry remain the hard
-        // safeguards. The angle gate is for magnetic acquisition only.
-        if (
-          source !== "attached" &&
-          !railWithinAngleLimit(
-            railDirection,
-            sourceNormalDir,
-            this.state.faceRailMaxAngle,
-          )
-        )
-          continue;
+        // Physical finite rails are governed by their usable segment and the
+        // solved convex result. Do not discard a nearby rail solely because
+        // its support direction exceeds the optional magnetic angle hint.
         const forwardStart =
           (start.x - baseCornerWorld.x) * sourceNormalDir.x +
           (start.y - baseCornerWorld.y) * sourceNormalDir.y;
