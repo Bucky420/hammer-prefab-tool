@@ -439,6 +439,21 @@ const geometry = (brushes) =>
         `${scenario.name}: backward movement recovers original geometry`,
       );
     }
+    if (scenario.repeatDistanceGeometry) {
+      const firstByDistance = new Map();
+      for (const snapshot of snapshots) {
+        const first = firstByDistance.get(snapshot.distance);
+        if (!first) {
+          firstByDistance.set(snapshot.distance, snapshot);
+          continue;
+        }
+        assertClose(
+          snapshot.resolved.finalCorners,
+          first.resolved.finalCorners,
+          `${scenario.name} L${snapshot.distance}: pull-up geometry is history independent`,
+        );
+      }
+    }
     if (scenario.compareWithoutTangent || scenario.skipReversed) continue;
     const reversed = finalSides.map((constraint) => ({
       ...constraint,

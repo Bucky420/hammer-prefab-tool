@@ -343,6 +343,63 @@
         "paired",
         "paired"
       ]
+    },
+    {
+      "name": "center-pull-up-cycle",
+      "faceSelection": ["imported-50003:f:5"],
+      "distances": [16, 32, 48, 80, 48, 32, 16, 32, 48, 80],
+      "pair": ["imported-50006", "imported-50005"],
+      "pairFaces": [3, 1],
+      "repeatDistanceGeometry": true,
+      "skipReversed": true,
+      "states": [
+        "paired",
+        "paired",
+        "paired",
+        "paired",
+        "paired",
+        "paired",
+        "paired",
+        "paired",
+        "paired",
+        "paired"
+      ]
+    },
+    {
+      "name": "lower-pull-up-cycle",
+      "faceSelection": ["imported-50005:f:1"],
+      "distances": [16, 32, 48, 32, 16, 32, 48],
+      "pair": ["imported-50006", "imported-50003"],
+      "pairFaces": [3, 5],
+      "repeatDistanceGeometry": true,
+      "skipReversed": true,
+      "states": [
+        "paired",
+        "paired",
+        "paired",
+        "paired",
+        "paired",
+        "paired",
+        "paired"
+      ]
+    },
+    {
+      "name": "upper-pull-up-cycle",
+      "faceSelection": ["imported-50006:f:3"],
+      "distances": [16, 32, 48, 32, 16, 32, 48],
+      "pair": ["imported-50003", "imported-50005"],
+      "pairFaces": [5, 1],
+      "repeatDistanceGeometry": true,
+      "skipReversed": true,
+      "states": [
+        "paired",
+        "paired",
+        "paired",
+        "paired",
+        "paired",
+        "paired",
+        "paired"
+      ]
     }
   ],
   "screenshot": "regression.png"

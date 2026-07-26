@@ -828,6 +828,8 @@ export class Viewport {
           rawDistance < distance - endpointReleaseDistance,
       );
     if (this.drag) this.drag.endpointPairRetreat = endpointPairRetreat;
+    if (this.drag && endpointPairRetreat)
+      this.drag.sideRailEndpointLocks = {};
     const sourceBrushIds = new Set(
       [...(this.drag?.selection || [])].map(
         (faceId) => faceId.match(/^(.*):f:\d+$/)?.[1],
@@ -1419,7 +1421,7 @@ export class Viewport {
         const endpointLockDistance =
           this.drag?.sideRailEndpointDistances?.[movingEdge];
         const endpointReleasedBackward =
-          (endpointLocked || endpointPairRetreat) &&
+          endpointLocked &&
           Number.isFinite(endpointLockDistance) &&
           rawDistance <
             endpointLockDistance - RELEASE_RADIUS / Math.max(this.scale, 0.0001);
@@ -2039,6 +2041,10 @@ export class Viewport {
     const hardPair = this.drag?.startRailPair || null;
     const refreshLockedRail = (rail, pool, movingEdge) => {
       if (!rail) return rail;
+      const current = pool.find(
+        (candidate) => candidate.canonicalKey === rail.canonicalKey,
+      );
+      if (this.drag?.endpointPairRetreat && current) return current;
       const endpointLockDistance =
         this.drag?.sideRailEndpointDistances?.[movingEdge];
       if (
@@ -2053,9 +2059,6 @@ export class Viewport {
           endpointSnapActive: false,
           endpointSnapReleased: true,
         };
-      const current = pool.find(
-        (candidate) => candidate.canonicalKey === rail.canonicalKey,
-      );
       if (!current) return rail;
       if (current.endpointSnapReleased) return current;
       if (rail.endpointSnapActive) return rail;
