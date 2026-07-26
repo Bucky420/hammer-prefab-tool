@@ -1793,7 +1793,7 @@ export class Viewport {
     const allActiveAxes = this.axes();
     const freeSideAngleDegrees =
       this.state.faceExtrusionMode === "snap"
-        ? Math.min(15, Number(this.state.faceRailMaxAngle) || 15)
+        ? 0
         : undefined;
     const makeCapConstraint = (snap) => ({
       movingEdge: "cap",
@@ -1930,9 +1930,8 @@ export class Viewport {
               followAdjacentSides: this.state.faceExtrusionMode === "snap",
               mirrorSingleSide:
                 this.state.faceExtrusionMode === "snap" && cands.length > 1,
-         maxSourceAngleDegrees: this.state.faceSourceMaxAngle,
-         maxFreeSideAngleDegrees: freeSideAngleDegrees,
-               maxFreeSideAngleDegrees: freeSideAngleDegrees,
+              maxSourceAngleDegrees: this.state.faceSourceMaxAngle,
+              maxFreeSideAngleDegrees: freeSideAngleDegrees,
             });
             if (!sol?.cap || !solvedEdgesMatchTargets(sol, cands)) continue;
             const snapTarget = {
@@ -1956,8 +1955,8 @@ export class Viewport {
               guideSelection: this.drag?.guideSelection || selection,
               mode: this.state.faceExtrusionMode,
               snapTarget,
-               maxSourceAngleDegrees: this.state.faceSourceMaxAngle,
-               maxFreeSideAngleDegrees: freeSideAngleDegrees,
+              maxSourceAngleDegrees: this.state.faceSourceMaxAngle,
+              maxFreeSideAngleDegrees: freeSideAngleDegrees,
             });
             if (
               resolved.blocked ||
@@ -2821,7 +2820,7 @@ export class Viewport {
               maxSourceAngleDegrees: this.state.faceSourceMaxAngle,
               maxFreeSideAngleDegrees:
                 this.state.faceExtrusionMode === "snap"
-                  ? Math.min(15, Number(this.state.faceRailMaxAngle) || 15)
+                  ? 0
                   : undefined,
             }));
         this.drag.resolvedExtrusion = resolved;

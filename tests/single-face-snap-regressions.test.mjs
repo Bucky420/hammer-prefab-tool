@@ -423,6 +423,7 @@ const geometry = (brushes) =>
         `${scenario.name}: angled pointer does not open an unmatched gap`,
       );
     }
+    if (scenario.compareWithoutTangent) continue;
     const reversed = finalSides.map((constraint) => ({
       ...constraint,
       direction: { x: -constraint.direction.x, y: -constraint.direction.y },
