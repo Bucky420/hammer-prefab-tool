@@ -58,6 +58,7 @@ import { validateBrush } from "./brush-validation.js";
  * @property {boolean} [followAdjacentSides]
  * @property {boolean} [mirrorSingleSide]
  * @property {number} [maxSourceAngleDegrees]
+ * @property {number} [maxFreeSideAngleDegrees]
  */
 
 /**
@@ -106,6 +107,7 @@ import { validateBrush } from "./brush-validation.js";
  * @property {ExtrusionCorners} finalCorners
  * @property {string[]} [targetBrushIds]
  * @property {number} distance
+ * @property {number} [maxFreeSideAngleDegrees]
  */
 
 /**
@@ -166,6 +168,7 @@ import { validateBrush } from "./brush-validation.js";
  * @property {string} [mode]
  * @property {ExtrusionSnapTarget | null} [snapTarget]
  * @property {number} [maxSourceAngleDegrees]
+ * @property {number} [maxFreeSideAngleDegrees]
  */
 
 /**
@@ -1176,6 +1179,7 @@ export function solveSingleFaceExtrusion(options) {
     followAdjacentSides = false,
     mirrorSingleSide = false,
     maxSourceAngleDegrees = 135,
+    maxFreeSideAngleDegrees = null,
   } = options;
   const face = brush?.faces?.[faceIndex];
   if (!brush || !face || face.length < 3) return null;
@@ -1271,6 +1275,40 @@ export function solveSingleFaceExtrusion(options) {
 
   let fallbackSideA = followAdjacentSides ? adjSideDir(groupA) : srcNormal2D;
   let fallbackSideB = followAdjacentSides ? adjSideDir(groupB) : srcNormal2D;
+  const limitFreeSide = (direction) => {
+    if (!Number.isFinite(maxFreeSideAngleDegrees)) return direction;
+    const maxAngle = Math.max(
+      0,
+      Math.min(89, Number(maxFreeSideAngleDegrees)),
+    );
+    const directionLength = Math.hypot(direction.x, direction.y);
+    if (directionLength < 0.0001) return srcNormal2D;
+    let candidate = {
+      x: direction.x / directionLength,
+      y: direction.y / directionLength,
+    };
+    if (candidate.x * srcNormal2D.x + candidate.y * srcNormal2D.y < 0)
+      candidate = { x: -candidate.x, y: -candidate.y };
+    const dot = Math.max(
+      -1,
+      Math.min(1, candidate.x * srcNormal2D.x + candidate.y * srcNormal2D.y),
+    );
+    const angle = Math.acos(dot);
+    if (angle <= (maxAngle * Math.PI) / 180) return candidate;
+    const side =
+      srcNormal2D.x * candidate.y - srcNormal2D.y * candidate.x >= 0 ? 1 : -1;
+    const radians = (maxAngle * Math.PI) / 180;
+    return {
+      x: srcNormal2D.x * Math.cos(radians) -
+        side * srcNormal2D.y * Math.sin(radians),
+      y: srcNormal2D.y * Math.cos(radians) +
+        side * srcNormal2D.x * Math.sin(radians),
+    };
+  };
+  if (followAdjacentSides) {
+    fallbackSideA = limitFreeSide(fallbackSideA);
+    fallbackSideB = limitFreeSide(fallbackSideB);
+  }
   if (followAdjacentSides) {
     const signedLimit = Math.max(
       90,
@@ -1546,6 +1584,7 @@ function offsetFacePlaneCap(
   snapTarget = null,
   mode = "straight",
   maxSourceAngleDegrees = 135,
+  maxFreeSideAngleDegrees = null,
 ) {
   const face = brush.faces[faceIndex];
 
@@ -1576,6 +1615,7 @@ function offsetFacePlaneCap(
     followAdjacentSides: mode === "parallel" || mode === "snap",
     mirrorSingleSide: mode === "snap",
     maxSourceAngleDegrees,
+    maxFreeSideAngleDegrees,
   };
   let single = solveSingleFaceExtrusion(options);
   if (!single && mode === "snap")
@@ -1827,6 +1867,7 @@ export function extrudeSelectedFaces(
   mode = "normal",
   snapTarget = null,
   maxSourceAngleDegrees = 135,
+  maxFreeSideAngleDegrees = null,
 ) {
   const created = [],
     preview = [],
@@ -1864,6 +1905,7 @@ export function extrudeSelectedFaces(
             snapTarget,
             mode,
             maxSourceAngleDegrees,
+            maxFreeSideAngleDegrees,
           )
         : base.map((point) => extrudedPoint(point, direction, distance)));
     if (selection.size === 1 && capResult?.solvedEdges)
@@ -2291,6 +2333,7 @@ export function resolveExtrusion(options) {
     mode = "straight",
     snapTarget = null,
     maxSourceAngleDegrees = 135,
+    maxFreeSideAngleDegrees = null,
   } = options;
   const finalDistance = limitExtrusionDistance(
     sourceBrushes,
@@ -2301,6 +2344,7 @@ export function resolveExtrusion(options) {
     mode,
     snapTarget,
     maxSourceAngleDegrees,
+    maxFreeSideAngleDegrees,
   );
   let finalTarget = snapTarget;
   let finalCorners = snapTarget?.finalCorners || null;
@@ -2342,7 +2386,8 @@ export function resolveExtrusion(options) {
           guideSelection,
           mode,
           finalTarget,
-          maxSourceAngleDegrees,
+      maxSourceAngleDegrees,
+      maxFreeSideAngleDegrees,
         )
       : { brushes: [], previewBrushes: [], errors: [] };
   const errors = result.errors || [];

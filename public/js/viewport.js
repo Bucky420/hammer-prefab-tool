@@ -1791,6 +1791,10 @@ export class Viewport {
     this.extrusionMatchDebug = [...sideAPool, ...sideBPool];
     const bestCap = capSnaps[0] || null;
     const allActiveAxes = this.axes();
+    const freeSideAngleDegrees =
+      this.state.faceExtrusionMode === "snap"
+        ? Math.min(15, Number(this.state.faceRailMaxAngle) || 15)
+        : undefined;
     const makeCapConstraint = (snap) => ({
       movingEdge: "cap",
       direction: snap.direction,
@@ -1926,7 +1930,9 @@ export class Viewport {
               followAdjacentSides: this.state.faceExtrusionMode === "snap",
               mirrorSingleSide:
                 this.state.faceExtrusionMode === "snap" && cands.length > 1,
-              maxSourceAngleDegrees: this.state.faceSourceMaxAngle,
+         maxSourceAngleDegrees: this.state.faceSourceMaxAngle,
+         maxFreeSideAngleDegrees: freeSideAngleDegrees,
+               maxFreeSideAngleDegrees: freeSideAngleDegrees,
             });
             if (!sol?.cap || !solvedEdgesMatchTargets(sol, cands)) continue;
             const snapTarget = {
@@ -1950,7 +1956,8 @@ export class Viewport {
               guideSelection: this.drag?.guideSelection || selection,
               mode: this.state.faceExtrusionMode,
               snapTarget,
-              maxSourceAngleDegrees: this.state.faceSourceMaxAngle,
+               maxSourceAngleDegrees: this.state.faceSourceMaxAngle,
+               maxFreeSideAngleDegrees: freeSideAngleDegrees,
             });
             if (
               resolved.blocked ||
@@ -2099,6 +2106,7 @@ export class Viewport {
         mirrorSingleSide:
           this.state.faceExtrusionMode === "snap" && sideConstraints.length > 1,
         maxSourceAngleDegrees: this.state.faceSourceMaxAngle,
+        maxFreeSideAngleDegrees: freeSideAngleDegrees,
       });
       if (sol?.cap) {
         let endpointUpgraded = false;
@@ -2156,6 +2164,7 @@ export class Viewport {
               this.state.faceExtrusionMode === "snap" &&
               sideConstraints.length > 1,
             maxSourceAngleDegrees: this.state.faceSourceMaxAngle,
+            maxFreeSideAngleDegrees: freeSideAngleDegrees,
           });
       }
       if (!sol?.cap || !solvedEdgesMatchTargets(sol, candidates)) return null;
@@ -2810,6 +2819,10 @@ export class Viewport {
               mode: this.state.faceExtrusionMode,
               snapTarget: null,
               maxSourceAngleDegrees: this.state.faceSourceMaxAngle,
+              maxFreeSideAngleDegrees:
+                this.state.faceExtrusionMode === "snap"
+                  ? Math.min(15, Number(this.state.faceRailMaxAngle) || 15)
+                  : undefined,
             }));
         this.drag.resolvedExtrusion = resolved;
         this.drag.distance = resolved?.finalDistance || 0;
