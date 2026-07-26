@@ -284,6 +284,26 @@
         "paired",
         "paired"
       ]
+    },
+    {
+      "name": "lower-neighbor-endpoint-release",
+      "faceSelection": ["imported-50005:f:1"],
+      "distances": [2, 8, 16, 20, 24, 32, 48],
+      "singleEdge": "sideB",
+      "singleTarget": "imported-50003",
+      "pair": ["imported-50006", "imported-50003"],
+      "pairFaces": [3, 5],
+      "endpointSide": "sideA",
+      "endpointReleaseDistance": 32,
+      "states": [
+        "single-sideB",
+        "single-sideB",
+        "paired",
+        "paired",
+        "paired",
+        "paired",
+        "paired"
+      ]
     }
   ],
   "screenshot": "regression.png"

@@ -87,7 +87,8 @@ const replaySequence = (fixture, scenario) => {
   const length = Math.hypot(normal.x, normal.y);
   const direction = { x: normal.x / length, y: normal.y / length };
   const start = viewport.screen(center);
-  const snapshots = fixture.distances.map((distance) => {
+  const distances = scenario.distances || fixture.distances;
+  const snapshots = distances.map((distance) => {
     const current = viewport.screen({
       x: center.x + direction.x * distance,
       y: center.y + direction.y * distance,
@@ -251,7 +252,7 @@ const geometry = (brushes) =>
     const { viewport, brush, faceIndex, snapshots } = replaySequence(fixture, scenario);
     let lockedKeys = null;
     for (const snapshot of snapshots) {
-      const expectedState = scenario.states[fixture.distances.indexOf(snapshot.distance)];
+      const expectedState = scenario.states[snapshots.indexOf(snapshot)];
       assert.equal(snapshot.lockState, expectedState, `${scenario.name} L${snapshot.distance}: lock state`);
       assert.ok(
         Math.abs(snapshot.rawDistance - snapshot.distance) < 0.000001,
@@ -349,7 +350,7 @@ const geometry = (brushes) =>
     const finalSides = final.resolved.constraints.filter(
       (constraint) => constraint.movingEdge !== "cap",
     );
-    if (scenario.endpointSide) {
+    if (scenario.endpointSide && !scenario.endpointReleaseDistance) {
       const endpointSide = finalSides.find(
         (side) => side.movingEdge === scenario.endpointSide,
       );
@@ -357,6 +358,29 @@ const geometry = (brushes) =>
         endpointSide.capProjectedT,
         0,
         `${scenario.name}: magnetic cap reaches finite endpoint`,
+      );
+    }
+    if (scenario.endpointReleaseDistance) {
+      const released = snapshots.find(
+        (snapshot) => snapshot.distance === scenario.endpointReleaseDistance,
+      );
+      const releasedSide = released.resolved.constraints.find(
+        (side) => side.movingEdge === scenario.endpointSide,
+      );
+      assert.equal(
+        releasedSide.endpointSnapReleased,
+        true,
+        `${scenario.name}: endpoint snap releases past the endpoint`,
+      );
+      assert.equal(
+        releasedSide.cornerSnap,
+        undefined,
+        `${scenario.name}: released rail no longer pins the endpoint`,
+      );
+      assert.ok(
+        finalSides.find((side) => side.movingEdge === scenario.endpointSide)
+          .capProjectedT > 0,
+        `${scenario.name}: support line continues after release`,
       );
     }
     const reversed = finalSides.map((constraint) => ({
@@ -368,7 +392,7 @@ const geometry = (brushes) =>
     const reversedResult = solveSingleFaceExtrusion({
       brush,
       faceIndex,
-      distance: fixture.distances.at(-1),
+      distance: (scenario.distances || fixture.distances).at(-1),
       activeAxes: ["x", "y", "z"],
       constraints: reversed,
       followAdjacentSides: true,

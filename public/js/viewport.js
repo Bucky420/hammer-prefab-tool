@@ -169,6 +169,7 @@ export class Viewport {
       this.drag.startRailPair = null;
       this.drag.startRailState = "pending";
       this.drag.sideRailLocks = null;
+      this.drag.sideRailEndpointLocks = null;
     }
     this.requestDraw();
     return true;
@@ -1505,14 +1506,36 @@ export class Viewport {
           candidateRawSegmentT = closestWorld.rawT;
           candidateAvailableForwardLength = magneticUsableForwardLength;
           const lockedKey = this.drag?.sideRailLocks?.[movingEdge];
+          const startEndpointDistance = Math.hypot(
+            freeCapScreen.x - group.startScreen.x,
+            freeCapScreen.y - group.startScreen.y,
+          );
+          const endEndpointDistance = Math.hypot(
+            freeCapScreen.x - group.endScreen.x,
+            freeCapScreen.y - group.endScreen.y,
+          );
+          const endpointDistance = Math.min(
+            startEndpointDistance,
+            endEndpointDistance,
+          );
+          const endpointLocked =
+            this.drag?.sideRailEndpointLocks?.[movingEdge] === group.key;
+          const endpointReleased =
+            lockedKey === group.key &&
+            endpointLocked &&
+            (pastFiniteEnd || endpointDistance > RELEASE_RADIUS);
           const retained =
             lockedKey === group.key && candidateDistance <= 18;
           if (
-            pastFiniteEnd ||
-            magneticUsableForwardLength <= 0.01 ||
-            (!touches && !capTouches && candidateDistance > 12 && !retained)
+            (pastFiniteEnd && !endpointReleased) ||
+            (magneticUsableForwardLength <= 0.01 && !endpointReleased) ||
+            (!touches &&
+              !capTouches &&
+              candidateDistance > 12 &&
+              !retained &&
+              !endpointReleased)
           ) {
-            if (magneticUsableForwardLength <= 0.01)
+            if (magneticUsableForwardLength <= 0.01 && !endpointReleased)
               rejectedRailCandidates.push({
                 movingEdge,
                 targetBrushId: group.brush.id,
@@ -1537,17 +1560,8 @@ export class Viewport {
             continue;
           }
           distancePx = Math.min(capLineDistancePx, segmentDistancePx);
-          const startEndpointDistance = Math.hypot(
-            freeCapScreen.x - group.startScreen.x,
-            freeCapScreen.y - group.startScreen.y,
-          );
-          const endEndpointDistance = Math.hypot(
-            freeCapScreen.x - group.endScreen.x,
-            freeCapScreen.y - group.endScreen.y,
-          );
           if (
-            Math.min(startEndpointDistance, endEndpointDistance) <=
-            RELEASE_RADIUS
+            endpointDistance <= RELEASE_RADIUS && !endpointReleased
           ) {
             const endpoint =
               startEndpointDistance <= endEndpointDistance
@@ -1561,6 +1575,8 @@ export class Viewport {
           } else {
             group.cornerSnap = closestWorld.point;
           }
+          if (endpointReleased) group.cornerSnap = undefined;
+          group.endpointSnapReleased = endpointReleased;
         }
         candidates.push({
           movingEdge,
@@ -1583,6 +1599,7 @@ export class Viewport {
           availableForwardSegmentLength: candidateAvailableForwardLength,
           capProjectedT,
           cornerSnap: group.cornerSnap,
+          endpointSnapReleased: Boolean(group.endpointSnapReleased),
           corridorSideScore: boundaryFace.corridorSide,
           signedForwardDirection: Math.max(forwardStart, forwardEnd),
           sourceAngleDifferenceDegrees: angleDifferenceDegrees(
@@ -1735,7 +1752,8 @@ export class Viewport {
       rawSegmentT: snap.rawSegmentT,
       availableForwardSegmentLength: snap.availableForwardSegmentLength,
       capProjectedT: snap.capProjectedT,
-      cornerSnap: snap.cornerSnap,
+      cornerSnap: snap.endpointSnapReleased ? undefined : snap.cornerSnap,
+      endpointSnapReleased: Boolean(snap.endpointSnapReleased),
     });
     const solvedEdgesMatchTargets = (solved, constraints) =>
       constraints.every((constraint) => {
@@ -1921,8 +1939,27 @@ export class Viewport {
     }
     }
     const hardPair = this.drag?.startRailPair || null;
-    let hardSideA = hardPair?.sideA || null;
-    let hardSideB = hardPair?.sideB || null;
+    const refreshLockedRail = (rail, pool) => {
+      if (!rail) return rail;
+      const current = pool.find(
+        (candidate) => candidate.canonicalKey === rail.canonicalKey,
+      );
+      return current?.endpointSnapReleased ? current : rail;
+    };
+    if (hardPair && this.drag) {
+      const refreshedPair = {
+        sideA: refreshLockedRail(hardPair.sideA, sideAPool),
+        sideB: refreshLockedRail(hardPair.sideB, sideBPool),
+      };
+      if (
+        refreshedPair.sideA !== hardPair.sideA ||
+        refreshedPair.sideB !== hardPair.sideB
+      )
+        this.drag.startRailPair = refreshedPair;
+    }
+    const activeHardPair = this.drag?.startRailPair || hardPair;
+    let hardSideA = activeHardPair?.sideA || null;
+    let hardSideB = activeHardPair?.sideB || null;
 
     const recordDuplicateProjectedRails = (candidates) => {
       const firstByRail = new Map();
@@ -2212,6 +2249,21 @@ export class Viewport {
           .map((constraint) => [constraint.movingEdge, constraint.canonicalKey])
           .filter((entry) => entry[1]),
       );
+      const endpointLocks = {
+        ...(this.drag.sideRailEndpointLocks || {}),
+      };
+      for (const constraint of result.snapTarget.conforming) {
+        if (constraint.movingEdge === "cap") continue;
+        if (
+          constraint.source === "magnetic" &&
+          constraint.cornerSnap &&
+          !constraint.endpointSnapReleased
+        )
+          endpointLocks[constraint.movingEdge] = constraint.canonicalKey;
+        else if (constraint.endpointSnapReleased)
+          delete endpointLocks[constraint.movingEdge];
+      }
+      this.drag.sideRailEndpointLocks = endpointLocks;
     }
     if (this.drag) this.drag.extrusionCandidate = this.extrusionCandidate;
     if (result?.solvedEdges) {
