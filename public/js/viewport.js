@@ -1746,6 +1746,15 @@ export class Viewport {
             railDirection,
             sourceNormalDir,
           ),
+          singleSideForwardFacing:
+            Math.abs(
+              railDirection.x * sourceNormalDir.x +
+                railDirection.y * sourceNormalDir.y,
+            ) >
+            Math.abs(
+              railDirection.x * sourceBaseDir.x +
+                railDirection.y * sourceBaseDir.y,
+            ),
           finiteSegmentDistancePx: segmentDistanceWorld * this.scale,
           infiniteLineDistancePx: lineDistanceWorld * this.scale,
           solvedEdgeToRailDistance: null,
@@ -1846,6 +1855,8 @@ export class Viewport {
       ...attachedBCandidates,
       ...sideBSnaps,
     ]).slice(0, 6);
+    const singleRailAllowed = (candidate) =>
+      candidate?.source !== "attached" || candidate.singleSideForwardFacing;
     // Weak near-parallel rail suppression
     const pointerRetreating = this.drag
       ? rawDistance < (this.drag.maxRawDistance || 0) - 1 / this.scale
@@ -2043,8 +2054,12 @@ export class Viewport {
             ...hardAPool.flatMap((sA) =>
               hardBPool.map((sB) => ({ sideA: sA, sideB: sB })),
             ),
-            ...hardAPool.map((sideA) => ({ sideA, sideB: null })),
-            ...hardBPool.map((sideB) => ({ sideA: null, sideB })),
+            ...hardAPool
+              .filter(singleRailAllowed)
+              .map((sideA) => ({ sideA, sideB: null })),
+            ...hardBPool
+              .filter(singleRailAllowed)
+              .map((sideB) => ({ sideA: null, sideB })),
           ];
           for (const pair of evalSet) {
             const cands = [];
@@ -2552,21 +2567,25 @@ export class Viewport {
       }
       if (!sideBPool.length && capCon.length) {
         for (const sA of sideAPool) {
+          if (!singleRailAllowed(sA)) continue;
           consider(tryConstraints([...capCon, makeSideConstraint(sA)]));
         }
       }
       if (!sideAPool.length && capCon.length) {
         for (const sB of sideBPool) {
+          if (!singleRailAllowed(sB)) continue;
           consider(tryConstraints([...capCon, makeSideConstraint(sB)]));
         }
       }
       if (!sideBPool.length) {
         for (const sA of sideAPool) {
+          if (!singleRailAllowed(sA)) continue;
           consider(tryConstraints([makeSideConstraint(sA)]));
         }
       }
       if (!sideAPool.length) {
         for (const sB of sideBPool) {
+          if (!singleRailAllowed(sB)) continue;
           consider(tryConstraints([makeSideConstraint(sB)]));
         }
       }
@@ -2574,9 +2593,11 @@ export class Viewport {
       // magnetic rail enters range. Do not let a distant magnetic candidate
       // suppress this single-side fallback.
       for (const sA of attachedACandidates)
-        consider(tryConstraints([makeSideConstraint(sA)]));
+        if (singleRailAllowed(sA))
+          consider(tryConstraints([makeSideConstraint(sA)]));
       for (const sB of attachedBCandidates)
-        consider(tryConstraints([makeSideConstraint(sB)]));
+        if (singleRailAllowed(sB))
+          consider(tryConstraints([makeSideConstraint(sB)]));
       if (capCon.length) consider(tryConstraints(capCon));
     }
 

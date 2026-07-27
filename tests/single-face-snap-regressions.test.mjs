@@ -536,6 +536,37 @@ const geometry = (brushes) =>
 }
 
 {
+  const { data: fixture } = loadFixture(
+    "single-face-attached-perpendicular-rejection",
+  );
+  for (const scenario of fixture.scenarios) {
+    const { snapshots } = replaySequence(fixture, scenario);
+    for (const [index, snapshot] of snapshots.entries()) {
+      assert.equal(
+        snapshot.lockState,
+        scenario.states[index],
+        `${scenario.name} L${snapshot.distance}: tangent support stays pending`,
+      );
+      if (snapshot.distance === 0) continue;
+      assert.ok(snapshot.pair == null, `${scenario.name}: no hard pair is retained`);
+      assert.equal(
+        snapshot.sideRailLocks.sideA,
+        undefined,
+        `${scenario.name}: tangent sideA is not locked`,
+      );
+      if (snapshot.resolved)
+        assert.equal(
+          snapshot.resolved.constraints.filter(
+            (constraint) => constraint.movingEdge !== "cap",
+          ).length,
+          0,
+          `${scenario.name} L${snapshot.distance}: no side rail is selected`,
+        );
+    }
+  }
+}
+
+{
   const { data: fixture } = loadFixture("single-face-weak-near-parallel-release");
   for (const scenario of fixture.scenarios) {
     const { viewport, brush, faceIndex, direction, snapshots } = replaySequence(

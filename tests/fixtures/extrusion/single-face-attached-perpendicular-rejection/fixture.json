@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "name": "single-face-attached-perpendicular-rejection",
+  "issue": "An attached support line nearly perpendicular to the extrusion normal must not become a hard single-side rail.",
+  "editor": {
+    "brushes": [
+      {
+        "id": "source-0",
+        "material": "TOOLS/TOOLSNODRAW",
+        "faceMaterials": [
+          "TOOLS/TOOLSNODRAW",
+          "TOOLS/TOOLSNODRAW",
+          "TOOLS/TOOLSNODRAW",
+          "TOOLS/TOOLSNODRAW",
+          "DEVNEONS/BLUE_NEON",
+          "TOOLS/TOOLSNODRAW"
+        ],
+        "vertices": [
+          { "x": 0, "y": 0, "z": -64 },
+          { "x": 100, "y": 0, "z": -64 },
+          { "x": 100, "y": 10, "z": -64 },
+          { "x": 0, "y": 10, "z": -64 },
+          { "x": 0, "y": 0, "z": 0 },
+          { "x": 100, "y": 0, "z": 0 },
+          { "x": 100, "y": 10, "z": 0 },
+          { "x": 0, "y": 10, "z": 0 }
+        ],
+        "faces": [
+          [0, 3, 2, 1],
+          [4, 5, 6, 7],
+          [0, 4, 7, 3],
+          [1, 2, 6, 5],
+          [3, 7, 6, 2],
+          [0, 1, 5, 4]
+        ]
+      },
+      {
+        "id": "target-1",
+        "material": "TOOLS/TOOLSNODRAW",
+        "faceMaterials": [
+          "DEVNEONS/BLUE_NEON",
+          "TOOLS/TOOLSNODRAW",
+          "TOOLS/TOOLSNODRAW",
+          "TOOLS/TOOLSNODRAW",
+          "TOOLS/TOOLSNODRAW",
+          "TOOLS/TOOLSNODRAW"
+        ],
+        "vertices": [
+          { "x": 0, "y": 10, "z": 64 },
+          { "x": -100, "y": 30, "z": 64 },
+          { "x": 0, "y": 0, "z": 64 },
+          { "x": -100, "y": 20, "z": 64 },
+          { "x": 0, "y": 10, "z": 128 },
+          { "x": -100, "y": 30, "z": 128 },
+          { "x": 0, "y": 0, "z": 128 },
+          { "x": -100, "y": 20, "z": 128 }
+        ],
+        "faces": [
+          [0, 1, 5, 4],
+          [3, 2, 6, 7],
+          [0, 3, 2, 1],
+          [4, 5, 7, 6],
+          [1, 5, 7, 3],
+          [0, 2, 6, 4]
+        ]
+      }
+    ],
+    "hiddenBrushes": [],
+    "view": "top",
+    "grid": 16,
+    "extrusionMode": "snap",
+    "faceRailMaxAngle": 15,
+    "faceSourceMaxAngle": 90
+  },
+  "viewport": {
+    "width": 768,
+    "height": 768,
+    "scale": 1.765625,
+    "offset": { "x": -88, "y": 18 }
+  },
+  "distances": [0, 2, 4],
+  "scenarios": [
+    {
+      "name": "attached-perpendicular-single",
+      "faceSelection": ["source-0:f:4"],
+      "states": ["pending", "pending", "pending"]
+    }
+  ]
+}
