@@ -1845,16 +1845,25 @@ export class Viewport {
         )
       : [];
 
-    // Candidate pools: collect top candidates per side (attached first,
-    // then magnetic). Use up to 6 per side to explore branch options.
-    const sideAPool = dedupeFirst([
+    // Candidate pools: keep the nearest valid rails visible to the preview.
+    // Hard attached rails remain in their separate pools for lock selection;
+    // soft combinations must follow the pointer rather than brush order.
+    const sortPreviewCandidates = (candidates) =>
+      dedupeFirst(candidates)
+        .sort(
+          (a, b) =>
+            a.distancePx - b.distancePx ||
+            a.canonicalKey.localeCompare(b.canonicalKey),
+        )
+        .slice(0, 6);
+    const sideAPool = sortPreviewCandidates([
       ...attachedACandidates,
       ...sideASnaps,
-    ]).slice(0, 6);
-    const sideBPool = dedupeFirst([
+    ]);
+    const sideBPool = sortPreviewCandidates([
       ...attachedBCandidates,
       ...sideBSnaps,
-    ]).slice(0, 6);
+    ]);
     const singleRailAllowed = (candidate) =>
       candidate?.source !== "attached" || candidate.singleSideForwardFacing;
     // Weak near-parallel rail suppression
