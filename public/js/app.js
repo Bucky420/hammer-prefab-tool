@@ -78,6 +78,7 @@ window.addEventListener("unhandledrejection", (event) => {
 });
 const browser = $("project-browser");
 const search = $("file-search");
+search.value = localStorage.getItem("hammer-vmf-search") || "";
 const viewNames = ["top", "front", "side"];
 const viewLabels = { top: "TOP / XY", front: "FRONT / YZ", side: "SIDE / XZ" };
 let activeView = state.view || "top";
@@ -1075,12 +1076,13 @@ async function exportVMF(mode = "export") {
       ? trimmedPath
       : `${trimmedPath}.vmf`;
     setStatus(`Saving ${filename}...`);
+    if (saveAs) state.vmfPath = filename;
     const result = await api.exportVMF(
       filename,
       writeVMF(state.brushes),
     );
-    state.vmfPath = result.path;
-    setStatus(`${mode === "save" || saveAs ? "Saved" : "Exported"} ${result.path}`);
+    state.vmfPath = result.path || filename;
+    setStatus(`${mode === "save" || saveAs ? "Saved" : "Exported"} ${state.vmfPath}`);
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -1092,9 +1094,10 @@ const escapeHtml = (value) =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[character],
   );
 function wildcard(expression) {
+  const query = expression.trim();
+  const pattern = query.includes("*") ? query : `*${query}*`;
   return new RegExp(
-    `^${expression
-      .trim()
+    `^${pattern
       .split("*")
       .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
       .join(".*")}$`,
@@ -1130,15 +1133,15 @@ function renderBrowser() {
 }
 async function openBrowser() {
   browserSelected = null;
-  search.value = "";
   $("browser-status").textContent = "Loading...";
   browser.showModal();
+  search.focus();
   try {
     allFiles = (await api.files("export")).files.filter((file) =>
       file.name.toLowerCase().endsWith(".vmf"),
     );
     visibleFiles = allFiles;
-    renderBrowser();
+    filterFiles();
     $("browser-status").textContent =
       `${allFiles.length} VMF file${allFiles.length === 1 ? "" : "s"} · double-click to open`;
     search.focus();
@@ -1411,8 +1414,12 @@ $("key-toggle").onclick = () => {
     : "Show controls and key";
 };
 $("open-browser").onclick = openBrowser;
-search.oninput = filterFiles;
+search.oninput = () => {
+  localStorage.setItem("hammer-vmf-search", search.value);
+  filterFiles();
+};
 search.onkeydown = (event) => {
+  event.stopPropagation();
   if (event.key === "Enter" && browserSelected) {
     event.preventDefault();
     loadSelected();
