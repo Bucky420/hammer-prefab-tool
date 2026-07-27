@@ -117,12 +117,26 @@ const replaySequence = (fixture, scenario) => {
       resolved: viewport.extrusionCandidate?.resolved || null,
       debug: structuredClone(viewport.extrusionAcquisitionDebug),
       lockState: viewport.drag.startRailState,
-      pair: viewport.drag.startRailPair,
+      pair: structuredClone(viewport.drag.startRailPair),
+      sideRailLocks: structuredClone(viewport.drag.sideRailLocks || {}),
+      sideRailEndpointLocks: structuredClone(
+        viewport.drag.sideRailEndpointLocks || {},
+      ),
+      sideRailEndpointDistances: structuredClone(
+        viewport.drag.sideRailEndpointDistances || {},
+      ),
+      weakRailRelease: structuredClone(viewport.drag.weakRailRelease || null),
       solvedOverlay: structuredClone(viewport.extrusionSolvedDebug),
       tangentOffset,
     };
   });
-  return { viewport, brush, faceIndex: Number(match[2]), snapshots };
+  return {
+    viewport,
+    brush,
+    faceIndex: Number(match[2]),
+    direction,
+    snapshots,
+  };
 };
 const assertClose = (actual, expected, message) => {
   if (typeof expected === "number") {
@@ -266,7 +280,10 @@ const geometry = (brushes) =>
 {
   const { data: fixture, url } = loadFixture("single-face-attached-forward-segments");
   for (const scenario of fixture.scenarios) {
-    const { viewport, brush, faceIndex, snapshots } = replaySequence(fixture, scenario);
+    const { viewport, brush, faceIndex, snapshots } = replaySequence(
+      fixture,
+      scenario,
+    );
     let lockedKeys = null;
     for (const snapshot of snapshots) {
       const expectedState = scenario.states[snapshots.indexOf(snapshot)];
@@ -521,7 +538,10 @@ const geometry = (brushes) =>
 {
   const { data: fixture } = loadFixture("single-face-weak-near-parallel-release");
   for (const scenario of fixture.scenarios) {
-    const { viewport, brush, faceIndex, snapshots } = replaySequence(fixture, scenario);
+    const { viewport, brush, faceIndex, direction, snapshots } = replaySequence(
+      fixture,
+      scenario,
+    );
     let lockedKeys = null;
     for (const snapshot of snapshots) {
       const index = snapshots.indexOf(snapshot);
@@ -539,7 +559,57 @@ const geometry = (brushes) =>
         assert.equal(snapshot.resolved, null, `${scenario.name} L0: no preview result`);
         continue;
       }
-      if (expectedState === "pending") continue;
+      if (expectedState === "pending") {
+        if (snapshot.debug.pointerRetreating) {
+          assert.ok(
+            snapshot.resolved,
+            `${scenario.name} L${snapshot.distance}: retreat fallback preview exists`,
+          );
+          assert.equal(
+            snapshot.resolved.blocked,
+            false,
+            `${scenario.name} L${snapshot.distance}: retreat fallback is unblocked`,
+          );
+          const sideConstraints = snapshot.resolved.constraints.filter(
+            (constraint) => constraint.movingEdge !== "cap",
+          );
+          assert.equal(
+            sideConstraints.length,
+            0,
+            `${scenario.name} L${snapshot.distance}: released side has no constraint`,
+          );
+          const baseA = snapshot.resolved.finalCorners.baseA;
+          const baseB = snapshot.resolved.finalCorners.baseB;
+          const capA = snapshot.resolved.finalCorners.capA;
+          const capB = snapshot.resolved.finalCorners.capB;
+          for (const [base, cap, label] of [
+            [baseA, capA, "sideA"],
+            [baseB, capB, "sideB"],
+          ]) {
+            const delta = { x: cap.x - base.x, y: cap.y - base.y };
+            assert.ok(
+              Math.abs(delta.x * direction.y - delta.y * direction.x) < 0.000001,
+              `${scenario.name} L${snapshot.distance}: ${label} is parallel to extrusion normal`,
+            );
+          }
+          assert.equal(
+            snapshot.sideRailLocks[scenario.singleEdge],
+            undefined,
+            `${scenario.name} L${snapshot.distance}: released side lock is cleared`,
+          );
+          assert.equal(
+            snapshot.sideRailEndpointLocks[scenario.singleEdge],
+            undefined,
+            `${scenario.name} L${snapshot.distance}: endpoint lock is cleared`,
+          );
+          assert.equal(
+            snapshot.sideRailEndpointDistances[scenario.singleEdge],
+            undefined,
+            `${scenario.name} L${snapshot.distance}: endpoint distance is cleared`,
+          );
+        }
+        continue;
+      }
       assert.ok(snapshot.resolved, `${scenario.name} L${snapshot.distance}: preview result`);
       assert.equal(
         snapshot.resolved.blocked,
@@ -585,6 +655,47 @@ const geometry = (brushes) =>
         `${scenario.name} L${snapshot.distance}: strict convexity`,
       );
     }
+    const releaseSnapshots = snapshots.filter(
+      (snapshot) =>
+        snapshot.distance > 0 &&
+        snapshot.debug.pointerRetreating &&
+        snapshot.debug.rejected.some(
+          (candidate) =>
+            candidate.releaseReason === "near-parallel-pointer-away" &&
+            candidate.weakRailSuppressed === true,
+        ),
+    );
+    assert.equal(
+      releaseSnapshots.length,
+      1,
+      `${scenario.name}: records one weak attached-rail release`,
+    );
+    const released = releaseSnapshots[0];
+    assert.equal(released.lockState, "pending", `${scenario.name}: release returns to pending`);
+    assert.equal(released.pair, null, `${scenario.name}: release clears startRailPair`);
+    assert.ok(
+      released.debug.rejected.some(
+        (candidate) => candidate.rejectionReason === "near-parallel-pointer-away",
+      ),
+      `${scenario.name}: release rejection is recorded`,
+    );
+    const releaseIndex = snapshots.indexOf(released);
+    const repeated = snapshots.findIndex(
+      (snapshot, index) =>
+        index > releaseIndex &&
+        snapshot.distance === released.distance,
+    );
+    assert.ok(repeated >= 0, `${scenario.name}: repeated retreat frame exists`);
+    assertClose(
+      snapshots[repeated].resolved.finalCorners,
+      released.resolved.finalCorners,
+      `${scenario.name}: repeated retreat frame keeps identical geometry`,
+    );
+    assert.equal(
+      snapshots[repeated].lockState,
+      "pending",
+      `${scenario.name}: repeated retreat frame does not reacquire the rail`,
+    );
   }
 }
 

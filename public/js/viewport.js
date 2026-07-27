@@ -1850,6 +1850,18 @@ export class Viewport {
     const pointerRetreating = this.drag
       ? rawDistance < (this.drag.maxRawDistance || 0) - 1 / this.scale
       : false;
+    const releasedRail = this.drag?.weakRailRelease;
+    if (
+      releasedRail &&
+      rawDistance > releasedRail.rawDistance + 1 / this.scale
+    )
+      this.drag.weakRailRelease = null;
+    const weakRailReleaseActive = Boolean(
+      this.drag?.weakRailRelease &&
+        pointerRetreating &&
+        rawDistance <=
+          this.drag.weakRailRelease.rawDistance + 1 / this.scale,
+    );
     const suppressWeakPoolEntries = (pool, freeCap2D) => {
       for (const candidate of pool) {
         if (candidate.source !== "magnetic") continue;
@@ -2018,7 +2030,11 @@ export class Viewport {
     if (this.drag) {
       this.drag.startRailState ||= "pending";
       if (this.drag.startRailState === "pending") {
-        if (screenDist > 3 && (hardAPool.length || hardBPool.length)) {
+        if (
+          !weakRailReleaseActive &&
+          screenDist > 3 &&
+          (hardAPool.length || hardBPool.length)
+        ) {
           let bestPair = null;
           let bestPairScore = Infinity;
           let bestSingle = null;
@@ -2166,6 +2182,12 @@ export class Viewport {
           rail.releaseReason = "near-parallel-pointer-away";
           this.drag.startRailState = "pending";
           this.drag.startRailPair = null;
+          this.drag.weakRailRelease = {
+            movingEdge,
+            canonicalKey: rail.canonicalKey,
+            rawDistance,
+          };
+          releasedWeakRailThisFrame = true;
           if (this.drag.sideRailLocks)
             delete this.drag.sideRailLocks[movingEdge];
           if (this.drag.sideRailEndpointLocks)
@@ -2178,6 +2200,8 @@ export class Viewport {
             targetFaceIndex: rail.targetFaceIndex,
             canonicalKey: rail.canonicalKey,
             source: rail.source,
+            weakRailSuppressed: true,
+            releaseReason: "near-parallel-pointer-away",
             rejectionReason: "near-parallel-pointer-away",
             railInfluencePx: influence,
           });
@@ -2207,18 +2231,22 @@ export class Viewport {
       if (rail.endpointSnapActive) return rail;
       return current;
     };
+    let releasedWeakRailThisFrame = false;
     if (hardPair && this.drag) {
       const refreshedPair = {
         sideA: refreshLockedRail(hardPair.sideA, sideAPool, "sideA"),
         sideB: refreshLockedRail(hardPair.sideB, sideBPool, "sideB"),
       };
       if (
-        refreshedPair.sideA !== hardPair.sideA ||
-        refreshedPair.sideB !== hardPair.sideB
+        !releasedWeakRailThisFrame &&
+        (refreshedPair.sideA !== hardPair.sideA ||
+          refreshedPair.sideB !== hardPair.sideB)
       )
         this.drag.startRailPair = refreshedPair;
     }
-    const activeHardPair = this.drag?.startRailPair || hardPair;
+    const activeHardPair = releasedWeakRailThisFrame
+      ? null
+      : this.drag?.startRailPair || hardPair;
     let hardSideA = activeHardPair?.sideA || null;
     let hardSideB = activeHardPair?.sideB || null;
 
@@ -2482,7 +2510,9 @@ export class Viewport {
     };
     const capCon = bestCap ? [makeCapConstraint(bestCap)] : [];
 
-    if (hardSideA && hardSideB) {
+    if (releasedWeakRailThisFrame || weakRailReleaseActive) {
+      consider(tryConstraints([]));
+    } else if (hardSideA && hardSideB) {
       // Both hard rails exist: must include both.
       const cA = makeSideConstraint(hardSideA);
       const cB = makeSideConstraint(hardSideB);
