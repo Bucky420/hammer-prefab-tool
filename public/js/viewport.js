@@ -2139,11 +2139,11 @@ export class Viewport {
     const hardPair = this.drag?.startRailPair || null;
     const refreshLockedRail = (rail, pool, movingEdge) => {
       if (!rail) return rail;
-      // Weak near-parallel rail release during retreat
       if (
         !rail.endpointSnapActive &&
-        rail.source !== "attached" &&
-        this.drag
+        this.drag &&
+        (this.drag.startRailState === "single-sideA" ||
+          this.drag.startRailState === "single-sideB")
       ) {
         const freeCap2D = movingEdge === "sideA" ? freeCapA2D : freeCapB2D;
         const railDir = rail.railDirection || extNormal;
@@ -2164,6 +2164,23 @@ export class Viewport {
         ) {
           rail.weakRailSuppressed = true;
           rail.releaseReason = "near-parallel-pointer-away";
+          this.drag.startRailState = "pending";
+          this.drag.startRailPair = null;
+          if (this.drag.sideRailLocks)
+            delete this.drag.sideRailLocks[movingEdge];
+          if (this.drag.sideRailEndpointLocks)
+            delete this.drag.sideRailEndpointLocks[movingEdge];
+          if (this.drag.sideRailEndpointDistances)
+            delete this.drag.sideRailEndpointDistances[movingEdge];
+          rejectedRailCandidates.push({
+            movingEdge,
+            targetBrushId: rail.targetBrushId,
+            targetFaceIndex: rail.targetFaceIndex,
+            canonicalKey: rail.canonicalKey,
+            source: rail.source,
+            rejectionReason: "near-parallel-pointer-away",
+            railInfluencePx: influence,
+          });
           return null;
         }
       }
