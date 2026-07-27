@@ -14,6 +14,7 @@ const state = {
   grid: 16,
   textureLock: "world",
   projectName: "untitled.json",
+  vmfPath: null,
 };
 
 const VALID_MODES = ["straight", "snap", "parallel"];

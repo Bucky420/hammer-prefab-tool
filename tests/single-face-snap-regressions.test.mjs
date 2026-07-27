@@ -518,4 +518,74 @@ const geometry = (brushes) =>
   assert.ok(existsSync(new URL(fixture.expected.screenshot, url)));
 }
 
+{
+  const { data: fixture } = loadFixture("single-face-weak-near-parallel-release");
+  for (const scenario of fixture.scenarios) {
+    const { viewport, brush, faceIndex, snapshots } = replaySequence(fixture, scenario);
+    let lockedKeys = null;
+    for (const snapshot of snapshots) {
+      const index = snapshots.indexOf(snapshot);
+      const expectedState = scenario.states[index];
+      assert.equal(
+        snapshot.lockState,
+        expectedState,
+        `${scenario.name} L${snapshot.distance}: lock state`,
+      );
+      assert.ok(
+        Math.abs(snapshot.rawDistance - snapshot.distance) < 0.000001,
+        `${scenario.name} L${snapshot.distance}: raw distance`,
+      );
+      if (snapshot.distance === 0) {
+        assert.equal(snapshot.resolved, null, `${scenario.name} L0: no preview result`);
+        continue;
+      }
+      if (expectedState === "pending") continue;
+      assert.ok(snapshot.resolved, `${scenario.name} L${snapshot.distance}: preview result`);
+      assert.equal(
+        snapshot.resolved.blocked,
+        false,
+        `${scenario.name} L${snapshot.distance}: not blocked`,
+      );
+      const sides = snapshot.resolved.constraints.filter(
+        (constraint) => constraint.movingEdge !== "cap",
+      );
+      if (expectedState.startsWith("single-")) {
+        assert.equal(sides.length, 1, `${scenario.name} L${snapshot.distance}: single side`);
+        assert.equal(sides[0].movingEdge, scenario.singleEdge);
+        assert.equal(sides[0].targetBrushId, scenario.singleTarget);
+        if (!lockedKeys) lockedKeys = [sides[0].canonicalKey];
+        assert.deepEqual(
+          [sides[0].canonicalKey],
+          lockedKeys,
+          `${scenario.name} L${snapshot.distance}: single key remains locked`,
+        );
+      }
+      for (const side of sides) {
+        assert.ok(
+          (side.availableForwardSegmentLength || 0) > 0,
+          `${scenario.name} L${snapshot.distance}: finite forward rail length`,
+        );
+      }
+      const points = [
+        snapshot.resolved.finalCorners.baseA,
+        snapshot.resolved.finalCorners.baseB,
+        snapshot.resolved.finalCorners.capB,
+        snapshot.resolved.finalCorners.capA,
+      ];
+      const signs = points.map((point, pi) => {
+        const next = points[(pi + 1) % points.length];
+        const after = points[(pi + 2) % points.length];
+        return Math.sign(
+          (next.x - point.x) * (after.y - next.y) -
+            (next.y - point.y) * (after.x - next.x),
+        );
+      });
+      assert.ok(
+        signs.every((sign) => sign && sign === signs[0]),
+        `${scenario.name} L${snapshot.distance}: strict convexity`,
+      );
+    }
+  }
+}
+
 console.log("single-face Snap regressions passed");

@@ -811,6 +811,7 @@ function snapshot() {
     showTextureAxes: state.showTextureAxes,
     textureLock: state.textureLock,
     faceExtrusionMode: state.faceExtrusionMode,
+    vmfPath: state.vmfPath,
   };
 }
 function redraw() {
@@ -927,6 +928,7 @@ function restore(data) {
   state.tool = data.tool || "box";
   state.showTextureAxes = Boolean(data.showTextureAxes);
   state.textureLock = data.textureLock || "world";
+  state.vmfPath = data.vmfPath || null;
   activeView = data.view || activeView;
   state.view = activeView;
   view.kind = activeView;
@@ -1048,17 +1050,37 @@ function validate() {
   );
   return issues;
 }
-async function exportVMF() {
-  const path = prompt("VMF filename:", "prefab.vmf");
+async function exportVMF(mode = "export") {
+  const saveAs = mode === "save-as";
+  const defaultSaveAs = state.vmfPath
+    ? state.vmfPath.replace(/\.vmf$/i, "-copy.vmf")
+    : "prefab.vmf";
+  const path = mode === "save"
+    ? state.vmfPath
+    : prompt(
+        saveAs ? "Save VMF as:" : "VMF filename:",
+        saveAs ? defaultSaveAs : state.vmfPath || "prefab.vmf",
+      );
+  if (path === null) return;
+  if (!path && mode === "save") {
+    setStatus("No VMF is loaded; use Save As... first", true);
+    return;
+  }
   if (!path) return;
   try {
     const issues = validate();
-    if (issues.length) return;
+    if (issues.length && mode === "export") return;
+    const trimmedPath = path.trim();
+    const filename = /\.vmf$/i.test(trimmedPath)
+      ? trimmedPath
+      : `${trimmedPath}.vmf`;
+    setStatus(`Saving ${filename}...`);
     const result = await api.exportVMF(
-      path.endsWith(".vmf") ? path : `${path}.vmf`,
+      filename,
       writeVMF(state.brushes),
     );
-    setStatus(`Exported ${result.path}`);
+    state.vmfPath = result.path;
+    setStatus(`${mode === "save" || saveAs ? "Saved" : "Exported"} ${result.path}`);
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -1132,6 +1154,7 @@ async function loadSelected() {
   try {
     const result = await api.openVMF(browserSelected.name, "export");
     state.brushes = parseVMF(result.vmf);
+    state.vmfPath = result.path;
     state.selection = new Set();
     state.brushSelection = new Set();
     state.faceSelection = new Set();
@@ -1355,6 +1378,8 @@ function run(command) {
     );
   }
   if (command === "export") exportVMF();
+  if (command === "save-as") exportVMF("save-as");
+  if (command === "save") exportVMF("save");
 }
 
 $("grid").onchange = (event) => {
@@ -1511,7 +1536,7 @@ window.addEventListener("keydown", (event) => {
   }
   if ((event.ctrlKey || event.metaKey) && key === "s") {
     event.preventDefault();
-    run("export");
+    run("save");
     return;
   }
   if ((event.ctrlKey || event.metaKey) && key === "z") {

@@ -54,6 +54,8 @@ const COLORS = {
 };
 const ZOOM_MIN = 0.02125;
 const ZOOM_MAX = 256;
+const INFLUENCE_ACQUIRE_PX = 3;
+const INFLUENCE_RELEASE_PX = 2;
 const AXES = {
   top: ["x", "y", "z"],
   front: ["y", "z", "x"],
@@ -819,6 +821,12 @@ export class Viewport {
     const pixels =
       ((current.x - start.x) * dx + (current.y - start.y) * dy) / screenLength;
     const rawDistance = Math.max(0, pixels / this.scale);
+    if (this.drag) {
+      this.drag.maxRawDistance = Math.max(
+        this.drag.maxRawDistance || 0,
+        rawDistance,
+      );
+    }
     const endpointReleaseDistance = 18 / Math.max(this.scale, 0.0001);
     const endpointPairRetreat =
       this.drag?.startRailState === "paired" &&
@@ -1014,6 +1022,50 @@ export class Viewport {
         ),
       );
       return (Math.acos(alignment) * 180) / Math.PI;
+    };
+    const computeRailInfluencePx = (
+      freeCap2D,
+      capDir,
+      lineOrigin,
+      railDir,
+      scale,
+    ) => {
+      const origin = lineOrigin || freeCap2D;
+      const dx = freeCap2D.x - origin.x;
+      const dy = freeCap2D.y - origin.y;
+      const det = railDir.x * (-capDir.y) - railDir.y * (-capDir.x);
+      if (Math.abs(det) < 0.000001) return 0;
+      const t = (dy * capDir.x - dx * capDir.y) / det;
+      return (
+        Math.hypot(
+          origin.x + railDir.x * t - freeCap2D.x,
+          origin.y + railDir.y * t - freeCap2D.y,
+        ) * scale
+      );
+    };
+    const isWeakNearParallelRail = (candidate, freeCap2D, capDir, scale) => {
+      if (candidate.endpointSnapActive) return { weak: false };
+      const localOrigin =
+        candidate.source === "attached"
+          ? candidate.lineOrigin
+          : candidate.lineOrigin;
+      const influence = computeRailInfluencePx(
+        freeCap2D,
+        capDir,
+        localOrigin,
+        candidate.railDirection,
+        scale,
+      );
+      candidate.railInfluencePx = influence;
+      if (influence >= INFLUENCE_ACQUIRE_PX)
+        return { weak: false, influence };
+      const nearestEndpointPx = candidate.nearestEndpointDistancePx;
+      if (
+        Number.isFinite(nearestEndpointPx) &&
+        nearestEndpointPx <= RELEASE_RADIUS
+      )
+        return { weak: false, influence };
+      return { weak: true, influence, releaseReason: "near-parallel-pointer-away" };
     };
     const adjacentSourceDirection = (group) => {
       const adjacent = brush.faces.find(
@@ -1697,6 +1749,7 @@ export class Viewport {
           finiteSegmentDistancePx: segmentDistanceWorld * this.scale,
           infiniteLineDistancePx: lineDistanceWorld * this.scale,
           solvedEdgeToRailDistance: null,
+          nearestEndpointDistancePx: endpointDistance,
           distancePx,
           lineDistancePx: distancePx,
         });
@@ -1793,11 +1846,56 @@ export class Viewport {
       ...attachedBCandidates,
       ...sideBSnaps,
     ]).slice(0, 6);
+    // Weak near-parallel rail suppression
+    const pointerRetreating = this.drag
+      ? rawDistance < (this.drag.maxRawDistance || 0) - 1 / this.scale
+      : false;
+    const suppressWeakPoolEntries = (pool, freeCap2D) => {
+      for (const candidate of pool) {
+        if (candidate.source !== "magnetic") continue;
+        if (candidate.weakRailSuppressed) continue;
+        const check = isWeakNearParallelRail(
+          candidate,
+          freeCap2D,
+          sourceBaseDir,
+          this.scale,
+        );
+        if (check.weak && pointerRetreating) {
+          candidate.weakRailSuppressed = true;
+          candidate.releaseReason = check.releaseReason || "near-parallel-pointer-away";
+        }
+      }
+      return pool.filter((c) => !c.weakRailSuppressed);
+    };
+    const sideAFiltered = suppressWeakPoolEntries(sideAPool, freeCapA2D);
+    const sideBFiltered = suppressWeakPoolEntries(sideBPool, freeCapB2D);
+    if (sideAPool.length !== sideAFiltered.length) {
+      for (const c of sideAPool) {
+        if (c.weakRailSuppressed)
+          rejectedRailCandidates.push({
+            ...c,
+            rejectionReason: c.releaseReason || "near-parallel-pointer-away",
+          });
+      }
+      sideAPool.splice(0, sideAPool.length, ...sideAFiltered);
+    }
+    if (sideBPool.length !== sideBFiltered.length) {
+      for (const c of sideBPool) {
+        if (c.weakRailSuppressed)
+          rejectedRailCandidates.push({
+            ...c,
+            rejectionReason: c.releaseReason || "near-parallel-pointer-away",
+          });
+      }
+      sideBPool.splice(0, sideBPool.length, ...sideBFiltered);
+    }
     this.extrusionAcquisitionDebug = {
       cap: capSnaps,
       sideA: sideAPool,
       sideB: sideBPool,
       rejected: rejectedRailCandidates,
+      pointerRetreating,
+      maxRawDistance: this.drag?.maxRawDistance,
     };
     this.extrusionMatchDebug = [...sideAPool, ...sideBPool];
     const bestCap = capSnaps[0] || null;
@@ -2041,6 +2139,34 @@ export class Viewport {
     const hardPair = this.drag?.startRailPair || null;
     const refreshLockedRail = (rail, pool, movingEdge) => {
       if (!rail) return rail;
+      // Weak near-parallel rail release during retreat
+      if (
+        !rail.endpointSnapActive &&
+        rail.source !== "attached" &&
+        this.drag
+      ) {
+        const freeCap2D = movingEdge === "sideA" ? freeCapA2D : freeCapB2D;
+        const railDir = rail.railDirection || extNormal;
+        const origin = rail.lineOrigin || freeCap2D;
+        const influence = computeRailInfluencePx(
+          freeCap2D,
+          sourceBaseDir,
+          origin,
+          railDir,
+          this.scale,
+        );
+        if (
+          influence < INFLUENCE_RELEASE_PX &&
+          (rail.nearestEndpointDistancePx == null ||
+            rail.nearestEndpointDistancePx > RELEASE_RADIUS) &&
+          rawDistance <
+            (this.drag.maxRawDistance || 0) - 1 / this.scale
+        ) {
+          rail.weakRailSuppressed = true;
+          rail.releaseReason = "near-parallel-pointer-away";
+          return null;
+        }
+      }
       const current = pool.find(
         (candidate) => candidate.canonicalKey === rail.canonicalKey,
       );
@@ -2223,6 +2349,19 @@ export class Viewport {
         maxSourceAngleDegrees: this.state.faceSourceMaxAngle,
       });
       if (resolved.blocked && !resolved.previewBrushes.length) return null;
+      let widthInfluencePx = null;
+      if (sideConstraints.length === 2 && sol) {
+        const parallelWidth = Math.hypot(
+          freeCapB2D.x - freeCapA2D.x,
+          freeCapB2D.y - freeCapA2D.y,
+        );
+        const solvedWidth = Math.hypot(
+          sol.capB.x - sol.capA.x,
+          sol.capB.y - sol.capA.y,
+        );
+        widthInfluencePx =
+          Math.abs(parallelWidth - solvedWidth) * this.scale;
+      }
       let attractionScore = 0;
       for (const candidate of candidates) {
         if (candidate.movingEdge === "sideA") {
@@ -2246,6 +2385,7 @@ export class Viewport {
         solvedEdges: resolved.solvedEdges,
         safeDistance: resolved.finalDistance,
         attractionScore,
+        widthInfluencePx,
         candidateKey: candidates
           .map((candidate) => candidate.canonicalKey || candidate.targetBrushId || "")
           .join("|") || "",
