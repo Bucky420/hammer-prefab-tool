@@ -90,4 +90,6 @@ Bug reports, test results, and focused pull requests are welcome. Keep exported 
 
 ## License
 
-No license has been added. The repository is all rights reserved by default.
+Licensed under the [Zero-Clause BSD License](LICENSE). You may use, copy, modify, distribute, or sell the software without requiring attribution.
+
+Third-party dependencies remain subject to their own licenses and notices.
