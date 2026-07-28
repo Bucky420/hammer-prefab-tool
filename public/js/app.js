@@ -16,8 +16,8 @@ import {
 import { validateAll } from "./brush-validation.js";
 import { History } from "./history.js";
 import { Viewport } from "./viewport.js";
-import { writeVMF } from "./vmf-writer.js";
-import { parseVMF } from "./vmf-parser.js";
+import { VMF_EXPORT_PURPOSE, writeVMFDocument } from "./vmf-writer.js";
+import { parseVMFDocument } from "./vmf-parser.js";
 import {
   alignAllFacesToCenter,
   alignAllFacesToOuter,
@@ -27,10 +27,26 @@ import { ringVertexIds } from "./selection.js";
 import { applyNodrawToHiddenFaces } from "./nodraw.js";
 import { fillSelectedLoop } from "./face-fill.js";
 import { bindExtrusionModeButtons } from "./extrusion-policy.js";
+import { assignExtrusionBrushIds, resolveExtrusion } from "./face-extrusion.js";
 import {
-  assignExtrusionBrushIds,
-  resolveExtrusion,
-} from "./face-extrusion.js";
+  createProject,
+  normalizeProject,
+  parseProject,
+  serializeProject,
+} from "./project-format.js";
+import { createDirtyStateService } from "./dirty-state.js";
+import {
+  downloadText,
+  FILE_KINDS,
+  projectFilename,
+  readSingleBrowserFile,
+  vmfFilename,
+} from "./files/browser-files.js";
+import { createFileSystemAccessAdapter } from "./files/file-system-access.js";
+import { createLocalServerFileAdapter } from "./files/local-server-files.js";
+import { createProjectStore } from "./storage/project-store.js";
+import { createRingBackingBrushes, writeRingPrefabVMF } from "./ring-export.js";
+import { updateManager } from "./update-manager.js";
 
 /**
  * @typedef {import("./face-extrusion.js").ResolvedExtrusion} ResolvedExtrusion
@@ -50,14 +66,46 @@ state.hiddenBrushes ||= new Set();
 state.squareBox ??= localStorage.getItem("squareBox") === "1";
 state.faceSelectionScope ||= "group";
 state.faceToolMode ||= "extrude";
+state.entities ||= [];
+state.groups ||= [];
+state.ringMaterialRoles ||= {};
+state.ringSettings ||= {};
+state.projectSettings ||= {};
+state.vmf ||= {};
 const history = state.history || (state.history = new History());
 const status = $("status");
 document.querySelector(".live-indicator")?.remove();
-const hmrIndicator = document.createElement("span");
-hmrIndicator.className = "live-indicator";
-hmrIndicator.dataset.state = "connecting";
-hmrIndicator.title = "Development reload connecting";
-document.querySelector("header").append(hmrIndicator);
+let hmrIndicator = null;
+if (import.meta.hot) {
+  hmrIndicator = document.createElement("span");
+  hmrIndicator.className = "live-indicator";
+  hmrIndicator.dataset.state = "connecting";
+  hmrIndicator.title = "Development reload connecting";
+  document.querySelector("header").append(hmrIndicator);
+}
+const storageMode =
+  new URLSearchParams(location.search).get("storage") === "server"
+    ? "server"
+    : "browser";
+const fileSystem = createFileSystemAccessAdapter(window);
+const serverFiles =
+  storageMode === "server" ? createLocalServerFileAdapter(api) : null;
+if (serverFiles)
+  $("file-privacy-notice").textContent =
+    "Files are read from and written to your configured local server directories.";
+const dirtyState = createDirtyStateService();
+let cleanProject = null;
+let projectHandle = null;
+let vmfHandle = null;
+let activeArtifact = "project";
+let autosaveStore = null;
+let autosaveSnapshots = [];
+let autosaveTimer = null;
+let autosaveDebounce = null;
+let autosaveIntervalMs = 30000;
+let availableUpdate = null;
+let updateReloadPending = false;
+const UPDATE_RECOVERY_KEY = "hammer-pending-update-snapshot";
 function describeUIError(error, fallbackMessage = "Unknown UI error") {
   const message = error?.message || String(error || fallbackMessage);
   const stack = error?.stack;
@@ -69,7 +117,8 @@ window.addEventListener("error", (event) => {
     : "";
   const details = describeUIError(event.error, event.message);
   console.error(`[UI error]${location}`, event.error || event.message);
-  if (status) setTimeout(() => setStatus(`UI error${location}: ${details}`, true), 0);
+  if (status)
+    setTimeout(() => setStatus(`UI error${location}: ${details}`, true), 0);
 });
 window.addEventListener("unhandledrejection", (event) => {
   const details = describeUIError(event.reason);
@@ -87,9 +136,9 @@ const view = new Viewport(
   activeView,
   state,
   (changeType) => {
-    if (changeType === "selection-commit") changed();
+    if (changeType === "selection-commit") changed("session");
     else if (changeType === "duplicate-commit") {
-      changed();
+      changed("document");
       setStatus("Duplicated selected brushes");
     } else if (changeType === "brush-preview") {
       redraw();
@@ -267,7 +316,7 @@ let allFiles = [];
 let visibleFiles = [];
 let browserSelected = null;
 
-state.generator = {
+state.generator ||= {
   radius: 256,
   width: 64,
   height: 128,
@@ -279,7 +328,11 @@ state.generator = {
   shape: "block",
   rings: 12,
 };
-state.grid = 16;
+state.grid ||= 16;
+state.projectFilename =
+  localStorage.getItem("hammer-project-filename") || state.projectFilename;
+state.vmfFilename =
+  localStorage.getItem("hammer-vmf-filename") || state.vmfFilename;
 const brushPanel = document.createElement("aside");
 brushPanel.className = "brush-panel";
 brushPanel.hidden = false;
@@ -337,7 +390,7 @@ selectionScopeToggle.onclick = () => {
       ? `${state.faceSelectionScope === "group" ? "Grouped inner, outer, top, or bottom faces" : "Single-face"} selection active`
       : `${state.selectionScope === "group" ? "Group" : "Object"} selection active`,
   );
-  if (faceMode) changed();
+  if (faceMode) changed("session");
   else redraw();
 };
 updateSelectionScopeToggle();
@@ -362,7 +415,7 @@ dockDivider.title = "Drag to resize generator pane";
 const facePanel = document.createElement("aside");
 facePanel.className = "brush-panel";
 facePanel.hidden = true;
- facePanel.innerHTML = `<header><strong>FACE TOOLS</strong></header><label>Mode <select data-face-mode><option value="extrude">Extrude</option><option value="fill">Planar Fill</option></select></label><label>Side material <select data-face-side-material><option value="dev/dev_measuregeneric01">Orange</option><option value="dev/dev_measuregeneric01b">Gray</option></select></label><label>Top material <select data-face-top-material><option value="dev/dev_measuregeneric01b">Gray</option><option value="dev/dev_measuregeneric01">Orange</option></select></label><label title="Maximum angle between an external rail and the extrusion normal">Max rail angle <input type="number" data-face-rail-angle min="15" max="89" step="1" value="89"> deg</label><label title="Signed source-side angle; 135 degrees is a 45-degree undirected line deviation">Max source angle <input type="number" data-face-source-angle min="90" max="179" step="1" value="135"> deg</label><label class="check-row" title="Snap the grabbed extrusion distance to the active grid"><input type="checkbox" data-face-grid-snap> Grid snap</label><div class="extrusion-toggles"><button type="button" class="extrusion-toggle" data-extrude-mode="parallel" aria-pressed="false" title="Keep the dragged cap parallel to the selected face while following adjacent source sides">Parallel</button><button type="button" class="extrusion-toggle" data-extrude-mode="snap" aria-pressed="false">Snap</button></div>`;
+facePanel.innerHTML = `<header><strong>FACE TOOLS</strong></header><label>Mode <select data-face-mode><option value="extrude">Extrude</option><option value="fill">Planar Fill</option></select></label><label>Side material <select data-face-side-material><option value="dev/dev_measuregeneric01">Orange</option><option value="dev/dev_measuregeneric01b">Gray</option></select></label><label>Top material <select data-face-top-material><option value="dev/dev_measuregeneric01b">Gray</option><option value="dev/dev_measuregeneric01">Orange</option></select></label><label title="Maximum angle between an external rail and the extrusion normal">Max rail angle <input type="number" data-face-rail-angle min="15" max="89" step="1" value="89"> deg</label><label title="Signed source-side angle; 135 degrees is a 45-degree undirected line deviation">Max source angle <input type="number" data-face-source-angle min="90" max="179" step="1" value="135"> deg</label><label class="check-row" title="Snap the grabbed extrusion distance to the active grid"><input type="checkbox" data-face-grid-snap> Grid snap</label><div class="extrusion-toggles"><button type="button" class="extrusion-toggle" data-extrude-mode="parallel" aria-pressed="false" title="Keep the dragged cap parallel to the selected face while following adjacent source sides">Parallel</button><button type="button" class="extrusion-toggle" data-extrude-mode="snap" aria-pressed="false">Snap</button></div>`;
 const faceModeSelect = facePanel.querySelector("[data-face-mode]");
 const sideMaterialSelect = facePanel.querySelector("[data-face-side-material]");
 const topMaterialSelect = facePanel.querySelector("[data-face-top-material]");
@@ -381,6 +434,7 @@ if (
 )
   throw new Error("Face panel markup is incomplete");
 bindExtrusionModeButtons(facePanel, state, (mode) => {
+  changed("document", false);
   redraw();
   setStatus(
     mode === "parallel"
@@ -400,7 +454,7 @@ railAngleInput.onchange = () => {
   try {
     localStorage.setItem("faceRailMaxAngle", String(state.faceRailMaxAngle));
   } catch {}
-  redraw();
+  changed("document", false);
   setStatus(`Maximum rail angle: ${state.faceRailMaxAngle} deg`);
 };
 sourceAngleInput.value = String(state.faceSourceMaxAngle);
@@ -416,17 +470,22 @@ sourceAngleInput.onchange = () => {
       String(state.faceSourceMaxAngle),
     );
   } catch {}
-  redraw();
+  changed("document", false);
   setStatus(`Maximum source-side angle: ${state.faceSourceMaxAngle} deg`);
 };
 faceGridSnapInput.checked = state.faceExtrusionGridSnap;
 faceGridSnapInput.onchange = () => {
   state.faceExtrusionGridSnap = faceGridSnapInput.checked;
   try {
-    localStorage.setItem("faceExtrusionGridSnap", String(state.faceExtrusionGridSnap));
+    localStorage.setItem(
+      "faceExtrusionGridSnap",
+      String(state.faceExtrusionGridSnap),
+    );
   } catch {}
-  redraw();
-  setStatus(`Extrusion grid snap ${state.faceExtrusionGridSnap ? "enabled" : "disabled"}`);
+  changed("document", false);
+  setStatus(
+    `Extrusion grid snap ${state.faceExtrusionGridSnap ? "enabled" : "disabled"}`,
+  );
 };
 function updateFaceToolMode() {
   faceModeSelect.value = state.faceToolMode;
@@ -441,7 +500,7 @@ function setFaceToolMode(event) {
       ? "Planar Fill: select a closed vertical boundary loop, then press E"
       : "Extrude: drag selected faces outward",
   );
-  changed();
+  changed("session");
 }
 faceModeSelect.addEventListener("input", setFaceToolMode);
 faceModeSelect.addEventListener("change", setFaceToolMode);
@@ -806,11 +865,100 @@ brushPanel.querySelector("[data-generate]").onclick = () => {
     );
   }
 };
+function entityMetadata(entity) {
+  const metadata = { ...entity };
+  delete metadata.brushes;
+  return metadata;
+}
+function canonicalGroups() {
+  const groups = state.groups.map((group) => ({ ...group }));
+  const known = new Set(
+    groups.flatMap((group) => {
+      const id = group.id ?? group.keys?.id;
+      return [
+        id,
+        id === undefined ? undefined : `vmf-group-${id}`,
+        group.exportKey,
+      ]
+        .filter((value) => value !== undefined)
+        .map(String);
+    }),
+  );
+  for (const groupId of new Set(
+    state.brushes.map((brush) => brush.groupId).filter(Boolean),
+  )) {
+    if (known.has(String(groupId))) continue;
+    groups.push({ exportKey: groupId });
+    known.add(String(groupId));
+  }
+  return groups;
+}
+function currentProject() {
+  return createProject({
+    projectName: state.projectName,
+    brushes: [...state.brushes],
+    entities: state.entities.map(entityMetadata),
+    groups: canonicalGroups(),
+    ringMaterialRoles: state.ringMaterialRoles,
+    ringSettings: state.ringSettings,
+    projectSettings: state.projectSettings,
+    grid: state.grid,
+    faceExtrusionMode: state.faceExtrusionMode,
+    faceExtrusionGridSnap: state.faceExtrusionGridSnap,
+    faceRailMaxAngle: state.faceRailMaxAngle,
+    faceSourceMaxAngle: state.faceSourceMaxAngle,
+    vmf: state.vmf,
+  });
+}
+function brushBelongsToEntity(brush, entity) {
+  const entityId = String(entity.id ?? entity.keys?.id ?? "");
+  return (
+    (brush.hammerEntityId !== undefined &&
+      String(brush.hammerEntityId) === entityId) ||
+    brush.entityId === `vmf-entity-${entityId}`
+  );
+}
+function currentVMFDocument() {
+  const assigned = new Set();
+  const groups = canonicalGroups();
+  const entities = state.entities.map((entity) => {
+    const brushes = state.brushes.filter((brush) => {
+      const belongs = brushBelongsToEntity(brush, entity);
+      if (belongs) assigned.add(brush.id);
+      return belongs;
+    });
+    return { ...entityMetadata(entity), brushes };
+  });
+  return {
+    format: "hammer-prefab-tool-vmf-document",
+    version: 1,
+    versionInfo: state.vmf.versionInfo || {},
+    versionProperties: state.vmf.versionProperties || [],
+    versionChildren: state.vmf.versionChildren || [],
+    children: state.vmf.children || [],
+    world: {
+      ...(state.vmf.world || {}),
+      brushes: state.brushes.filter((brush) => !assigned.has(brush.id)),
+      groups,
+    },
+    entities,
+    groups,
+    brushes: [...state.brushes],
+  };
+}
 function snapshot() {
+  const project = currentProject();
   return {
     extrusionModeVersion: 1,
     selectionScopeVersion: 1,
     brushes: clone(state.brushes),
+    entities: project.entities,
+    groups: project.groups,
+    ringMaterialRoles: project.ring.materialRoles,
+    ringSettings: project.ring.settings,
+    projectSettings: project.settings.project,
+    vmf: project.vmf,
+    projectName: project.name,
     selection: [...state.selection],
     brushSelection: [...state.brushSelection],
     hiddenBrushes: [...state.hiddenBrushes],
@@ -878,8 +1026,34 @@ async function captureGridScreenshot() {
   setStatus("Clean grid screenshot downloaded");
 }
 
-function changed() {
-  history.push(snapshot());
+function updateDocumentStatus() {
+  const dirty = dirtyState.isDirty();
+  const title = state.projectName || "Untitled";
+  $("document-title").textContent = title;
+  $("dirty-indicator").textContent = dirty ? "Unsaved" : "Saved";
+  $("dirty-indicator").dataset.dirty = String(dirty);
+  $("dirty-indicator").title = dirty
+    ? "Document has unsaved changes"
+    : "Document matches the saved checkpoint";
+  document.title = `${dirty ? "* " : ""}${title} - Hammer Prefab Tool`;
+  updateFileCommands();
+}
+function updateDirtyState() {
+  dirtyState.update(currentProject());
+  updateDocumentStatus();
+}
+function markDocumentClean(savedProject = currentProject()) {
+  cleanProject = normalizeProject(savedProject);
+  dirtyState.markClean(cleanProject);
+  dirtyState.update(currentProject());
+  updateDocumentStatus();
+}
+function changed(kind = "document", recordHistory = true) {
+  if (recordHistory) history.push(snapshot());
+  if (kind === "document") {
+    updateDirtyState();
+    scheduleAutosave();
+  }
   redraw();
 }
 function setStatus(text, error = false) {
@@ -924,7 +1098,14 @@ function restore(data) {
   if (!data) return;
   state.brushes = data.brushes || [];
   ensureArchExtrusionMetadata(state.brushes);
-  applyNodrawToHiddenFaces(state.brushes);
+  state.entities = data.entities || state.entities || [];
+  state.groups = data.groups || state.groups || [];
+  state.ringMaterialRoles =
+    data.ringMaterialRoles || state.ringMaterialRoles || {};
+  state.ringSettings = data.ringSettings || state.ringSettings || {};
+  state.projectSettings = data.projectSettings || state.projectSettings || {};
+  state.vmf = data.vmf || state.vmf || {};
+  state.projectName = data.projectName || state.projectName || "Untitled";
   state.selection = new Set(data.selection || []);
   state.brushSelection = new Set(data.brushSelection || []);
   state.hiddenBrushes = new Set(data.hiddenBrushes || []);
@@ -954,6 +1135,7 @@ function restore(data) {
     view.offset = data.camera.offset || { x: 0, y: 0 };
   }
   $("grid").value = state.grid;
+  updateDirtyState();
   redraw();
 }
 function saveHmrState() {
@@ -962,14 +1144,19 @@ function saveHmrState() {
       RELOAD_STATE_KEY,
       JSON.stringify({
         ...snapshot(),
+        project: currentProject(),
+        cleanProject,
         view: activeView,
         camera: { scale: view.scale, offset: view.offset },
         history: history.items,
         historyIndex: history.index,
+        activeArtifact,
       }),
     );
+    return true;
   } catch (error) {
     console.warn("[Hammer Prefab Tool] HMR state save failed", error);
+    return false;
   }
 }
 function restoreHmrState() {
@@ -978,11 +1165,18 @@ function restoreHmrState() {
     if (!raw) return false;
     sessionStorage.removeItem(RELOAD_STATE_KEY);
     const data = JSON.parse(raw);
+    if (data.project) applyProjectSettings(data.project);
     restore(data);
+    dirtyState.reset();
+    cleanProject = data.cleanProject || null;
+    if (cleanProject) dirtyState.markClean(cleanProject);
+    dirtyState.update(currentProject());
+    updateDocumentStatus();
     if (Array.isArray(data.history)) {
       history.items = data.history;
       history.index = data.historyIndex ?? data.history.length - 1;
     }
+    activeArtifact = data.activeArtifact === "vmf" ? "vmf" : "project";
     return true;
   } catch (error) {
     sessionStorage.removeItem(RELOAD_STATE_KEY);
@@ -1017,7 +1211,13 @@ function activateObjectMode() {
 }
 function add(brushes, label, selectCreated = false) {
   const groupId = `group-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const usedIds = new Set(state.brushes.map((brush) => brush.id));
   brushes.forEach((brush) => {
+    if (!brush.id || usedIds.has(brush.id))
+      brush.id = globalThis.crypto?.randomUUID
+        ? `brush-${globalThis.crypto.randomUUID()}`
+        : `brush-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    usedIds.add(brush.id);
     brush.groupId = groupId;
   });
   state.brushes.push(...brushes);
@@ -1041,11 +1241,15 @@ function setGrid(delta) {
   $("grid").value = state.grid;
   document.querySelector(".menu-note").textContent =
     `Current grid: ${state.grid}. Use [ and ] to change.`;
-  redraw();
+  changed("document", false);
 }
 function clearVMF() {
   if (!state.brushes.length) return;
+  if (!confirmDestructive("clear the current document")) return;
   state.brushes = [];
+  state.entities = [];
+  state.groups = [];
+  state.vmf = {};
   state.selection.clear();
   state.brushSelection.clear();
   state.faceSelection.clear();
@@ -1062,41 +1266,276 @@ function validate() {
   );
   return issues;
 }
-async function exportVMF(mode = "export") {
-  const saveAs = mode === "save-as";
-  const defaultSaveAs = state.vmfPath
-    ? state.vmfPath.replace(/\.vmf$/i, "-copy.vmf")
-    : "prefab.vmf";
-  const path = mode === "save"
-    ? state.vmfPath
-    : prompt(
-        saveAs ? "Save VMF as:" : "VMF filename:",
-        saveAs ? defaultSaveAs : state.vmfPath || "prefab.vmf",
-      );
-  if (path === null) return;
-  if (!path && mode === "save") {
-    setStatus("No VMF is loaded; use Save As... first", true);
-    return;
-  }
-  if (!path) return;
-  try {
-    const issues = validate();
-    if (issues.length && mode === "export") return;
-    const trimmedPath = path.trim();
-    const filename = /\.vmf$/i.test(trimmedPath)
-      ? trimmedPath
-      : `${trimmedPath}.vmf`;
-    setStatus(`Saving ${filename}...`);
-    if (saveAs) state.vmfPath = filename;
-    const result = await api.exportVMF(
-      filename,
-      writeVMF(state.brushes),
+function confirmDestructive(action) {
+  return (
+    !dirtyState.isDirty() ||
+    confirm(`Unsaved changes will be lost. Continue and ${action}?`)
+  );
+}
+function assertExportable(label = "VMF") {
+  if (!state.brushes.length)
+    throw new Error(`${label} export requires at least one brush`);
+  const issues = validateAll(state.brushes);
+  if (issues.length) throw new Error(`Validation failed: ${issues[0]}`);
+}
+function applyProjectSettings(project) {
+  state.grid = project.settings.grid;
+  state.faceExtrusionMode = project.settings.extrusion.mode;
+  state.faceExtrusionGridSnap = project.settings.extrusion.gridSnap;
+  state.faceRailMaxAngle = project.settings.extrusion.railMaxAngle;
+  state.faceSourceMaxAngle = project.settings.extrusion.sourceMaxAngle;
+  $("grid").value = String(state.grid);
+  faceGridSnapInput.checked = state.faceExtrusionGridSnap;
+  railAngleInput.value = String(state.faceRailMaxAngle);
+  sourceAngleInput.value = String(state.faceSourceMaxAngle);
+}
+function replaceDocument(projectInput, options = {}) {
+  const project = normalizeProject(projectInput);
+  const issues = validateAll(project.brushes);
+  if (issues.length) throw new Error(`File validation failed: ${issues[0]}`);
+  if (!confirmDestructive(`open ${options.filename || "this file"}`))
+    return false;
+
+  view.cancelInteraction();
+  view.previewBrushes = [];
+  view.creationPreviewBrushes = [];
+  view.creationBox = null;
+  state.brushes = project.brushes;
+  ensureArchExtrusionMetadata(state.brushes);
+  state.entities = project.entities.map(entityMetadata);
+  state.groups = project.groups;
+  state.ringMaterialRoles = project.ring.materialRoles;
+  state.ringSettings = project.ring.settings;
+  state.projectSettings = project.settings.project;
+  state.vmf = project.vmf;
+  state.projectName = project.name;
+  applyProjectSettings(project);
+  state.selection = new Set();
+  state.brushSelection = new Set();
+  state.hiddenBrushes = new Set();
+  state.faceSelection = new Set();
+  activateObjectMode();
+
+  if (options.kind === FILE_KINDS.VMF) {
+    state.vmfFilename = vmfFilename(options.filename || state.vmfFilename);
+    state.vmfPath = options.serverPath || null;
+    vmfHandle = options.handle || null;
+    projectHandle = null;
+    activeArtifact = "vmf";
+  } else {
+    state.projectFilename = projectFilename(
+      options.filename || state.projectFilename,
     );
-    state.vmfPath = result.path || filename;
-    setStatus(`${mode === "save" || saveAs ? "Saved" : "Exported"} ${state.vmfPath}`);
-  } catch (error) {
-    setStatus(error.message, true);
+    state.vmfPath = null;
+    projectHandle = options.handle || null;
+    vmfHandle = null;
+    activeArtifact = "project";
   }
+  syncFilenameControls();
+  history.items = [];
+  history.index = -1;
+  history.push(snapshot());
+  dirtyState.reset();
+  cleanProject = null;
+  if (options.clean) markDocumentClean();
+  else updateDirtyState();
+  view.focus();
+  redraw();
+  refreshAutosaves();
+  return true;
+}
+function projectFromVMF(documentModel, name) {
+  return createProject({
+    projectName: String(name || "Imported VMF").replace(/\.vmf$/i, ""),
+    brushes: documentModel.brushes,
+    entities: documentModel.entities.map(entityMetadata),
+    groups: documentModel.groups,
+    ringMaterialRoles: {},
+    ringSettings: {},
+    projectSettings: state.projectSettings,
+    grid: state.grid,
+    faceExtrusionMode: state.faceExtrusionMode,
+    faceExtrusionGridSnap: state.faceExtrusionGridSnap,
+    faceRailMaxAngle: state.faceRailMaxAngle,
+    faceSourceMaxAngle: state.faceSourceMaxAngle,
+    vmf: documentModel,
+  });
+}
+async function importBrowserFiles(files, options = {}) {
+  const loaded = await readSingleBrowserFile(files, {
+    allowedKinds: options.allowedKinds,
+  });
+  const project =
+    loaded.kind === FILE_KINDS.VMF
+      ? projectFromVMF(parseVMFDocument(loaded.text), loaded.name)
+      : parseProject(loaded.text, { name: loaded.name });
+  const replaced = replaceDocument(project, {
+    kind: loaded.kind,
+    filename: loaded.name,
+    handle: options.handle,
+    clean: loaded.kind === FILE_KINDS.PROJECT,
+  });
+  if (replaced) {
+    const gridReport = countOffGridCoordinates(state.brushes, state.grid);
+    setStatus(
+      `Opened ${loaded.name}: ${state.brushes.length} brushes · ${gridReport.offGrid}/${gridReport.total} coordinates off grid ${state.grid}`,
+      gridReport.offGrid > 0,
+    );
+  }
+  return replaced;
+}
+const PICKER_TYPES = {
+  vmf: [
+    { description: "Valve Map Format", accept: { "text/plain": [".vmf"] } },
+  ],
+  project: [
+    {
+      description: "Hammer Prefab Tool Project",
+      accept: { "application/json": [".json", ".hptproject.json"] },
+    },
+  ],
+};
+async function openLocalFile(kind) {
+  if (serverFiles) return openBrowser(kind);
+  const input =
+    kind === FILE_KINDS.VMF ? $("vmf-file-input") : $("project-file-input");
+  if (!fileSystem.supported) return input.click();
+  const opened = await fileSystem.open({ types: PICKER_TYPES[kind] });
+  if (!opened) return;
+  await importBrowserFiles([opened.file], {
+    allowedKinds: [kind],
+    handle: opened.handle,
+  });
+}
+function syncFilenameControls() {
+  $("project-filename").value = state.projectFilename;
+  $("vmf-filename").value = state.vmfFilename;
+  localStorage.setItem("hammer-project-filename", state.projectFilename);
+  localStorage.setItem("hammer-vmf-filename", state.vmfFilename);
+  updateFileCommands();
+}
+function updateFileCommands() {
+  const direct = document.querySelector('[data-command="save-direct"]');
+  const directAs = document.querySelector('[data-command="save-direct-as"]');
+  if (!direct) return;
+  const handle = activeArtifact === "vmf" ? vmfHandle : projectHandle;
+  const filename =
+    activeArtifact === "vmf" ? state.vmfFilename : state.projectFilename;
+  direct.hidden = !serverFiles && !fileSystem.supported;
+  direct.disabled = !serverFiles && !handle;
+  direct.innerHTML = `Save ${activeArtifact === "vmf" ? "VMF" : "Project"}: ${escapeHtml(filename)} <kbd>Ctrl+S</kbd>`;
+  directAs.textContent = `Save ${activeArtifact === "vmf" ? "VMF" : "Project"} As File...`;
+  directAs.hidden = !serverFiles && !fileSystem.supported;
+}
+async function saveProjectDocument({
+  direct = false,
+  saveAs = false,
+  download = false,
+} = {}) {
+  const savedProject = currentProject();
+  const text = serializeProject(savedProject);
+  const filename = projectFilename(state.projectFilename);
+  let result;
+  if (download) {
+    downloadText(text, filename, { type: "application/json;charset=utf-8" });
+  } else if (serverFiles) {
+    result = await serverFiles.saveProject(filename, savedProject);
+    state.projectFilename = projectFilename(result.path || filename);
+  } else if (direct && projectHandle && !saveAs) {
+    if (!(await fileSystem.write(projectHandle, text))) return false;
+  } else if (saveAs && fileSystem.supported) {
+    result = await fileSystem.save(text, {
+      suggestedName: filename,
+      types: PICKER_TYPES.project,
+    });
+    if (!result) return false;
+    projectHandle = result.handle;
+    state.projectFilename = projectFilename(result.handle.name || filename);
+  } else {
+    downloadText(text, filename, { type: "application/json;charset=utf-8" });
+  }
+  activeArtifact = "project";
+  syncFilenameControls();
+  markDocumentClean(savedProject);
+  setStatus(`Saved project ${state.projectFilename}`);
+  return true;
+}
+function standardVMFText() {
+  assertExportable("VMF");
+  return writeVMFDocument(currentVMFDocument());
+}
+async function exportVMFDocument({
+  prefab = false,
+  direct = false,
+  saveAs = false,
+} = {}) {
+  // Like the former writeVMF(state.brushes) path, exports read committed state only.
+  assertExportable(prefab ? "Hammer prefab VMF" : "VMF");
+  const savedProject = currentProject();
+  const backing = $("prefab-backing").value;
+  const prefabOptions = {
+    backingBelow: backing === "floor" || backing === "both",
+    backingAbove: backing === "ceiling" || backing === "both",
+  };
+  let text;
+  if (!prefab) text = standardVMFText();
+  else if ($("prefab-mode").value === "group") {
+    const documentModel = { ...state.vmf, ...currentVMFDocument() };
+    const backingBrushes = createRingBackingBrushes(
+      state.brushes,
+      prefabOptions,
+    );
+    documentModel.world.brushes.push(...backingBrushes);
+    documentModel.brushes.push(...backingBrushes);
+    text = writeVMFDocument(documentModel, {
+      purpose: VMF_EXPORT_PURPOSE.PREFAB,
+    });
+  } else
+    text = writeRingPrefabVMF(
+      { ...state.vmf, ...currentVMFDocument() },
+      prefabOptions,
+    );
+  const filename = vmfFilename(state.vmfFilename);
+  if (serverFiles) {
+    const result = await serverFiles.saveVmf(filename, text);
+    state.vmfPath = result.path || filename;
+    state.vmfFilename = vmfFilename(state.vmfPath);
+  } else if (direct && vmfHandle) {
+    if (!(await fileSystem.write(vmfHandle, text))) return false;
+  } else if (saveAs && fileSystem.supported) {
+    const result = await fileSystem.save(text, {
+      suggestedName: filename,
+      types: PICKER_TYPES.vmf,
+    });
+    if (!result) return false;
+    vmfHandle = result.handle;
+    state.vmfFilename = vmfFilename(result.handle.name || filename);
+  } else {
+    downloadText(text, filename, { type: "text/plain;charset=utf-8" });
+  }
+  if (serverFiles || direct || saveAs) activeArtifact = "vmf";
+  syncFilenameControls();
+  markDocumentClean(savedProject);
+  setStatus(
+    `Exported ${prefab ? "Hammer prefab " : ""}VMF ${state.vmfFilename}`,
+  );
+  return true;
+}
+async function saveCurrentArtifact() {
+  if (serverFiles)
+    return activeArtifact === "vmf"
+      ? exportVMFDocument({ direct: true })
+      : saveProjectDocument({ direct: true });
+  if (activeArtifact === "vmf" && vmfHandle)
+    return exportVMFDocument({ direct: true });
+  if (activeArtifact === "project" && projectHandle)
+    return saveProjectDocument({ direct: true });
+  return saveProjectDocument();
+}
+async function saveCurrentArtifactAs() {
+  return activeArtifact === "vmf"
+    ? exportVMFDocument({ saveAs: true })
+    : saveProjectDocument({ saveAs: true });
 }
 const escapeHtml = (value) =>
   String(value).replace(
@@ -1125,7 +1564,7 @@ function filterFiles() {
 function renderBrowser() {
   const list = $("browser-list");
   if (!visibleFiles.length) {
-    list.innerHTML = `<p class="browser-empty">No VMF files match this search.</p>`;
+    list.innerHTML = `<p class="browser-empty">No files match this search.</p>`;
     return;
   }
   list.innerHTML = visibleFiles
@@ -1142,19 +1581,27 @@ function renderBrowser() {
     button.ondblclick = loadSelected;
   });
 }
-async function openBrowser() {
+let browserKind = FILE_KINDS.VMF;
+async function openBrowser(kind = FILE_KINDS.VMF) {
+  browserKind = kind;
   browserSelected = null;
+  browser.querySelector("strong").textContent =
+    kind === FILE_KINDS.VMF ? "OPEN VMF" : "OPEN PROJECT";
   $("browser-status").textContent = "Loading...";
   browser.showModal();
   search.focus();
   try {
-    allFiles = (await api.files("export")).files.filter((file) =>
-      file.name.toLowerCase().endsWith(".vmf"),
-    );
+    if (kind === FILE_KINDS.VMF) {
+      allFiles = (await serverFiles.listFiles("export")).files.filter((file) =>
+        file.name.toLowerCase().endsWith(".vmf"),
+      );
+    } else {
+      allFiles = (await serverFiles.listProjects()).projects;
+    }
     visibleFiles = allFiles;
     filterFiles();
     $("browser-status").textContent =
-      `${allFiles.length} VMF file${allFiles.length === 1 ? "" : "s"} · double-click to open`;
+      `${allFiles.length} ${kind === FILE_KINDS.VMF ? "VMF" : "project"} file${allFiles.length === 1 ? "" : "s"} · double-click to open`;
     search.focus();
   } catch (error) {
     allFiles = [];
@@ -1166,26 +1613,121 @@ async function openBrowser() {
 async function loadSelected() {
   if (!browserSelected) return;
   try {
-    const result = await api.openVMF(browserSelected.name, "export");
-    state.brushes = parseVMF(result.vmf);
-    state.vmfPath = result.path;
-    state.selection = new Set();
-    state.brushSelection = new Set();
-    state.faceSelection = new Set();
-    history.push(snapshot());
-    redraw();
-    view.focus();
-    browser.close();
-    const groupCount = new Set(
-        state.brushes.map((brush) => brush.groupId).filter(Boolean),
-      ).size,
-      gridReport = countOffGridCoordinates(state.brushes, state.grid);
-    setStatus(
-      `Opened ${result.path}: ${state.brushes.length} brushes · ${groupCount} groups · ${gridReport.offGrid}/${gridReport.total} coordinates off grid ${state.grid}`,
-      gridReport.offGrid > 0,
-    );
+    const result =
+      browserKind === FILE_KINDS.VMF
+        ? await serverFiles.openVmf(browserSelected.name, "export")
+        : await serverFiles.loadProject(browserSelected.name);
+    const project =
+      browserKind === FILE_KINDS.VMF
+        ? projectFromVMF(parseVMFDocument(result.vmf), result.path)
+        : normalizeProject(result.project, { name: result.path });
+    const replaced = replaceDocument(project, {
+      kind: browserKind,
+      filename: result.path || browserSelected.name,
+      serverPath: result.path,
+      clean: browserKind === FILE_KINDS.PROJECT,
+    });
+    if (replaced) {
+      browser.close();
+      setStatus(
+        `Opened ${result.path || browserSelected.name}: ${state.brushes.length} brushes`,
+      );
+    }
   } catch (error) {
     $("browser-status").textContent = error.message;
+  }
+}
+function renderAutosaveState(message, error = false) {
+  const element = $("autosave-status");
+  element.textContent = message;
+  element.style.color = error ? "#ff8290" : "";
+}
+function updateAutosaveActions() {
+  document.querySelectorAll("[data-autosave-action]").forEach((button) => {
+    button.hidden = autosaveSnapshots.length === 0;
+  });
+  const latest = autosaveSnapshots[0];
+  if (latest)
+    document.querySelector('[data-command="restore-autosave"]').textContent =
+      `Restore Autosave (${new Date(latest.updatedAt).toLocaleString()})`;
+}
+async function refreshAutosaves() {
+  if (!autosaveStore) return;
+  try {
+    autosaveSnapshots = await autosaveStore.listSnapshots();
+    updateAutosaveActions();
+  } catch (error) {
+    renderAutosaveState(`Autosave unavailable: ${error.message}`, true);
+  }
+}
+async function autosaveNow(reason = "autosave", force = false) {
+  if (!autosaveStore || (!force && !dirtyState.isDirty())) return null;
+  renderAutosaveState("Autosaving...");
+  try {
+    const record = await autosaveStore.saveSnapshot(currentProject(), {
+      reason: `${reason}:${state.projectFilename}`,
+      projectName: state.projectName,
+      lastModifiedAt: new Date(),
+      applicationVersion:
+        document
+          .querySelector('meta[name="hammer-build-id"]')
+          ?.getAttribute("content") || "development",
+    });
+    await refreshAutosaves();
+    renderAutosaveState(
+      `Autosaved ${new Date(record.updatedAt).toLocaleTimeString()}`,
+    );
+    return record;
+  } catch (error) {
+    renderAutosaveState(`Autosave failed: ${error.message}`, true);
+    return null;
+  }
+}
+function scheduleAutosave() {
+  if (!autosaveStore) return;
+  clearTimeout(autosaveDebounce);
+  autosaveDebounce = setTimeout(() => void autosaveNow("change"), 1500);
+}
+function startAutosaveTimer() {
+  clearInterval(autosaveTimer);
+  autosaveTimer = setInterval(
+    () => void autosaveNow("interval"),
+    autosaveIntervalMs,
+  );
+}
+async function restoreLatestAutosave() {
+  const latest = autosaveSnapshots[0];
+  if (!latest) return setStatus("No autosave is available", true);
+  try {
+    const project = await autosaveStore.restoreSnapshot(latest.id);
+    if (
+      replaceDocument(project, {
+        kind: FILE_KINDS.PROJECT,
+        filename: state.projectFilename,
+        clean: false,
+      })
+    )
+      setStatus(
+        `Restored autosave from ${new Date(latest.updatedAt).toLocaleString()}`,
+      );
+  } catch (error) {
+    setStatus(`Autosave restore failed: ${error.message}`, true);
+  }
+}
+async function discardLatestAutosave() {
+  const latest = autosaveSnapshots[0];
+  if (!latest) return;
+  if (!confirm("Discard the most recent autosave snapshot?")) return;
+  try {
+    await autosaveStore.discardSnapshot(latest.id);
+    await refreshAutosaves();
+    renderAutosaveState(
+      autosaveSnapshots.length
+        ? `Autosave available from ${new Date(autosaveSnapshots[0].updatedAt).toLocaleTimeString()}`
+        : "Autosave ready",
+    );
+  } catch (error) {
+    setStatus(`Autosave discard failed: ${error.message}`, true);
   }
 }
 /**
@@ -1224,8 +1766,7 @@ function commitFaceExtrusion(resolved = null) {
   state.faceSelection = new Set(resolved.selection);
   for (const id of resolved.selection) {
     const match = id.match(/^(.*):f:(\d+)$/);
-    const brush =
-      match && state.brushes.find((item) => item.id === match[1]);
+    const brush = match && state.brushes.find((item) => item.id === match[1]);
     const faceIndex = Number(match?.[2]);
     if (!brush?.faces?.[faceIndex]) continue;
     brush.faceMaterials ||= brush.faces.map(
@@ -1250,7 +1791,7 @@ function run(command) {
     state.selection.clear();
     state.brushSelection.clear();
     state.faceSelection.clear();
-    changed();
+    changed("session");
     setStatus("Selection cleared");
   }
   if (command === "delete") {
@@ -1300,6 +1841,48 @@ function run(command) {
       !count,
     );
   }
+  if (command === "apply-ring-material") {
+    const role = $("ring-material-role").value;
+    const material = $("ring-role-material").value.trim();
+    if (!material || /["\r\n]/.test(material))
+      return setStatus("Enter a valid Source material path", true);
+    const selectedIds = new Set(state.brushSelection);
+    state.selection.forEach((id) => selectedIds.add(id.split(":v:")[0]));
+    state.faceSelection.forEach((id) => selectedIds.add(id.split(":f:")[0]));
+    const owner = (brush) =>
+      brush.assemblyId || brush.groupId || brush.entityId || brush.id;
+    const owners = new Set(
+      state.brushes.filter((brush) => selectedIds.has(brush.id)).map(owner),
+    );
+    if (!owners.size) return setStatus("Select a ring first", true);
+    let applied = 0;
+    for (const brush of state.brushes) {
+      if (!owners.has(owner(brush))) continue;
+      const indices = brush.faceRoles?.[role] || [];
+      brush.faceMaterials ||= brush.faces.map(
+        () => brush.material || "tools/toolsnodraw",
+      );
+      for (const index of indices) {
+        if (brush.faceMaterials[index]?.toLowerCase() === "tools/toolsnodraw")
+          continue;
+        brush.faceMaterials[index] = material;
+        applied++;
+      }
+      if (indices.length) {
+        brush.materialRoles ||= {};
+        brush.materialRoles[role] = material;
+        state.ringMaterialRoles[owner(brush)] ||= {};
+        state.ringMaterialRoles[owner(brush)][role] = material;
+      }
+    }
+    if (!applied)
+      return setStatus(
+        `The selected object has no visible ${role} ring faces`,
+        true,
+      );
+    changed();
+    setStatus(`Applied ${material} to ${applied} ${role} ring faces`);
+  }
   if (command === "undo") restore(history.undo());
   if (command === "redo") restore(history.redo());
   if (command === "center") {
@@ -1340,12 +1923,12 @@ function run(command) {
   }
   if (command === "select-inner") {
     state.selection = new Set(ringVertexIds(state.brushes, "inner"));
-    changed();
+    changed("session");
     setStatus(`${state.selection.size} inner-ring vertices selected`);
   }
   if (command === "select-outer") {
     state.selection = new Set(ringVertexIds(state.brushes, "outer"));
-    changed();
+    changed("session");
     setStatus(`${state.selection.size} outer-ring vertices selected`);
   }
   if (command === "scale") {
@@ -1391,16 +1974,33 @@ function run(command) {
       `${command === "inner-radius" ? "Inner" : "Outer"} radius set for ${count} vertices`,
     );
   }
-  if (command === "export") exportVMF();
-  if (command === "save-as") exportVMF("save-as");
-  if (command === "save") exportVMF("save");
+  if (command === "open-vmf") runFileAction(openLocalFile(FILE_KINDS.VMF));
+  if (command === "open-project")
+    runFileAction(openLocalFile(FILE_KINDS.PROJECT));
+  if (command === "save-direct") runFileAction(saveCurrentArtifact());
+  if (command === "save-direct-as") runFileAction(saveCurrentArtifactAs());
+  if (command === "save-project-as")
+    runFileAction(saveProjectDocument({ saveAs: true }));
+  if (command === "save-project-download")
+    runFileAction(saveProjectDocument({ download: true }));
+  if (command === "export-vmf") runFileAction(exportVMFDocument());
+  if (command === "export-prefab-vmf")
+    runFileAction(exportVMFDocument({ prefab: true }));
+  if (command === "restore-autosave") runFileAction(restoreLatestAutosave());
+  if (command === "discard-autosave") runFileAction(discardLatestAutosave());
+}
+
+function runFileAction(action) {
+  Promise.resolve(action).catch((error) =>
+    setStatus(error.message || String(error), true),
+  );
 }
 
 $("grid").onchange = (event) => {
   state.grid = +event.target.value;
   document.querySelector(".menu-note").textContent =
     `Current grid: ${state.grid}. Use [ and ] to change.`;
-  redraw();
+  changed("document", false);
 };
 $("view-selector").onclick = () => {
   activeView =
@@ -1424,7 +2024,59 @@ $("key-toggle").onclick = () => {
     ? "Hide controls and key"
     : "Show controls and key";
 };
-$("open-browser").onclick = openBrowser;
+$("vmf-file-input").onchange = (event) => {
+  const files = Array.from(event.target.files || []);
+  event.target.value = "";
+  if (files?.length)
+    runFileAction(
+      importBrowserFiles(files, { allowedKinds: [FILE_KINDS.VMF] }),
+    );
+};
+$("project-file-input").onchange = (event) => {
+  const files = Array.from(event.target.files || []);
+  event.target.value = "";
+  if (files?.length)
+    runFileAction(
+      importBrowserFiles(files, { allowedKinds: [FILE_KINDS.PROJECT] }),
+    );
+};
+for (const element of document.querySelectorAll("[data-file-system-access]"))
+  element.hidden = Boolean(serverFiles) || !fileSystem.supported;
+$("project-filename").onchange = (event) => {
+  state.projectFilename = projectFilename(event.target.value);
+  syncFilenameControls();
+};
+$("vmf-filename").onchange = (event) => {
+  state.vmfFilename = vmfFilename(event.target.value);
+  syncFilenameControls();
+};
+let dragDepth = 0;
+function supportedDrag(event) {
+  const items = Array.from(event.dataTransfer?.items || []);
+  return items.length === 1 && items[0].kind === "file";
+}
+window.addEventListener("dragenter", (event) => {
+  event.preventDefault();
+  if (!supportedDrag(event)) return;
+  dragDepth++;
+  document.body.classList.add("file-drag-active");
+});
+window.addEventListener("dragover", (event) => {
+  event.preventDefault();
+  if (event.dataTransfer)
+    event.dataTransfer.dropEffect = supportedDrag(event) ? "copy" : "none";
+});
+window.addEventListener("dragleave", (event) => {
+  event.preventDefault();
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (!dragDepth) document.body.classList.remove("file-drag-active");
+});
+window.addEventListener("drop", (event) => {
+  event.preventDefault();
+  dragDepth = 0;
+  document.body.classList.remove("file-drag-active");
+  runFileAction(importBrowserFiles(event.dataTransfer?.files));
+});
 search.oninput = () => {
   localStorage.setItem("hammer-vmf-search", search.value);
   filterFiles();
@@ -1436,9 +2088,13 @@ search.onkeydown = (event) => {
     loadSelected();
   }
 };
-document
-  .querySelectorAll("[data-command]")
-  .forEach((button) => (button.onclick = () => run(button.dataset.command)));
+document.querySelectorAll("[data-command]").forEach(
+  (button) =>
+    (button.onclick = () => {
+      run(button.dataset.command);
+      if (button.closest(".drop-menu")) closeMenus();
+    }),
+);
 const contextMenu = $("context-menu");
 $("editor").addEventListener("contextmenu", (event) => {
   event.preventDefault();
@@ -1459,20 +2115,19 @@ contextMenu.querySelectorAll("[data-command]").forEach(
 const menus = [...document.querySelectorAll(".drop-menu")];
 function closeMenus() {
   menus.forEach((item) => item.classList.remove("open"));
-  document
-    .querySelectorAll("[data-menu]")
-    .forEach((item) => item.classList.remove("active"));
+  document.querySelectorAll("[data-menu]").forEach((item) => {
+    item.classList.remove("active");
+    item.setAttribute("aria-expanded", "false");
+  });
 }
 document.querySelectorAll("[data-menu]").forEach((button) =>
   button.addEventListener("mouseenter", () => {
     if (!menus.some((menu) => menu.classList.contains("open"))) return;
     const menu = $(button.dataset.menu);
-    menus.forEach((item) => item.classList.remove("open"));
-    document
-      .querySelectorAll("[data-menu]")
-      .forEach((item) => item.classList.remove("active"));
+    closeMenus();
     menu.classList.add("open");
     button.classList.add("active");
+    button.setAttribute("aria-expanded", "true");
     menu.style.left = `${button.getBoundingClientRect().left}px`;
   }),
 );
@@ -1482,14 +2137,15 @@ document.querySelectorAll("[data-menu]").forEach(
       event.stopPropagation();
       const menu = $(button.dataset.menu);
       const opening = !menu.classList.contains("open");
-      menus.forEach((item) => item.classList.remove("open"));
-      document
-        .querySelectorAll("[data-menu]")
-        .forEach((item) => item.classList.remove("active"));
+      closeMenus();
       if (opening) {
         menu.classList.add("open");
         button.classList.add("active");
+        button.setAttribute("aria-expanded", "true");
         menu.style.left = `${button.getBoundingClientRect().left}px`;
+        menu
+          .querySelector("button:not([hidden]):not(:disabled), input, select")
+          ?.focus();
       }
     }),
 );
@@ -1506,15 +2162,21 @@ document.addEventListener("pointerdown", (event) => {
     !event.target.closest(".menu-bar") &&
     !event.target.closest(".drop-menu")
   ) {
-    menus.forEach((item) => item.classList.remove("open"));
-    document
-      .querySelectorAll("[data-menu]")
-      .forEach((item) => item.classList.remove("active"));
+    closeMenus();
   }
 });
 window.addEventListener("keydown", (event) => {
   if (browser.open && event.key === "Escape") {
     browser.close();
+    return;
+  }
+  if (
+    event.key === "Escape" &&
+    menus.some((menu) => menu.classList.contains("open"))
+  ) {
+    const trigger = document.querySelector("[data-menu].active");
+    closeMenus();
+    trigger?.focus();
     return;
   }
   if (event.key === "Escape" && view.cancelInteraction()) {
@@ -1549,12 +2211,12 @@ window.addEventListener("keydown", (event) => {
   }
   if ((event.ctrlKey || event.metaKey) && key === "o") {
     event.preventDefault();
-    openBrowser();
+    run("open-vmf");
     return;
   }
   if ((event.ctrlKey || event.metaKey) && key === "s") {
     event.preventDefault();
-    run("save");
+    run("save-direct");
     return;
   }
   if ((event.ctrlKey || event.metaKey) && key === "z") {
@@ -1592,7 +2254,7 @@ window.addEventListener("keydown", (event) => {
         .filter((brush) => !selected.has(brush.id))
         .map((brush) => brush.id),
     );
-    changed();
+    changed("session");
     setStatus(
       `Hidden ${state.hiddenBrushes.size} brushes; ${selected.size} remain visible`,
     );
@@ -1602,7 +2264,7 @@ window.addEventListener("keydown", (event) => {
     event.preventDefault();
     const count = state.hiddenBrushes.size;
     state.hiddenBrushes.clear();
-    changed();
+    changed("session");
     setStatus(
       count ? `Unhid ${count} brushes` : "All brushes are already visible",
     );
@@ -1657,18 +2319,98 @@ if (import.meta.hot) {
   });
   import.meta.hot.on("vite:beforeFullReload", saveHmrState);
 }
+window.addEventListener("beforeunload", (event) => {
+  if (updateReloadPending || !dirtyState.isDirty()) return;
+  event.preventDefault();
+  event.returnValue = "";
+});
+updateManager.onUpdateAvailable((update) => {
+  availableUpdate = update;
+  $("update-available").hidden = false;
+  $("update-available").textContent = update.version
+    ? `Update ${update.version} available`
+    : "Update available";
+});
+$("update-available").onclick = () => {
+  if (!availableUpdate) return;
+  runFileAction(
+    (async () => {
+      $("update-available").disabled = true;
+      try {
+        setStatus("Saving recovery state before update...");
+        const autosaved = await autosaveNow("update", true);
+        const sessionSaved = saveHmrState();
+        if (!autosaved && !sessionSaved)
+          throw new Error(
+            "The update was not applied because recovery state could not be saved",
+          );
+        if (!sessionSaved && autosaved)
+          localStorage.setItem(UPDATE_RECOVERY_KEY, autosaved.id);
+        else localStorage.removeItem(UPDATE_RECOVERY_KEY);
+        updateReloadPending = true;
+        try {
+          await availableUpdate.applyUpdate();
+        } catch (error) {
+          updateReloadPending = false;
+          throw error;
+        }
+      } finally {
+        $("update-available").disabled = false;
+      }
+    })(),
+  );
+};
 async function start() {
-  try {
-    await api.config();
-    setStatus("");
-  } catch (error) {
-    setStatus(error.message, true);
+  if (serverFiles) {
+    try {
+      const result = await api.config();
+      const seconds = Number(result.config?.autosaveIntervalSeconds);
+      if (Number.isFinite(seconds) && seconds >= 10)
+        autosaveIntervalMs = seconds * 1000;
+    } catch (error) {
+      setStatus(error.message, true);
+    }
   }
   if (!state.__initialized && !restoreHmrState()) {
     state.brushes = [];
+    history.items = [];
+    history.index = -1;
     history.push(snapshot());
+    markDocumentClean();
   }
   state.__initialized = true;
+  try {
+    autosaveStore = createProjectStore({ retention: 20 });
+    await refreshAutosaves();
+    const pendingUpdateSnapshot = localStorage.getItem(UPDATE_RECOVERY_KEY);
+    if (pendingUpdateSnapshot) {
+      try {
+        const project = await autosaveStore.restoreSnapshot(
+          pendingUpdateSnapshot,
+        );
+        replaceDocument(project, {
+          kind: FILE_KINDS.PROJECT,
+          filename: projectFilename(project.name),
+          clean: false,
+        });
+        localStorage.removeItem(UPDATE_RECOVERY_KEY);
+        setStatus("Restored editing state after update");
+      } catch (error) {
+        localStorage.removeItem(UPDATE_RECOVERY_KEY);
+        setStatus(`Update recovery failed: ${error.message}`, true);
+      }
+    }
+    renderAutosaveState(
+      autosaveSnapshots.length
+        ? `Autosave available from ${new Date(autosaveSnapshots[0].updatedAt).toLocaleTimeString()}`
+        : "Autosave ready",
+    );
+    startAutosaveTimer();
+  } catch (error) {
+    renderAutosaveState(`Autosave unavailable: ${error.message}`, true);
+  }
+  syncFilenameControls();
+  updateDocumentStatus();
   redraw();
 }
-start();
+start().catch((error) => setStatus(error.message || String(error), true));

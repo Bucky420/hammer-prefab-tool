@@ -4,23 +4,102 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>Hammer Prefab Tool</title>
-    <link rel="stylesheet" href="/style.css" />
-    <link rel="stylesheet" href="/menu-overrides.css" />
+    <link rel="stylesheet" href="./style.css" />
+    <link rel="stylesheet" href="./menu-overrides.css" />
   </head>
   <body>
     <header>
       <nav class="menu-bar">
-        <button data-menu="file-menu">File</button
-        ><button data-menu="edit-menu">Edit</button
-        ><button data-menu="select-menu">Select</button
-        ><button data-menu="tools-menu">Tools</button
-        ><button data-menu="view-menu">View</button>
+        <button
+          data-menu="file-menu"
+          aria-haspopup="menu"
+          aria-controls="file-menu"
+          aria-expanded="false"
+        >
+          File</button
+        ><button
+          data-menu="edit-menu"
+          aria-haspopup="menu"
+          aria-controls="edit-menu"
+          aria-expanded="false"
+        >
+          Edit</button
+        ><button
+          data-menu="select-menu"
+          aria-haspopup="menu"
+          aria-controls="select-menu"
+          aria-expanded="false"
+        >
+          Select</button
+        ><button
+          data-menu="tools-menu"
+          aria-haspopup="menu"
+          aria-controls="tools-menu"
+          aria-expanded="false"
+        >
+          Tools</button
+        ><button
+          data-menu="view-menu"
+          aria-haspopup="menu"
+          aria-controls="view-menu"
+          aria-expanded="false"
+        >
+          View
+        </button>
       </nav>
       <div id="file-menu" class="drop-menu">
-        <button id="open-browser" type="button">
-          Open VMF <kbd>Ctrl+O</kbd></button
-        ><button data-command="save">Save <kbd>Ctrl+S</kbd></button
-        ><button data-command="save-as">Save As...</button>
+        <button data-command="open-vmf">Open VMF <kbd>Ctrl+O</kbd></button
+        ><button data-command="open-project">Open Project</button
+        ><button data-command="restore-autosave" data-autosave-action hidden>
+          Restore Autosave</button
+        ><button data-command="discard-autosave" data-autosave-action hidden>
+          Discard Autosave
+        </button>
+        <span id="file-privacy-notice" class="privacy-notice"
+          >Your VMF and project files are processed locally in your browser and
+          are not uploaded.</span
+        >
+        <hr />
+        <label class="menu-filename"
+          >Project filename
+          <input
+            id="project-filename"
+            type="text"
+            value="untitled.hptproject.json"
+        /></label>
+        <label class="menu-filename"
+          >VMF filename <input id="vmf-filename" type="text" value="prefab.vmf"
+        /></label>
+        <button data-command="save-direct" hidden>
+          Save Current File <kbd>Ctrl+S</kbd></button
+        ><button data-command="save-direct-as" hidden>
+          Save Current File As...</button
+        ><button data-command="save-project-as" data-file-system-access hidden>
+          Save Project As File...</button
+        ><button data-command="save-project-download">
+          Save Project (Download) <kbd>Ctrl+S</kbd>
+        </button>
+        <hr />
+        <button data-command="export-vmf">Export VMF</button
+        ><button data-command="export-prefab-vmf">
+          Export Hammer Prefab VMF
+        </button>
+        <label class="menu-filename"
+          >Prefab mode
+          <select id="prefab-mode">
+            <option value="func_detail">func_detail per group</option>
+            <option value="group">Hammer groups</option>
+          </select></label
+        >
+        <label class="menu-filename"
+          >Structural backing
+          <select id="prefab-backing">
+            <option value="none">None</option>
+            <option value="floor">Floor</option>
+            <option value="ceiling">Ceiling</option>
+            <option value="both">Both</option>
+          </select></label
+        >
       </div>
       <div id="edit-menu" class="drop-menu">
         <button data-command="undo">Undo <kbd>Ctrl+Z</kbd></button
@@ -48,11 +127,28 @@
           Extrude Selected Faces <kbd>E</kbd></button
         ><button data-command="nodraw-hidden">
           Apply Nodraw to Hidden Faces</button
+        ><label class="menu-filename"
+          >Ring face role
+          <select id="ring-material-role">
+            <option value="top">Top</option>
+            <option value="bottom">Bottom</option>
+            <option value="inner">Inner</option>
+            <option value="outer">Outer</option>
+            <option value="trim">Trim</option>
+            <option value="start">Start</option>
+            <option value="end">End</option>
+          </select></label
+        ><label class="menu-filename"
+          >Ring role material
+          <input
+            id="ring-role-material"
+            type="text"
+            value="prefab/ring_top" /></label
+        ><button data-command="apply-ring-material">
+          Apply Material to Selected Ring</button
         ><button data-command="align-center">Align All Faces to Center</button
         ><button data-command="align-outer">Align All Faces to Outer</button
-        ><button data-command="validate">Validate VMF Solids</button
-        ><button data-command="save">Save <kbd>Ctrl+S</kbd></button
-        ><button data-command="save-as">Save As...</button>
+        ><button data-command="validate">Validate VMF Solids</button>
       </div>
       <div id="view-menu" class="drop-menu">
         <label class="menu-grid-control"
@@ -78,7 +174,12 @@
         ><button data-command="grid-down">Smaller Grid <kbd>[</kbd></button
         ><button data-command="grid-up">Larger Grid <kbd>]</kbd></button>
       </div>
-      <span id="status">Connecting...</span>
+      <span id="document-title">Untitled</span
+      ><span id="dirty-indicator" title="Saved">Saved</span>
+      <span id="status"></span>
+      <button id="update-available" type="button" hidden>
+        Update available
+      </button>
       <div class="header-tools">
         <button
           id="selection-scope-toggle"
@@ -110,22 +211,21 @@
       <div id="views">
         <article>
           <canvas id="editor"></canvas
-           ><button id="view-selector" class="view-selector" title="Change view">
-             TOP / XY</button
-           ><button
-             id="grid-screenshot"
-             class="grid-screenshot"
-             type="button"
-             title="Copy a clean small screenshot of the grid"
-             aria-label="Copy a clean small screenshot of the grid"
-           >
-             <svg viewBox="0 0 24 24" aria-hidden="true">
-               <path d="M4 8h3l1.5-2h5L15 8h5v11H4z" />
-               <circle cx="12" cy="13" r="3.5" />
-             </svg>
-           </button
-           ><button
-             id="key-toggle"
+          ><button id="view-selector" class="view-selector" title="Change view">
+            TOP / XY</button
+          ><button
+            id="grid-screenshot"
+            class="grid-screenshot"
+            type="button"
+            title="Copy a clean small screenshot of the grid"
+            aria-label="Copy a clean small screenshot of the grid"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 8h3l1.5-2h5L15 8h5v11H4z" />
+              <circle cx="12" cy="13" r="3.5" />
+            </svg></button
+          ><button
+            id="key-toggle"
             class="key-toggle"
             type="button"
             aria-expanded="false"
@@ -145,8 +245,8 @@
             <div>
               Face: drag to extrude; hold Ctrl to toggle or paint faces.
             </div>
-             <div><kbd>Ctrl</kbd> toggle multiple selections</div>
-             <div><kbd>Ctrl+Shift+C</kbd> copy grid screenshot</div>
+            <div><kbd>Ctrl</kbd> toggle multiple selections</div>
+            <div><kbd>Ctrl+Shift+C</kbd> copy grid screenshot</div>
           </div>
         </article>
       </div>
@@ -186,13 +286,30 @@
         <footer><span id="browser-status"></span></footer>
       </form>
     </dialog>
+    <input
+      id="vmf-file-input"
+      class="hidden-file-input"
+      type="file"
+      accept=".vmf"
+    />
+    <input
+      id="project-file-input"
+      class="hidden-file-input"
+      type="file"
+      accept=".json,.hptproject.json"
+    />
+    <div id="drop-overlay" aria-hidden="true">
+      <strong>Drop one VMF or project file to open</strong>
+    </div>
     <footer>
-      <span id="stats">0 brushes · 0 selected vertices</span
+      <span id="autosave-status">Autosave ready</span
+      ><span id="stats">0 brushes · 0 selected vertices</span
       ><span id="fps">FPS: --</span>
     </footer>
-    <script type="importmap">
+    <script type="importmap" data-local-server>
       { "imports": { "@flatten-js/core": "/_deps/flatten-js.mjs" } }
     </script>
-    <script type="module" src="/js/app.js"></script>
+    <script type="module" src="./js/update-manager.js"></script>
+    <script type="module" src="./js/app.js"></script>
   </body>
 </html>

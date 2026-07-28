@@ -537,6 +537,83 @@ body > footer #fps {
   white-space: nowrap;
 }
 
+.menu-filename {
+  display: grid;
+  grid-template-columns: 92px minmax(150px, 1fr);
+  align-items: center;
+  gap: 7px;
+  padding: 4px 7px;
+  color: #b7c9de;
+}
+.menu-filename input,
+.menu-filename select {
+  min-width: 0;
+  width: 100%;
+}
+#file-menu,
+#tools-menu {
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+}
+#file-menu {
+  min-width: 340px;
+}
+.privacy-notice {
+  display: block;
+  max-width: 310px;
+  padding: 6px 7px;
+  color: #9eb1c8;
+  font-size: 10px;
+  white-space: normal;
+}
+#document-title {
+  max-width: 180px;
+  overflow: hidden;
+  color: #dce7f5;
+  font-weight: bold;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#dirty-indicator {
+  color: #79dca6;
+  font-size: 10px;
+  white-space: nowrap;
+}
+#dirty-indicator[data-dirty="true"] {
+  color: #ffcb72;
+}
+#update-available {
+  color: #101720;
+  background: #66dde3;
+  border-color: #66dde3;
+  white-space: nowrap;
+}
+.hidden-file-input {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+#drop-overlay {
+  position: fixed;
+  z-index: 1000;
+  inset: 8px;
+  display: none;
+  place-items: center;
+  color: #dce7f5;
+  background: #101720e8;
+  border: 2px dashed #66dde3;
+  pointer-events: none;
+}
+body.file-drag-active #drop-overlay {
+  display: grid;
+}
+#autosave-status {
+  color: #93a8c4;
+  white-space: nowrap;
+}
+
 .live-indicator {
   position: absolute;
   right: 10px;
@@ -562,4 +639,34 @@ body > footer #fps {
 .live-indicator[data-state="reloading"] {
   background: #ffcf65;
   color: #ffcf65;
+}
+
+@media (max-width: 700px) {
+  body {
+    grid-template-rows: 38px minmax(0, 1fr) 24px;
+  }
+  body > header {
+    gap: 2px;
+    padding-inline: 4px;
+  }
+  .menu-bar {
+    display: flex;
+    min-width: 0;
+    overflow-x: auto;
+  }
+  #document-title,
+  #dirty-indicator {
+    display: none;
+  }
+  #file-menu,
+  #tools-menu {
+    right: 4px;
+    left: 4px !important;
+    min-width: 0;
+    max-width: none;
+  }
+  body > footer #stats {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 }

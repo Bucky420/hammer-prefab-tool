@@ -14,8 +14,16 @@ const state = {
   grid: 16,
   faceExtrusionGridSnap: false,
   textureLock: "world",
-  projectName: "untitled.json",
+  projectName: "Untitled",
+  projectFilename: "untitled.hptproject.json",
+  vmfFilename: "prefab.vmf",
   vmfPath: null,
+  entities: [],
+  groups: [],
+  ringMaterialRoles: {},
+  ringSettings: {},
+  projectSettings: {},
+  vmf: {},
 };
 
 const VALID_MODES = ["straight", "snap", "parallel"];

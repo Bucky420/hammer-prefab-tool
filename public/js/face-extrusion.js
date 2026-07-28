@@ -1944,6 +1944,9 @@ export function extrudeSelectedFaces(
     ].map((candidate) => outward(candidate, vertices));
     const material =
       brush.faceMaterials?.[faceIndex] || brush.material || "tools/toolsnodraw";
+    const sourceFaceRole = Object.entries(brush.faceRoles || {}).find(
+      ([, indices]) => indices.includes(faceIndex),
+    )?.[0];
     const result = {
       id: `extrude-preview-${preview.length}`,
       material,
@@ -1954,6 +1957,18 @@ export function extrudeSelectedFaces(
       ],
       vertices,
       faces,
+      faceRoles: {
+        ...(sourceFaceRole ? { [sourceFaceRole]: [1] } : {}),
+        base: [0],
+        cap: [1],
+        sides: Array.from({ length: count }, (_, index) => index + 2),
+      },
+      materialRoles: {
+        ...(brush.materialRoles || {}),
+        base: "tools/toolsnodraw",
+        cap: material,
+        sides: material,
+      },
       generator: {
         ...brush.generator,
         type: brush.generator?.type || "face-extrude",
@@ -1961,6 +1976,14 @@ export function extrudeSelectedFaces(
         extrusion: region.caps.has(id) ? "region" : mode,
       },
     };
+    for (const key of [
+      "assemblyId",
+      "groupId",
+      "hammerGroupId",
+      "entityId",
+      "hammerEntityId",
+    ])
+      if (brush[key] !== undefined) result[key] = brush[key];
     if (brush.vertexRoles) {
       result.vertexRoles = Object.fromEntries(
         Object.entries(brush.vertexRoles).map(([role, indices]) => [

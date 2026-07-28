@@ -31,6 +31,10 @@ export function ringVertexIds(brushes, role) {
 export function faceRole(brush, faceIndex) {
   const face = brush.faces[faceIndex];
   if (!face) return null;
+  for (const role of ["outer", "inner", "top", "bottom"])
+    if (brush.faceRoles?.[role]?.includes(faceIndex)) return role;
+  for (const [role, indices] of Object.entries(brush.faceRoles || {}))
+    if (indices.includes(faceIndex)) return role;
   for (const role of ["outer", "inner"]) {
     const vertices = new Set(brush.vertexRoles?.[role] || []);
     if (vertices.size && face.every((index) => vertices.has(index)))

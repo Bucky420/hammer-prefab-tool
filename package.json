@@ -4,15 +4,25 @@
   "private": true,
   "scripts": {
     "start": "node server.js",
+    "start:local": "node server.js",
     "dev": "node dev.mjs",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "npm run check",
+    "test:persistence": "node tests/project-format.test.mjs && node tests/browser-files.test.mjs && node tests/project-store.test.mjs && node tests/dirty-state.test.mjs && node tests/app-file-contracts.test.mjs",
+    "test:vmf": "node tests/vmf-document.test.mjs && node tests/ring-prefab-export.test.mjs",
+    "test:browser": "node tests/browser-smoke.test.mjs",
+    "test:static-build": "npm run build && node tests/static-build.test.mjs",
+    "test:update-manager": "node tests/update-manager.test.mjs",
     "typecheck": "tsc --project jsconfig.json",
-    "check": "npm run typecheck && node tests/static-contracts.test.mjs && node tests/geometry-runtime.test.mjs && node tests/milestone.test.mjs && node tests/extrusion-mode-state.test.mjs && node tests/test-setup.mjs && node tests/extrusion-fixtures.test.mjs && node tests/single-face-extrusion-fixtures.test.mjs && node tests/single-face-snap-regressions.test.mjs"
+    "check": "npm run typecheck && node tests/static-contracts.test.mjs && node tests/geometry-runtime.test.mjs && node tests/milestone.test.mjs && node tests/extrusion-mode-state.test.mjs && node tests/face-panel-startup.test.mjs && node tests/test-setup.mjs && node tests/extrusion-fixtures.test.mjs && node tests/single-face-extrusion-fixtures.test.mjs && node tests/single-face-snap-regressions.test.mjs && npm run test:persistence && npm run test:vmf && npm run test:static-build && npm run test:update-manager && npm run test:browser"
   },
   "engines": {
     "node": ">=20.19.0"
   },
   "devDependencies": {
     "chokidar": "5.0.0",
+    "playwright": "^1.55.1",
     "typescript": "^5.9.2",
     "typescript-language-server": "^5.0.1",
     "vite": "8.1.4"

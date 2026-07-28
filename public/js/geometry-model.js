@@ -43,7 +43,16 @@ import { roundToGrid } from "./grid.js";
  * @property {string[]} [faceMaterials]
  * @property {Array<TextureAxes | undefined>} [textureAxes]
  * @property {string} [groupId]
+ * @property {string} [assemblyId]
+ * @property {string} [hammerGroupId]
+ * @property {string} [entityId]
+ * @property {string} [hammerEntityId]
+ * @property {string} [entityClassname]
+ * @property {string} [vmfId]
+ * @property {Array<{id?: string, rotation?: number | string, lightmapScale?: number | string, smoothingGroups?: number | string, properties?: Array<{key: string, value: string}>}>} [sideData]
  * @property {Record<string, number[]>} [vertexRoles]
+ * @property {Record<string, number[]>} [faceRoles]
+ * @property {Record<string, string>} [materialRoles]
  * @property {BrushGenerator} [generator]
  */
 
@@ -101,15 +110,42 @@ export function clone(value) {
  */
 export function duplicateBrushes(brushes, selected) {
   const groups = new Map();
+  const assemblies = new Map();
+  const usedBrushIds = new Set(brushes.map((brush) => brush.id));
+  const usedGroupIds = new Set(
+    brushes.map((brush) => brush.groupId).filter(Boolean),
+  );
+  const usedAssemblyIds = new Set(
+    brushes.map((brush) => brush.assemblyId).filter(Boolean),
+  );
+  const uniqueId = (prefix, used) => {
+    let id;
+    do {
+      id = globalThis.crypto?.randomUUID
+        ? `${prefix}-${globalThis.crypto.randomUUID()}`
+        : `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    } while (used.has(id));
+    used.add(id);
+    return id;
+  };
   return brushes
     .filter((brush) => selected.has(brush.id))
     .map((brush) => {
       const copy = clone(brush);
-      copy.id = `copy-${nextId++}`;
+      copy.id = uniqueId("copy", usedBrushIds);
       if (brush.groupId) {
-        const group = groups.get(brush.groupId) || `group-copy-${nextId++}`;
+        const group =
+          groups.get(brush.groupId) || uniqueId("group-copy", usedGroupIds);
         groups.set(brush.groupId, group);
         copy.groupId = group;
+      }
+      if (brush.assemblyId) {
+        const assembly =
+          assemblies.get(brush.assemblyId) ||
+          uniqueId("assembly-copy", usedAssemblyIds);
+        assemblies.set(brush.assemblyId, assembly);
+        copy.assemblyId = assembly;
+        if (copy.generator?.assemblyId) copy.generator.assemblyId = assembly;
       }
       return copy;
     });

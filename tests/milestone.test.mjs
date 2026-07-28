@@ -365,6 +365,9 @@ const invertedLoopSource = generateRing({
     segments: 8,
     grid: 16,
   }),
+  invertedLoopMaterials = JSON.stringify(
+    invertedLoopSource.map((brush) => brush.faceMaterials),
+  ),
   invertedLoop = extrudeSelectedFaces(
     invertedLoopSource,
     new Set(invertedLoopSource.map((brush) => `${brush.id}:f:4`)),
@@ -387,7 +390,8 @@ assert.ok(
   "invalid offset loops must report the region or convexity failure",
 );
 assert.ok(
-  invertedLoopSource.every((brush) => !brush.faceMaterials),
+  JSON.stringify(invertedLoopSource.map((brush) => brush.faceMaterials)) ===
+    invertedLoopMaterials,
   "rejected extrusion must not mutate source face materials",
 );
 assert.equal(

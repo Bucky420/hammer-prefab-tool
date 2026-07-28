@@ -1,4 +1,12 @@
 let nextId = 10000;
+let nextAssemblyId = 1;
+const DEFAULT_MATERIAL = "dev/dev_measurewall01a";
+const uniqueId = (prefix, fallback) =>
+  globalThis.crypto?.randomUUID
+    ? `${prefix}-${globalThis.crypto.randomUUID()}`
+    : `${prefix}-${Date.now().toString(36)}-${fallback}`;
+const semanticMaterial = (role) =>
+  role === "interface" ? "tools/toolsnodraw" : `prefab/ring_${role}`;
 const polar = (radius, degrees) => {
   const radians = (degrees * Math.PI) / 180;
   return { x: radius * Math.cos(radians), y: radius * Math.sin(radians) };
@@ -7,6 +15,15 @@ const axis = (value) =>
   Math.abs(value) < 0.000001 ? 0 : Number(value.toFixed(6));
 // Equivalent to Hammer's V_rint(value / grid) * grid snapping.
 const hammerSnap = (value, grid) => Math.round(value / grid) * grid;
+function semanticMetadata(roles) {
+  return {
+    faceMaterials: roles.map(semanticMaterial),
+    faceRoles: Object.fromEntries(roles.map((role, index) => [role, [index]])),
+    materialRoles: Object.fromEntries(
+      roles.map((role) => [role, semanticMaterial(role)]),
+    ),
+  };
+}
 function outward(face, vertices) {
   const center = vertices.reduce(
     (sum, v) => ({
@@ -53,12 +70,14 @@ export function generateRing({
   bevel = 0,
   textureMode = "radial",
   grid = 16,
+  assemblyId,
 } = {}) {
   const innerRadius = Math.max(0, radius - width / 2);
   const outerRadius = Math.max(innerRadius + 1, radius + width / 2);
   const count = Math.max(3, Math.floor(segments));
   const span = endAngle - startAngle;
   const brushes = [];
+  const owner = assemblyId || uniqueId("ring-assembly", nextAssemblyId++);
   for (let i = 0; i < count; i++) {
     const start = startAngle + (span * i) / count;
     const end = startAngle + (span * (i + 1)) / count;
@@ -105,13 +124,23 @@ export function generateRing({
         [6, 7, 1, 0],
       ].map((face) => outward(face, vertices));
       brushes.push({
-        id: `brush-${nextId++}`,
-        material: "dev/dev_measurewall01a",
+        id: uniqueId("brush", nextId++),
+        assemblyId: owner,
+        material: DEFAULT_MATERIAL,
         vertices,
         faces,
         textureAxes: baseTextureAxes,
+        ...semanticMetadata([
+          "bottom",
+          "top",
+          "outer",
+          "end",
+          "inner",
+          "start",
+        ]),
         generator: {
           type: "ring",
+          assemblyId: owner,
           segment: i,
           segments: count,
           startAngle: start,
@@ -190,13 +219,23 @@ export function generateRing({
             : [],
         );
       brushes.push({
-        id: `brush-${nextId++}`,
-        material: "dev/dev_measurewall01a",
+        id: uniqueId("brush", nextId++),
+        assemblyId: owner,
+        material: DEFAULT_MATERIAL,
         vertices,
         faces,
         textureAxes: bevelSize ? undefined : baseTextureAxes,
+        ...semanticMetadata([
+          "start",
+          "end",
+          "outer",
+          "top",
+          "inner",
+          "bottom",
+        ]),
         generator: {
           type: "ring",
+          assemblyId: owner,
           segment: i,
           segments: count,
           startAngle: start,

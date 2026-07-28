@@ -1,5 +1,6 @@
 # Dependencies and runtime output
 node_modules/
+dist/
 logs/
 backups/
 projects/
