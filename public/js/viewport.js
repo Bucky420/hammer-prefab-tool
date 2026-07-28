@@ -2060,8 +2060,10 @@ export class Viewport {
           let bestSingle = null;
           let bestSingleScore = Infinity;
           const evalSet = [
-            ...hardAPool.flatMap((sA) =>
-              hardBPool.map((sB) => ({ sideA: sA, sideB: sB })),
+            ...hardAPool.filter(singleRailAllowed).flatMap((sA) =>
+              hardBPool
+                .filter(singleRailAllowed)
+                .map((sB) => ({ sideA: sA, sideB: sB })),
             ),
             ...hardAPool
               .filter(singleRailAllowed)
@@ -2479,7 +2481,11 @@ export class Viewport {
         this.drag.startRailState === "single-sideA" ? sideBPool : sideAPool;
       let upgrade = null;
       for (const candidate of oppositePool) {
-        if (!candidate || candidate.canonicalKey === fixed?.canonicalKey)
+        if (
+          !candidate ||
+          !singleRailAllowed(candidate) ||
+          candidate.canonicalKey === fixed?.canonicalKey
+        )
           continue;
         const fixedConstraint = makeSideConstraint(fixed);
         const oppositeConstraint = makeSideConstraint(candidate);

@@ -730,4 +730,32 @@ const geometry = (brushes) =>
   }
 }
 
+{
+  const { data: fixture, url } = loadFixture(
+    "single-face-pull-down-nearest-rail",
+  );
+  for (const scenario of fixture.scenarios) {
+    const { snapshots } = replaySequence(fixture, scenario);
+    for (const [index, snapshot] of snapshots.entries()) {
+      assert.equal(
+        snapshot.lockState,
+        scenario.states[index],
+        `${scenario.name} L${snapshot.distance}: lock state`,
+      );
+      if (snapshot.distance > 0)
+        assert.ok(
+          snapshot.resolved,
+          `${scenario.name} L${snapshot.distance}: pull-down preview remains visible`,
+        );
+    }
+    const final = snapshots.at(-1);
+    assert.deepEqual(
+      [final.pair?.sideA?.targetBrushId, final.pair?.sideB?.targetBrushId],
+      scenario.expectedPair,
+      `${scenario.name}: nearest lower rail replaces the tangent upper edge`,
+    );
+  }
+  assert.ok(existsSync(new URL(fixture.expected.screenshot, url)));
+}
+
 console.log("single-face Snap regressions passed");

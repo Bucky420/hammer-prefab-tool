@@ -1,0 +1,152 @@
+{
+  "schemaVersion": 1,
+  "name": "single-face-pull-down-nearest-rail",
+  "sourceVmf": "failtest3.vmf",
+  "issue": "A near-tangent attached edge above the pulled face must not form the initial hard pair and block the nearer lower rail that appears later in the drag.",
+  "editor": {
+    "brushes": [
+      {
+        "id": "imported-50003",
+        "material": "TOOLS/TOOLSNODRAW",
+        "faceMaterials": [
+          "TOOLS/TOOLSNODRAW",
+          "GLOBBY/TEST/GLOBBY_COALMATTETILES01_MR_2K",
+          "TOOLS/TOOLSNODRAW",
+          "TOOLS/TOOLSNODRAW",
+          "DEVNEONS/BLUE_NEON",
+          "GLOBBY/TEST/GLOBBY_GRANITE_TILE_2K_BLEND"
+        ],
+        "vertices": [
+          { "x": 262, "y": -68, "z": -64 },
+          { "x": 272, "y": 32, "z": -64 },
+          { "x": 22, "y": 32, "z": -64 },
+          { "x": 272, "y": 32, "z": 0 },
+          { "x": 262, "y": -68, "z": 0 },
+          { "x": 17, "y": -19, "z": 0 },
+          { "x": 22, "y": 32, "z": 0 },
+          { "x": 17, "y": -19, "z": -64 }
+        ],
+        "faces": [
+          [0, 1, 2, 7],
+          [3, 4, 5, 6],
+          [5, 4, 0, 7],
+          [3, 6, 2, 1],
+          [4, 3, 1, 0],
+          [6, 5, 7, 2]
+        ]
+      },
+      {
+        "id": "imported-50005",
+        "material": "tools/toolsnodraw",
+        "faceMaterials": [
+          "tools/toolsnodraw",
+          "GLOBBY/TEST/GLOBBY_GRANITE_TILE_2K_BLEND",
+          "GLOBBY/TEST/GLOBBY_GRANITE_TILE_2K_BLEND",
+          "GLOBBY/TEST/GLOBBY_GRANITE_TILE_2K_BLEND",
+          "GLOBBY/TEST/GLOBBY_GRANITE_TILE_2K_BLEND",
+          "GLOBBY/TEST/GLOBBY_GRANITE_TILE_2K_BLEND"
+        ],
+        "vertices": [
+          { "x": 2, "y": -68, "z": 0 },
+          { "x": -76.2108873102776, "y": -35.49677410481971, "z": 0 },
+          { "x": -76.2108873102776, "y": -35.49677410481971, "z": -64 },
+          { "x": -61.19610578145364, "y": 13.55151222267206, "z": 0 },
+          { "x": 17.014781528824017, "y": -18.951713672508234, "z": 0 },
+          { "x": 17.014781528824017, "y": -18.951713672508234, "z": -64 },
+          { "x": -61.19610578145364, "y": 13.55151222267206, "z": -64 },
+          { "x": 2, "y": -68, "z": -64 }
+        ],
+        "faces": [
+          [0, 1, 2, 7],
+          [3, 4, 5, 6],
+          [1, 3, 6, 2],
+          [0, 4, 3, 1],
+          [4, 0, 7, 5],
+          [5, 7, 2, 6]
+        ]
+      },
+      {
+        "id": "imported-50007",
+        "material": "tools/toolsnodraw",
+        "faceMaterials": [
+          "tools/toolsnodraw",
+          "tools/toolsnodraw",
+          "GLOBBY/TEST/GLOBBY_GRANITE_TILE_2K_BLEND",
+          "GLOBBY/TEST/GLOBBY_GRANITE_TILE_2K_BLEND",
+          "GLOBBY/TEST/GLOBBY_GRANITE_TILE_2K_BLEND",
+          "GLOBBY/TEST/GLOBBY_GRANITE_TILE_2K_BLEND"
+        ],
+        "vertices": [
+          { "x": -59.44718923277168, "y": 32, "z": 0 },
+          { "x": 22, "y": 32, "z": 0 },
+          { "x": 22, "y": 32, "z": -64 },
+          { "x": 22, "y": 31.89751236798741, "z": 0 },
+          { "x": -59.450456434104055, "y": 31.965535849099336, "z": 0 },
+          { "x": -59.450456434104055, "y": 31.965535849099336, "z": -64 },
+          { "x": -59.44718923277168, "y": 32, "z": -64 },
+          { "x": 22, "y": 31.89751236798741, "z": -64 }
+        ],
+        "faces": [
+          [0, 1, 2, 6],
+          [3, 4, 5, 7],
+          [3, 1, 0, 4],
+          [4, 0, 6, 5],
+          [2, 7, 5, 6],
+          [1, 3, 7, 2]
+        ]
+      },
+      {
+        "id": "imported-50011",
+        "material": "tools/toolsnodraw",
+        "faceMaterials": [
+          "tools/toolsnodraw",
+          "TOOLS/TOOLSNODRAW",
+          "TOOLS/TOOLSNODRAW",
+          "TOOLS/TOOLSNODRAW",
+          "TOOLS/TOOLSNODRAW",
+          "TOOLS/TOOLSNODRAW"
+        ],
+        "vertices": [
+          { "x": -110.14318211300463, "y": 53.25426181977686, "z": 0 },
+          { "x": -62.880897132141456, "y": 67.02382057357171, "z": 0 },
+          { "x": -62.880897132141456, "y": 67.02382057357171, "z": -64 },
+          { "x": -59.44718923277168, "y": 32, "z": 0 },
+          { "x": -100.74999700936439, "y": 21.013330996638196, "z": 0 },
+          { "x": -100.74999700936439, "y": 21.013330996638196, "z": -64 },
+          { "x": -59.44718923277168, "y": 32, "z": -64 },
+          { "x": -110.14318211300463, "y": 53.25426181977686, "z": -64 }
+        ],
+        "faces": [
+          [0, 1, 2, 7],
+          [3, 4, 5, 6],
+          [1, 3, 6, 2],
+          [3, 1, 0, 4],
+          [4, 0, 7, 5],
+          [2, 6, 5, 7]
+        ]
+      }
+    ],
+    "hiddenBrushes": [],
+    "view": "top",
+    "grid": 1,
+    "extrusionMode": "snap",
+    "faceRailMaxAngle": 45,
+    "faceSourceMaxAngle": 30
+  },
+  "viewport": {
+    "width": 1000,
+    "height": 700,
+    "scale": 4,
+    "offset": { "x": 0, "y": 0 }
+  },
+  "scenarios": [
+    {
+      "name": "pull-down-past-upper-rail",
+      "faceSelection": ["imported-50007:f:1"],
+      "distances": [0, 2, 8, 16],
+      "states": ["pending", "single-sideA", "single-sideA", "paired"],
+      "expectedPair": ["imported-50003", "imported-50005"]
+    }
+  ],
+  "expected": { "screenshot": "regression.svg" }
+}

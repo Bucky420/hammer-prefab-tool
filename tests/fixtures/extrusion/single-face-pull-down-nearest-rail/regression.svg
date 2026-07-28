@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="360" viewBox="0 0 720 360">
+  <rect width="720" height="360" fill="#17191d"/>
+  <path d="M90 78h250l-16 72H90z" fill="#4c5968" stroke="#aab6c4" stroke-width="3"/>
+  <path d="M90 150h250v4H90z" fill="#d0dae5"/>
+  <path d="M90 154h250l-28 126H118z" fill="#436b55" stroke="#75d194" stroke-width="4"/>
+  <path d="M118 280l-52-55" stroke="#64a9ff" stroke-width="5"/>
+  <path d="M312 280l50-58" stroke="#64a9ff" stroke-width="5"/>
+  <text x="390" y="100" fill="#f2f4f7" font-family="sans-serif" font-size="24">Pull down</text>
+  <text x="390" y="142" fill="#ff8a8a" font-family="sans-serif" font-size="18">Bug: upper tangent rail locks, preview vanishes</text>
+  <text x="390" y="180" fill="#75d194" font-family="sans-serif" font-size="18">Expected: nearest lower rail takes the open side</text>
+  <text x="390" y="218" fill="#aab6c4" font-family="monospace" font-size="16">L2/L8: one forward rail</text>
+  <text x="390" y="246" fill="#aab6c4" font-family="monospace" font-size="16">L16: pair with lower magnetic rail</text>
+</svg>
