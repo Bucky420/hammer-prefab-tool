@@ -11,6 +11,19 @@ No installation is required. VMF and project files are processed locally in your
 > [!IMPORTANT]
 > This is an early tool with basic editing features. It complements Hammer; it is not a complete map editor.
 
+## Screenshots
+
+Click any thumbnail for a larger view.
+
+[<img src="screenshots/image.png" width="200">](screenshots/image.png)
+[<img src="screenshots/aasdasd.png" width="200">](screenshots/aasdasd.png)
+[<img src="screenshots/asdasd.png" width="200">](screenshots/asdasd.png)
+[<img src="screenshots/asdasdasd.png" width="200">](screenshots/asdasdasd.png)
+[<img src="screenshots/asdasdasdadsasd.png" width="200">](screenshots/asdasdasdadsasd.png)
+[<img src="screenshots/asdasdasdasd.png" width="200">](screenshots/asdasdasdasd.png)
+[<img src="screenshots/asdasdasdasdasd.png" width="200">](screenshots/asdasdasdasdasd.png)
+[<img src="screenshots/asdadasdasdasdasd.png" width="200">](screenshots/asdadasdasdasdasd.png)
+
 ## What works now
 
 - Open and export convex VMF brush geometry.
