@@ -829,6 +829,56 @@ const groupedRing = generateRing({
 const groupedRingSelection = new Set(
   groupedRing.map((brush) => `${brush.id}:f:2`),
 );
+const miteredRing = generateRing({
+    radius: 256,
+    width: 64,
+    height: 128,
+    segments: 32,
+    grid: 1,
+  }),
+  miteredRingSelection = new Set(
+    miteredRing.map((brush) => `${brush.id}:f:2`),
+  ),
+  groupedGridSnapViewport = Object.create(Viewport.prototype);
+groupedGridSnapViewport.kind = "top";
+groupedGridSnapViewport.state = {
+  brushes: miteredRing,
+  grid: 16,
+  faceExtrusionGridSnap: true,
+  faceExtrusionMode: "straight",
+};
+groupedGridSnapViewport.screen = (point) => ({ x: point.x, y: point.y });
+const rightmostGroupedBrush = miteredRing.reduce((best, brush) =>
+    Math.max(...brush.faces[2].map((index) => brush.vertices[index].x)) >
+    Math.max(...best.faces[2].map((index) => best.vertices[index].x))
+      ? brush
+      : best,
+  ),
+  groupedGridAnchor = groupedGridSnapViewport.groupedExtrusionGridAnchor(
+    `${rightmostGroupedBrush.id}:f:2`,
+    miteredRingSelection,
+    { x: 10000, y: 0 },
+  );
+assert.ok(groupedGridAnchor, "grouped extrusion must identify the grabbed corner");
+groupedGridSnapViewport.drag = { gridSnapAnchor: groupedGridAnchor };
+const groupedGridDistance = groupedGridSnapViewport.snapExtrusionDistance(64),
+  groupedGridAxis = Math.abs(groupedGridAnchor.direction.x) >=
+    Math.abs(groupedGridAnchor.direction.y)
+    ? "x"
+    : "y",
+  groupedGridCoordinate =
+    groupedGridAnchor.source[groupedGridAxis] +
+    groupedGridAnchor.direction[groupedGridAxis] * groupedGridDistance;
+assert.ok(
+  Math.abs(groupedGridCoordinate - roundToGrid(groupedGridCoordinate, 16)) <
+    0.000001,
+  "grouped extrusion grid snap must place the grabbed mitered corner on grid",
+);
+assert.notEqual(
+  groupedGridDistance,
+  64,
+  "grouped extrusion must convert the corner target back to normal offset distance",
+);
 const groupedRingExtrusion = extrudeSelectedFaces(
   groupedRing,
   groupedRingSelection,

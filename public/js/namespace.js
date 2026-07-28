@@ -12,6 +12,7 @@ const state = {
   tool: "box",
   view: "top",
   grid: 16,
+  faceExtrusionGridSnap: false,
   textureLock: "world",
   projectName: "untitled.json",
   vmfPath: null,
@@ -51,6 +52,14 @@ const getPersistedSourceAngle = () => {
   }
 };
 state.faceSourceMaxAngle = getPersistedSourceAngle();
+const getPersistedExtrusionGridSnap = () => {
+  try {
+    return localStorage.getItem("faceExtrusionGridSnap") === "true";
+  } catch {
+    return false;
+  }
+};
+state.faceExtrusionGridSnap = getPersistedExtrusionGridSnap();
 let faceExtrusionMode = state.faceExtrusionMode || getPersistedMode() || "straight";
 
 Object.defineProperty(state, "faceExtrusionMode", {

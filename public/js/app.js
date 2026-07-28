@@ -362,12 +362,13 @@ dockDivider.title = "Drag to resize generator pane";
 const facePanel = document.createElement("aside");
 facePanel.className = "brush-panel";
 facePanel.hidden = true;
-facePanel.innerHTML = `<header><strong>FACE TOOLS</strong></header><label>Mode <select data-face-mode><option value="extrude">Extrude</option><option value="fill">Planar Fill</option></select></label><label>Side material <select data-face-side-material><option value="dev/dev_measuregeneric01">Orange</option><option value="dev/dev_measuregeneric01b">Gray</option></select></label><label>Top material <select data-face-top-material><option value="dev/dev_measuregeneric01b">Gray</option><option value="dev/dev_measuregeneric01">Orange</option></select></label><label title="Maximum angle between an external rail and the extrusion normal">Max rail angle <input type="number" data-face-rail-angle min="15" max="89" step="1" value="89"> deg</label><label title="Signed source-side angle; 135 degrees is a 45-degree undirected line deviation">Max source angle <input type="number" data-face-source-angle min="90" max="179" step="1" value="135"> deg</label><div class="extrusion-toggles"><button type="button" class="extrusion-toggle" data-extrude-mode="parallel" aria-pressed="false" title="Keep the dragged cap parallel to the selected face while following adjacent source sides">Parallel</button><button type="button" class="extrusion-toggle" data-extrude-mode="snap" aria-pressed="false">Snap</button></div>`;
+ facePanel.innerHTML = `<header><strong>FACE TOOLS</strong></header><label>Mode <select data-face-mode><option value="extrude">Extrude</option><option value="fill">Planar Fill</option></select></label><label>Side material <select data-face-side-material><option value="dev/dev_measuregeneric01">Orange</option><option value="dev/dev_measuregeneric01b">Gray</option></select></label><label>Top material <select data-face-top-material><option value="dev/dev_measuregeneric01b">Gray</option><option value="dev/dev_measuregeneric01">Orange</option></select></label><label title="Maximum angle between an external rail and the extrusion normal">Max rail angle <input type="number" data-face-rail-angle min="15" max="89" step="1" value="89"> deg</label><label title="Signed source-side angle; 135 degrees is a 45-degree undirected line deviation">Max source angle <input type="number" data-face-source-angle min="90" max="179" step="1" value="135"> deg</label><label class="check-row" title="Snap the grabbed extrusion distance to the active grid"><input type="checkbox" data-face-grid-snap> Grid snap</label><div class="extrusion-toggles"><button type="button" class="extrusion-toggle" data-extrude-mode="parallel" aria-pressed="false" title="Keep the dragged cap parallel to the selected face while following adjacent source sides">Parallel</button><button type="button" class="extrusion-toggle" data-extrude-mode="snap" aria-pressed="false">Snap</button></div>`;
 const faceModeSelect = facePanel.querySelector("[data-face-mode]");
 const sideMaterialSelect = facePanel.querySelector("[data-face-side-material]");
 const topMaterialSelect = facePanel.querySelector("[data-face-top-material]");
 const railAngleInput = facePanel.querySelector("[data-face-rail-angle]");
 const sourceAngleInput = facePanel.querySelector("[data-face-source-angle]");
+const faceGridSnapInput = facePanel.querySelector("[data-face-grid-snap]");
 const faceModeButtons = facePanel.querySelectorAll("[data-extrude-mode]");
 if (
   !faceModeSelect ||
@@ -375,6 +376,7 @@ if (
   !topMaterialSelect ||
   !railAngleInput ||
   !sourceAngleInput ||
+  !faceGridSnapInput ||
   faceModeButtons.length !== 2
 )
   throw new Error("Face panel markup is incomplete");
@@ -416,6 +418,15 @@ sourceAngleInput.onchange = () => {
   } catch {}
   redraw();
   setStatus(`Maximum source-side angle: ${state.faceSourceMaxAngle} deg`);
+};
+faceGridSnapInput.checked = state.faceExtrusionGridSnap;
+faceGridSnapInput.onchange = () => {
+  state.faceExtrusionGridSnap = faceGridSnapInput.checked;
+  try {
+    localStorage.setItem("faceExtrusionGridSnap", String(state.faceExtrusionGridSnap));
+  } catch {}
+  redraw();
+  setStatus(`Extrusion grid snap ${state.faceExtrusionGridSnap ? "enabled" : "disabled"}`);
 };
 function updateFaceToolMode() {
   faceModeSelect.value = state.faceToolMode;

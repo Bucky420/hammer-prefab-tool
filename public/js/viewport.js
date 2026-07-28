@@ -8,6 +8,7 @@ import {
 import { roundToGrid } from "./grid.js";
 import { distanceToSegment, pointInPolygon } from "./math.js";
 import {
+  extrudeSelectedFaces,
   faceDirection,
   resolveExtrusion,
   solveSingleFaceExtrusion,
@@ -787,6 +788,65 @@ export class Viewport {
         }),
       );
   }
+  groupedExtrusionGridAnchor(id, selection, pointer) {
+    if (selection.size <= 1) return null;
+    const match = id.match(/^(.*):f:(\d+)$/),
+      brush = match && this.state.brushes.find((item) => item.id === match[1]),
+      face = brush?.faces[Number(match?.[2])];
+    if (!brush || !face) return null;
+    const unitResult = extrudeSelectedFaces(
+        this.state.brushes,
+        selection,
+        1,
+        this.state.grid,
+        selection,
+        this.state.faceExtrusionMode,
+      ),
+      preview = unitResult.previewBrushes.find(
+        (item) => item.generator?.sourceBrushId === brush.id,
+      );
+    if (!preview) return null;
+    const nearest = face
+      .map((vertexIndex, index) => ({
+        index,
+        source: brush.vertices[vertexIndex],
+        screen: this.screen(brush.vertices[vertexIndex]),
+      }))
+      .sort(
+        (a, b) =>
+          Math.hypot(a.screen.x - pointer.x, a.screen.y - pointer.y) -
+          Math.hypot(b.screen.x - pointer.x, b.screen.y - pointer.y),
+      )[0];
+    const cap = preview.vertices[face.length + nearest.index];
+    if (!cap) return null;
+    return {
+      source: { ...nearest.source },
+      direction: {
+        x: cap.x - nearest.source.x,
+        y: cap.y - nearest.source.y,
+        z: cap.z - nearest.source.z,
+      },
+    };
+  }
+  snapExtrusionDistance(distance) {
+    if (!this.state.faceExtrusionGridSnap) return distance;
+    const anchor = this.drag?.gridSnapAnchor;
+    if (!anchor) return roundToGrid(distance, this.state.grid);
+    const axis = this.axes()
+      .slice(0, 2)
+      .sort(
+        (a, b) =>
+          Math.abs(anchor.direction[b]) - Math.abs(anchor.direction[a]),
+      )[0];
+    const movement = anchor.direction[axis];
+    if (Math.abs(movement) < 0.000001)
+      return roundToGrid(distance, this.state.grid);
+    const target = roundToGrid(
+      anchor.source[axis] + movement * distance,
+      this.state.grid,
+    );
+    return Math.max(0, (target - anchor.source[axis]) / movement);
+  }
   faceExtrusionDistance(id, start, current) {
     const match = id.match(/^(.*):f:(\d+)$/),
       brush = match && this.state.brushes.find((item) => item.id === match[1]),
@@ -819,8 +879,10 @@ export class Viewport {
       screenLength = 1;
     }
     const pixels =
-      ((current.x - start.x) * dx + (current.y - start.y) * dy) / screenLength;
-    const rawDistance = Math.max(0, pixels / this.scale);
+      ((current.x - start.x) * dx + (current.y - start.y) * dy) /
+      screenLength;
+    const pointerDistance = Math.max(0, pixels / this.scale);
+    const rawDistance = this.snapExtrusionDistance(pointerDistance);
     if (this.drag) {
       this.drag.maxRawDistance = Math.max(
         this.drag.maxRawDistance || 0,
@@ -2898,6 +2960,11 @@ export class Viewport {
               start: { x: event.offsetX, y: event.offsetY },
               current: { x: event.offsetX, y: event.offsetY },
               distance: 0,
+              gridSnapAnchor: this.groupedExtrusionGridAnchor(
+                hit.id,
+                new Set(this.state.faceSelection),
+                { x: event.offsetX, y: event.offsetY },
+              ),
             };
             this.onChange(true);
           } else if (selected.length) this.onChange("selection-commit");
