@@ -400,6 +400,37 @@ assert.equal(
   0,
   "mitered loop extrusions must remain valid through VMF export and import",
 );
+{
+  const brush = radialExtrusion.brushes[0],
+    center = brush.vertices.reduce(
+      (sum, vertex) => ({
+        x: sum.x + vertex.x / brush.vertices.length,
+        y: sum.y + vertex.y / brush.vertices.length,
+        z: sum.z + vertex.z / brush.vertices.length,
+      }),
+      { x: 0, y: 0, z: 0 },
+    ),
+    values = (writeVMF([brush]).match(/"plane"\s+"([^"]+)"/) || [])[1]
+      .match(/[-+]?\d*\.?\d+(?:e[-+]?\d+)?/gi)
+      .map(Number),
+    [a, b, c] = [0, 3, 6].map((offset) => ({
+      x: values[offset],
+      y: values[offset + 1],
+      z: values[offset + 2],
+    })),
+    normal = {
+      x: (b.y - a.y) * (c.z - a.z) - (b.z - a.z) * (c.y - a.y),
+      y: (b.z - a.z) * (c.x - a.x) - (b.x - a.x) * (c.z - a.z),
+      z: (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x),
+    };
+  assert.ok(
+    normal.x * (center.x - a.x) +
+      normal.y * (center.y - a.y) +
+      normal.z * (center.z - a.z) >
+      0,
+    "VMF planes must use Source's inward-facing orientation",
+  );
+}
 for (const brush of ring) {
   const center = brush.faces[1].reduce(
       (sum, index) => ({
@@ -836,9 +867,7 @@ const miteredRing = generateRing({
     segments: 32,
     grid: 1,
   }),
-  miteredRingSelection = new Set(
-    miteredRing.map((brush) => `${brush.id}:f:2`),
-  ),
+  miteredRingSelection = new Set(miteredRing.map((brush) => `${brush.id}:f:2`)),
   groupedGridSnapViewport = Object.create(Viewport.prototype);
 groupedGridSnapViewport.kind = "top";
 groupedGridSnapViewport.state = {
@@ -859,13 +888,17 @@ const rightmostGroupedBrush = miteredRing.reduce((best, brush) =>
     miteredRingSelection,
     { x: 10000, y: 0 },
   );
-assert.ok(groupedGridAnchor, "grouped extrusion must identify the grabbed corner");
+assert.ok(
+  groupedGridAnchor,
+  "grouped extrusion must identify the grabbed corner",
+);
 groupedGridSnapViewport.drag = { gridSnapAnchor: groupedGridAnchor };
 const groupedGridDistance = groupedGridSnapViewport.snapExtrusionDistance(64),
-  groupedGridAxis = Math.abs(groupedGridAnchor.direction.x) >=
+  groupedGridAxis =
+    Math.abs(groupedGridAnchor.direction.x) >=
     Math.abs(groupedGridAnchor.direction.y)
-    ? "x"
-    : "y",
+      ? "x"
+      : "y",
   groupedGridCoordinate =
     groupedGridAnchor.source[groupedGridAxis] +
     groupedGridAnchor.direction[groupedGridAxis] * groupedGridDistance;

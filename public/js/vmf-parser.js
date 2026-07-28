@@ -53,6 +53,14 @@ function faceVertices(plane, vertices) {
   const [a, b, c] = plane.map(([x, y, z]) => ({ x, y, z }));
   const n = normal(a, b, c);
   const length = Math.hypot(n.x, n.y, n.z) || 1;
+  const brushCenter = vertices.reduce(
+    (sum, vertex) => ({
+      x: sum.x + vertex.x / vertices.length,
+      y: sum.y + vertex.y / vertices.length,
+      z: sum.z + vertex.z / vertices.length,
+    }),
+    { x: 0, y: 0, z: 0 },
+  );
   const points = vertices
     .map((vertex, index) => ({ vertex, index }))
     .filter(
@@ -92,7 +100,7 @@ function faceVertices(plane, vertices) {
     y: n.z * u.x - n.x * u.z,
     z: n.x * u.y - n.y * u.x,
   };
-  return points
+  const face = points
     .sort(
       (left, right) =>
         Math.atan2(
@@ -113,6 +121,19 @@ function faceVertices(plane, vertices) {
         ),
     )
     .map((point) => point.index);
+  const first = vertices[face[0]];
+  const faceNormal = normal(first, vertices[face[1]], vertices[face[2]]);
+  const interior = {
+    x: brushCenter.x - first.x,
+    y: brushCenter.y - first.y,
+    z: brushCenter.z - first.z,
+  };
+  return faceNormal.x * interior.x +
+    faceNormal.y * interior.y +
+    faceNormal.z * interior.z >
+    0
+    ? face.reverse()
+    : face;
 }
 
 export function parseVMF(text) {
