@@ -104,7 +104,12 @@ const fileAccessWarningText = $("file-access-warning-text");
 const fileAccessHelp = $("file-access-help");
 const braveFileAccessUrl = "brave://flags/#file-system-access-api";
 async function updateFileAccessWarning() {
-  if (fileSystem.supported || storageMode === "server") return;
+  if (
+    window.self !== window.top ||
+    fileSystem.supported ||
+    storageMode === "server"
+  )
+    return;
   let isBrave = false;
   try {
     isBrave = (await navigator.brave?.isBrave?.()) === true;

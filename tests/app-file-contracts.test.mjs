@@ -102,6 +102,7 @@ assert.match(app, /event\.key === "F5"[\s\S]*reloadWithAutosave\(\)/);
 assert.match(app, /options\.handle \|\| matching\?\.fileHandle \|\| null/);
 assert.match(app, /handle: candidate\.fileHandle \|\| null/);
 assert.match(app, /navigator\.brave\?\.isBrave/);
+assert.match(app, /window\.self !== window\.top[\s\S]*fileSystem\.supported/);
 assert.match(app, /brave:\/\/flags\/#file-system-access-api/);
 assert.match(html, /id="file-access-warning"[\s\S]*id="file-access-help"/);
 assert.match(
