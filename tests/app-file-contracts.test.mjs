@@ -78,6 +78,11 @@ assert.equal(
 );
 assert.match(app, /command === "save-vmf"\) runFileAction\(saveVMF\(\)\)/);
 assert.match(app, /run\(event\.shiftKey \? "save-vmf-as" : "save-vmf"\)/);
+assert.ok(
+  app.indexOf('event.key.toLowerCase() === "s"') <
+    app.indexOf('["INPUT", "SELECT", "TEXTAREA"]'),
+  "Ctrl+S is intercepted before focused form controls can trigger browser Save Page",
+);
 assert.match(
   app,
   /documentKind === "complete-map"[\s\S]*!vmfHandle[\s\S]*!state\.vmfPath/,

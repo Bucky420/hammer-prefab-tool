@@ -2279,6 +2279,14 @@ window.addEventListener("keydown", (event) => {
     void reloadWithAutosave();
     return;
   }
+  if (
+    (event.ctrlKey || event.metaKey) &&
+    event.key.toLowerCase() === "s"
+  ) {
+    event.preventDefault();
+    run(event.shiftKey ? "save-vmf-as" : "save-vmf");
+    return;
+  }
   if (["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName))
     return;
   const key = event.key.toLowerCase();
@@ -2308,11 +2316,6 @@ window.addEventListener("keydown", (event) => {
   if ((event.ctrlKey || event.metaKey) && key === "o") {
     event.preventDefault();
     run("open-vmf");
-    return;
-  }
-  if ((event.ctrlKey || event.metaKey) && key === "s") {
-    event.preventDefault();
-    run(event.shiftKey ? "save-vmf-as" : "save-vmf");
     return;
   }
   if ((event.ctrlKey || event.metaKey) && key === "z") {
