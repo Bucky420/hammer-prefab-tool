@@ -139,28 +139,28 @@
       ><span id="dirty-indicator" title="Saved">Saved</span>
       <span id="status"></span>
       <div class="header-tools">
-        <div
-          id="selection-mode-buttons"
-          class="selection-mode-buttons"
-          role="group"
-          aria-label="Hammer selection mode"
+        <button
+          id="selection-mode-toggle"
+          type="button"
+          data-scope="object"
+          title="Objects selection; click for Groups"
+          aria-label="Objects selection; click for Groups"
         >
-          <button type="button" data-selection-scope="group" title="Groups">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <rect x="3" y="5" width="10" height="10" />
-              <rect x="11" y="9" width="10" height="10" />
-            </svg></button
-          ><button type="button" data-selection-scope="object" title="Objects">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <rect x="4" y="4" width="16" height="16" />
-              <path d="M4 12h16" />
-            </svg></button
-          ><button type="button" data-selection-scope="solid" title="Solids">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M4 8l8-4 8 4-8 4zM4 8v9l8 4 8-4V8M12 12v9" />
-            </svg>
-          </button>
-        </div>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <g class="selection-icon selection-icon-solid">
+              <rect x="5" y="5" width="14" height="14" />
+            </g>
+            <g class="selection-icon selection-icon-object">
+              <rect x="3" y="5" width="11" height="11" />
+              <rect x="10" y="8" width="11" height="11" />
+            </g>
+            <g class="selection-icon selection-icon-group">
+              <rect x="2" y="4" width="9" height="9" />
+              <rect x="8" y="7" width="9" height="9" />
+              <rect x="13" y="11" width="9" height="9" />
+            </g>
+          </svg>
+        </button>
         <button
           id="selection-scope-toggle"
           type="button"

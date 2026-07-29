@@ -513,12 +513,6 @@ main.rail-open #editor-key {
   margin-left: auto;
   padding-right: 18px;
 }
-.selection-mode-buttons {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-.selection-mode-buttons[hidden],
 .header-tools button[hidden] {
   display: none;
 }
@@ -535,6 +529,23 @@ main.rail-open #editor-key {
   fill: none;
   stroke: currentColor;
   stroke-width: 1.8;
+}
+#selection-mode-toggle .selection-icon {
+  display: none;
+}
+#selection-mode-toggle[data-scope="solid"] {
+  color: #ffbd69;
+}
+#selection-mode-toggle[data-scope="solid"] .selection-icon-solid,
+#selection-mode-toggle[data-scope="object"] .selection-icon-object,
+#selection-mode-toggle[data-scope="group"] .selection-icon-group {
+  display: inline;
+}
+#selection-mode-toggle[data-scope="object"] {
+  color: #66dde3;
+}
+#selection-mode-toggle[data-scope="group"] {
+  color: #c995ff;
 }
 .header-tools .scope-group {
   display: none;

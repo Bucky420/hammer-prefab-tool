@@ -377,19 +377,23 @@ const railTools = document.createElement("div");
 railTools.className = "rail-tools";
 railButtons.forEach((button) => railTools.append(button));
 const selectionScopeToggle = $("selection-scope-toggle");
-const selectionModeButtons = $("selection-mode-buttons");
-const scopeButtons = [
-  ...selectionModeButtons.querySelectorAll("[data-selection-scope]"),
-];
+const selectionModeToggle = $("selection-mode-toggle");
+const selectionScopes = ["solid", "object", "group"];
+const selectionScopeLabels = {
+  solid: "Solids",
+  object: "Objects",
+  group: "Groups",
+};
 function updateSelectionScopeToggle() {
   const faceMode = state.mode === "face";
   selectionScopeToggle.hidden = !faceMode;
-  selectionModeButtons.hidden = faceMode;
-  scopeButtons.forEach((button) => {
-    const active = button.dataset.selectionScope === state.selectionScope;
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-pressed", String(active));
-  });
+  selectionModeToggle.hidden = faceMode;
+  selectionModeToggle.dataset.scope = state.selectionScope;
+  const currentIndex = selectionScopes.indexOf(state.selectionScope);
+  const nextScope = selectionScopes[(currentIndex + 1) % selectionScopes.length];
+  const title = `${selectionScopeLabels[state.selectionScope]} selection; click for ${selectionScopeLabels[nextScope]}`;
+  selectionModeToggle.title = title;
+  selectionModeToggle.setAttribute("aria-label", title);
   selectionScopeToggle.dataset.scope = state.faceSelectionScope;
   selectionScopeToggle.title = `${state.faceSelectionScope === "group" ? "Grouped semantic faces" : "Single face"} selection`;
 }
@@ -403,15 +407,14 @@ selectionScopeToggle.onclick = () => {
   );
   changed("session");
 };
-scopeButtons.forEach(
-  (button) =>
-    (button.onclick = () => {
-      state.selectionScope = button.dataset.selectionScope;
-      activateObjectMode();
-      redraw();
-      setStatus(`${button.title} selection active`);
-    }),
-);
+selectionModeToggle.onclick = () => {
+  const currentIndex = selectionScopes.indexOf(state.selectionScope);
+  state.selectionScope =
+    selectionScopes[(currentIndex + 1) % selectionScopes.length];
+  activateObjectMode();
+  redraw();
+  setStatus(`${selectionScopeLabels[state.selectionScope]} selection active`);
+};
 updateSelectionScopeToggle();
 const textureAxesToggle = $("texture-axes-toggle");
 function updateTextureAxesToggle() {
