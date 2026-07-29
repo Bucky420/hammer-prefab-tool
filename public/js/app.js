@@ -39,7 +39,11 @@ import {
   readSingleBrowserFile,
   vmfFilename,
 } from "./files/browser-files.js";
-import { createFileSystemAccessAdapter } from "./files/file-system-access.js";
+import {
+  createFileSystemAccessAdapter,
+  openVmfFile,
+  saveVmfFile,
+} from "./files/file-system-access.js";
 import { createLocalServerFileAdapter } from "./files/local-server-files.js";
 import { createProjectStore } from "./storage/project-store.js";
 import {
@@ -1445,12 +1449,13 @@ function projectFromVMF(documentModel, name) {
   });
 }
 async function importBrowserFiles(files, options = {}) {
-  const loaded = await readSingleBrowserFile(files, {
-    allowedKinds: [FILE_KINDS.VMF],
-  });
-  const documentModel = parseVMFDocument(loaded.text);
+  const loaded =
+    options.opened ||
+    (await readSingleBrowserFile(files, { allowedKinds: [FILE_KINDS.VMF] }));
+  const documentModel = parseVMFDocument(loaded.contents || loaded.text);
   const freshProject = projectFromVMF(documentModel, loaded.name);
-  const source = await createVmfSourceIdentity(loaded.file, loaded.text, {
+  const contents = loaded.contents || loaded.text;
+  const source = await createVmfSourceIdentity(loaded.file || null, contents, {
     access: options.handle ? "file-system-access" : "browser",
   });
   const matching = autosaveStore
@@ -1493,11 +1498,10 @@ const PICKER_TYPES = {
 };
 async function openLocalFile() {
   if (serverFiles) return openBrowser();
-  const input = $("vmf-file-input");
-  if (!fileSystem.supported) return input.click();
-  const opened = await fileSystem.open({ types: PICKER_TYPES.vmf });
-  if (!opened) return;
-  await importBrowserFiles([opened.file], {
+  const opened = await openVmfFile(window);
+  await importBrowserFiles([], {
+    opened,
+    directSaveSupported: opened.directSaveSupported,
     handle: opened.handle,
   });
 }
@@ -1670,10 +1674,10 @@ async function saveVMF({ saveAs = false } = {}) {
     directSaveAllowed = true;
     await updateSavedSource(text);
   } else if (vmfHandle) {
-    if (!(await fileSystem.write(vmfHandle, text))) return false;
+    await saveVmfFile({ contents: text, handle: vmfHandle, filename }, window);
     await updateSavedSource(text);
   } else {
-    downloadText(text, filename, { type: "text/plain;charset=utf-8" });
+    await saveVmfFile({ contents: text, filename }, window);
     state.vmfFilename = filename;
     downloaded = true;
     directSaveAllowed = false;
@@ -2137,6 +2141,16 @@ for (const input of [showFuncDetailInput, showRegularBrushesInput])
     );
   };
 updateViewFilters();
+const handleVmfInput = (event) => {
+  const files = Array.from(event.target.files || []);
+  event.target.value = "";
+  if (files.length)
+    runFileAction(
+      importBrowserFiles(files, { allowedKinds: [FILE_KINDS.VMF] }),
+    );
+};
+$("vmf-file-input").oninput = handleVmfInput;
+$("vmf-file-input").onchange = handleVmfInput;
 $("view-selector").onclick = () => {
   activeView =
     viewNames[(viewNames.indexOf(activeView) + 1) % viewNames.length];
@@ -2158,14 +2172,6 @@ $("key-toggle").onclick = () => {
   $("key-toggle").title = open
     ? "Hide controls and key"
     : "Show controls and key";
-};
-$("vmf-file-input").onchange = (event) => {
-  const files = Array.from(event.target.files || []);
-  event.target.value = "";
-  if (files?.length)
-    runFileAction(
-      importBrowserFiles(files, { allowedKinds: [FILE_KINDS.VMF] }),
-    );
 };
 let dragDepth = 0;
 function supportedDrag(event) {

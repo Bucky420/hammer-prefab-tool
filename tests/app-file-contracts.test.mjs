@@ -89,7 +89,7 @@ assert.match(
 );
 assert.match(
   app,
-  /else if \(vmfHandle\)[\s\S]*fileSystem\.write\(vmfHandle, text\)/,
+  /else if \(vmfHandle\)[\s\S]*saveVmfFile\(\{ contents: text, handle: vmfHandle, filename \}, window\)/,
 );
 assert.match(app, /else if \(saveAs && fileSystem\.supported\)/);
 assert.equal(
@@ -97,7 +97,7 @@ assert.equal(
   false,
   "Save without a writable handle downloads to the current filename",
 );
-assert.match(app, /downloadText\(text, filename,[\s\S]*Downloaded VMF/);
+assert.match(app, /saveVmfFile\(\{ contents: text, filename \}, window\)/);
 assert.match(app, /event\.key === "F5"[\s\S]*reloadWithAutosave\(\)/);
 assert.match(app, /options\.handle \|\| matching\?\.fileHandle \|\| null/);
 assert.match(app, /handle: candidate\.fileHandle \|\| null/);

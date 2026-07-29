@@ -13,8 +13,12 @@ import {
 } from "../public/js/files/browser-files.js";
 import {
   createFileSystemAccessAdapter,
+  canUseFileSystemAccess,
   FileSystemAccessError,
+  openVmfFile,
+  openVmfWithInput,
   openFileWithPicker,
+  saveVmfFile,
   saveFileWithPicker,
   supportsFileSystemAccess,
   writeFileHandle,
@@ -105,6 +109,9 @@ assert.equal(
   await openFileWithPicker(
     {},
     {
+      self: null,
+      top: null,
+      isSecureContext: true,
       showOpenFilePicker: async () => {
         throw abort;
       },
@@ -118,11 +125,15 @@ await assert.rejects(
     error instanceof FileSystemAccessError && error.code === "UNAVAILABLE",
 );
 const handle = { name: "opened.vmf", getFile: async () => vmfFile };
-assert.equal(
-  (await openFileWithPicker({}, { showOpenFilePicker: async () => [handle] }))
-    .handle,
-  handle,
-);
+const pickerEnvironment = {
+  self: null,
+  top: null,
+  isSecureContext: true,
+  showOpenFilePicker: async () => [handle],
+};
+pickerEnvironment.self = pickerEnvironment;
+pickerEnvironment.top = pickerEnvironment;
+assert.equal((await openFileWithPicker({}, pickerEnvironment)).handle, handle);
 const writes = [];
 const writableHandle = {
   async createWritable() {
@@ -140,14 +151,18 @@ assert.equal(await writeFileHandle(writableHandle, "project"), writableHandle);
 assert.deepEqual(writes, ["project", "closed"]);
 let permissionRequests = 0;
 const permissionHandle = {
-  queryPermission: async ({ mode }) => (mode === "readwrite" ? "prompt" : "denied"),
+  queryPermission: async ({ mode }) =>
+    mode === "readwrite" ? "prompt" : "denied",
   requestPermission: async ({ mode }) => {
     permissionRequests++;
     return mode === "readwrite" ? "granted" : "denied";
   },
   createWritable: writableHandle.createWritable,
 };
-assert.equal(await writeFileHandle(permissionHandle, "permitted"), permissionHandle);
+assert.equal(
+  await writeFileHandle(permissionHandle, "permitted"),
+  permissionHandle,
+);
 assert.equal(permissionRequests, 1);
 await assert.rejects(
   () =>
@@ -160,7 +175,8 @@ await assert.rejects(
       "denied",
     ),
   (error) =>
-    error instanceof FileSystemAccessError && error.code === "PERMISSION_DENIED",
+    error instanceof FileSystemAccessError &&
+    error.code === "PERMISSION_DENIED",
 );
 assert.deepEqual(
   await saveFileWithPicker(
@@ -171,11 +187,125 @@ assert.deepEqual(
   { handle: writableHandle },
 );
 const accessEnvironment = {
+  self: null,
+  top: null,
+  isSecureContext: true,
   showOpenFilePicker: async () => [handle],
   showSaveFilePicker: async () => writableHandle,
 };
+accessEnvironment.self = accessEnvironment;
+accessEnvironment.top = accessEnvironment;
 assert.equal(supportsFileSystemAccess(accessEnvironment), true);
 assert.equal(createFileSystemAccessAdapter(accessEnvironment).supported, true);
+const topLevelEnvironment = {
+  self: null,
+  top: null,
+  isSecureContext: true,
+  showOpenFilePicker: async () => [
+    {
+      getFile: async () => ({ name: "direct.vmf", text: async () => "direct" }),
+    },
+  ],
+};
+topLevelEnvironment.self = topLevelEnvironment;
+topLevelEnvironment.top = topLevelEnvironment;
+assert.equal(canUseFileSystemAccess(topLevelEnvironment), true);
+const directOpen = await openVmfFile(topLevelEnvironment);
+assert.deepEqual(
+  {
+    name: directOpen.name,
+    contents: directOpen.contents,
+    directSaveSupported: directOpen.directSaveSupported,
+  },
+  { name: "direct.vmf", contents: "direct", directSaveSupported: true },
+);
+const inputEvents = {};
+const inputEnvironment = {
+  self: {},
+  top: {},
+  isSecureContext: true,
+  document: {
+    body: { appendChild: (input) => (inputEvents.input = input) },
+    createElement: () => ({
+      addEventListener: (name, callback) => (inputEvents[name] = callback),
+      remove: () => (inputEvents.removed = true),
+      click: () => (inputEvents.clicked = true),
+      files: [{ name: "fallback.vmf", text: async () => "fallback" }],
+    }),
+  },
+};
+const fallbackPromise = openVmfFile(inputEnvironment);
+assert.equal(inputEvents.clicked, true);
+await inputEvents.change();
+assert.deepEqual(await fallbackPromise, {
+  name: "fallback.vmf",
+  contents: "fallback",
+  handle: null,
+  directSaveSupported: false,
+});
+const cancelEvents = {};
+const cancelPromise = openVmfWithInput({
+  document: {
+    body: { appendChild: () => {} },
+    createElement: () => ({
+      addEventListener: (name, callback) => (cancelEvents[name] = callback),
+      remove: () => {},
+      click: () => {},
+    }),
+  },
+});
+await assert.rejects(
+  () => {
+    cancelEvents.cancel();
+    return cancelPromise;
+  },
+  (error) => error.name === "AbortError",
+);
+const saveWrites = [];
+const directSave = await saveVmfFile(
+  {
+    contents: "direct-save",
+    handle: {
+      createWritable: async () => ({
+        write: (value) => saveWrites.push(value),
+        close: async () => {},
+      }),
+    },
+    filename: "direct.vmf",
+  },
+  { Blob, URL: { createObjectURL: () => "unused", revokeObjectURL: () => {} } },
+);
+assert.deepEqual(directSave, { mode: "direct", filename: "direct.vmf" });
+assert.deepEqual(saveWrites, ["direct-save"]);
+const downloadEventsForVmf = [];
+const downloadSave = await saveVmfFile(
+  { contents: "download-save", filename: "fallback.vmf" },
+  {
+    Blob,
+    URL: {
+      createObjectURL: () => "blob:fallback",
+      revokeObjectURL: (url) => downloadEventsForVmf.push(["revoke", url]),
+    },
+    document: {
+      body: {
+        appendChild: (link) =>
+          downloadEventsForVmf.push(["append", link.download]),
+      },
+      createElement: () => ({
+        click: () => downloadEventsForVmf.push(["click"]),
+        remove: () => downloadEventsForVmf.push(["remove"]),
+      }),
+    },
+    setTimeout: (callback) => callback(),
+  },
+);
+assert.deepEqual(downloadSave, { mode: "download", filename: "fallback.vmf" });
+assert.deepEqual(downloadEventsForVmf, [
+  ["append", "fallback.vmf"],
+  ["click"],
+  ["remove"],
+  ["revoke", "blob:fallback"],
+]);
 
 const calls = [];
 const server = createLocalServerFileAdapter({
