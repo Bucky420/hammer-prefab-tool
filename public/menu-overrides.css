@@ -711,7 +711,7 @@ body.file-drag-active #drop-overlay {
   text-decoration: underline;
 }
 body.file-access-warning-visible {
-  grid-template-rows: 38px auto minmax(0, 1fr) 24px;
+  grid-template-rows: auto 38px minmax(0, 1fr) 24px;
 }
 
 @media (max-width: 700px) {
@@ -719,7 +719,7 @@ body.file-access-warning-visible {
     grid-template-rows: 38px minmax(0, 1fr) 24px;
   }
   body.file-access-warning-visible {
-    grid-template-rows: 38px auto minmax(0, 1fr) 24px;
+    grid-template-rows: auto 38px minmax(0, 1fr) 24px;
   }
   .file-access-warning {
     flex-wrap: wrap;
