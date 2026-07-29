@@ -101,6 +101,14 @@ assert.match(app, /downloadText\(text, filename,[\s\S]*Downloaded VMF/);
 assert.match(app, /event\.key === "F5"[\s\S]*reloadWithAutosave\(\)/);
 assert.match(app, /options\.handle \|\| matching\?\.fileHandle \|\| null/);
 assert.match(app, /handle: candidate\.fileHandle \|\| null/);
+assert.match(
+  app,
+  /window\.self !== window\.top[\s\S]*location\.hostname === "localhost"[\s\S]*location\.port === "8787"/,
+);
+assert.match(
+  app,
+  /serverPath: result\.path[\s\S]*directSaveAllowed: true/,
+);
 assert.match(app, /const reparsed = parseVMFDocument\(text\)/);
 assert.match(app, /documentKind === "prefab"[\s\S]*prefabVMFText\(\)/);
 assert.match(app, /data-prefab-ownership/);

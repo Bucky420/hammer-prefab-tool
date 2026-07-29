@@ -90,8 +90,14 @@ if (import.meta.hot) {
   hmrIndicator.title = "Development reload connecting";
   document.querySelector("header").append(hmrIndicator);
 }
+const requestedStorage = new URLSearchParams(location.search).get("storage");
+const embeddedLocalServer =
+  window.self !== window.top &&
+  location.hostname === "localhost" &&
+  location.port === "8787";
 const storageMode =
-  new URLSearchParams(location.search).get("storage") === "server"
+  requestedStorage === "server" ||
+  (requestedStorage !== "browser" && embeddedLocalServer)
     ? "server"
     : "browser";
 const fileSystem = createFileSystemAccessAdapter(window);
@@ -1758,14 +1764,14 @@ async function loadSelected() {
       documentKind: kind,
       documentSessionId: matching?.documentSessionId,
       sourceIdentity: source,
-      directSaveAllowed: kind === "prefab",
+      directSaveAllowed: true,
     });
     if (replaced) {
       browser.close();
       setStatus(
         matching
-          ? "Recovered autosave."
-          : `Opened ${result.path || browserSelected.name}: ${state.brushes.length} brushes${kind === "complete-map" ? " · complete-map editing is experimental; Save As is required" : ""}`,
+          ? "Recovered autosave; direct server save linked."
+          : `Opened ${result.path || browserSelected.name}: ${state.brushes.length} brushes${kind === "complete-map" ? " · complete-map editing is experimental" : ""} · direct server save linked`,
       );
     }
   } catch (error) {
