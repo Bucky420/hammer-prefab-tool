@@ -4,10 +4,8 @@ import http from "node:http";
 import path from "node:path";
 import { chromium } from "playwright";
 import { box } from "../public/js/geometry-model.js";
-import {
-  createProject,
-  serializeProject,
-} from "../public/js/project-format.js";
+import { writeRingPrefabVMF } from "../public/js/ring-export.js";
+import { parseVMFDocument } from "../public/js/vmf-parser.js";
 import { writeVMF } from "../public/js/vmf-writer.js";
 
 const root = path.resolve(import.meta.dirname, "..");
@@ -57,6 +55,10 @@ try {
   }
   if (browser) {
     const page = await browser.newPage();
+    await page.addInitScript(() => {
+      delete window.showOpenFilePicker;
+      delete window.showSaveFilePicker;
+    });
     const pageErrors = [];
     page.on("pageerror", (error) => pageErrors.push(error));
     await page.goto(`http://127.0.0.1:${port}${prefix}`, {
@@ -78,26 +80,15 @@ try {
       .waitFor();
     await page.locator("#stats").filter({ hasText: "1 brush" }).waitFor();
 
-    const projectDownloadPromise = page.waitForEvent("download");
-    await page.locator('[data-menu="file-menu"]').click();
-    await page.locator('[data-command="save-project-download"]').click();
-    const projectDownload = await projectDownloadPromise;
-    assert.match(projectDownload.suggestedFilename(), /\.hptproject\.json$/);
-
-    const droppedProject = serializeProject(
-      createProject({
-        projectName: "Dropped project",
-        brushes: [
-          box({ x: 0, y: 0, z: 0 }, { x: 32, y: 32, z: 32 }),
-          box({ x: 64, y: 0, z: 0 }, { x: 96, y: 32, z: 32 }),
-        ],
-      }),
-    );
+    const droppedVmf = writeVMF([
+      box({ x: 0, y: 0, z: 0 }, { x: 32, y: 32, z: 32 }),
+      box({ x: 64, y: 0, z: 0 }, { x: 96, y: 32, z: 32 }),
+    ]);
     await page.evaluate((text) => {
       const transfer = new DataTransfer();
       transfer.items.add(
-        new File([text], "dropped.hptproject.json", {
-          type: "application/json",
+        new File([text], "dropped.vmf", {
+          type: "text/plain",
         }),
       );
       window.dispatchEvent(
@@ -107,10 +98,10 @@ try {
           dataTransfer: transfer,
         }),
       );
-    }, droppedProject);
+    }, droppedVmf);
     await page
       .locator("#status")
-      .filter({ hasText: "Opened dropped.hptproject.json" })
+      .filter({ hasText: "Opened dropped.vmf" })
       .waitFor();
     await page.locator("#stats").filter({ hasText: "2 brushes" }).waitFor();
 
@@ -148,17 +139,12 @@ try {
     );
     assert.ok(autosaveCount > 0);
 
-    await page.evaluate(() => {
-      const input = document.querySelector("#vmf-filename");
-      input.value = "browser-export";
-      input.dispatchEvent(new Event("change", { bubbles: true }));
-    });
     const vmfDownloadPromise = page.waitForEvent("download");
     await page.evaluate(() =>
-      document.querySelector('[data-command="export-vmf"]').click(),
+      document.querySelector('[data-command="save-vmf"]').click(),
     );
     const vmfDownload = await vmfDownloadPromise;
-    assert.equal(vmfDownload.suggestedFilename(), "browser-export.vmf");
+    assert.equal(vmfDownload.suggestedFilename(), "dropped.vmf");
     await page
       .locator("#dirty-indicator")
       .filter({ hasText: "Saved" })
@@ -174,6 +160,127 @@ try {
       requests.some((request) => request.includes("/_deps/")),
       false,
     );
+
+    const handlePage = await browser.newPage();
+    const linkedPrefab = writeRingPrefabVMF([
+      box({ x: 0, y: 0, z: 0 }, { x: 64, y: 64, z: 64 }),
+    ]);
+    await handlePage.addInitScript((vmfText) => {
+      window.__fileWorkflow = {
+        openWrites: [],
+        saveAsWrites: [],
+        savePickerCalls: 0,
+      };
+      const writable = (target) => ({
+        write: async (value) => target.push(String(value)),
+        close: async () => {},
+      });
+      const openHandle = {
+        name: "linked-prefab.vmf",
+        getFile: async () =>
+          new File(
+            [window.__fileWorkflow.openText || vmfText],
+            "linked-prefab.vmf",
+            { type: "text/plain", lastModified: Date.now() },
+          ),
+        createWritable: async () => writable(window.__fileWorkflow.openWrites),
+      };
+      window.showOpenFilePicker = async () => [openHandle];
+      window.showSaveFilePicker = async () => {
+        window.__fileWorkflow.savePickerCalls++;
+        return {
+          name: "new-prefab.vmf",
+          getFile: async () =>
+            new File(
+              [window.__fileWorkflow.saveAsWrites.at(-1) || vmfText],
+              "new-prefab.vmf",
+              { type: "text/plain", lastModified: Date.now() },
+            ),
+          createWritable: async () =>
+            writable(window.__fileWorkflow.saveAsWrites),
+        };
+      };
+    }, linkedPrefab);
+    await handlePage.goto(`http://127.0.0.1:${port}${prefix}`, {
+      waitUntil: "networkidle",
+    });
+    await handlePage.evaluate(() =>
+      document.querySelector("[data-generate]").click(),
+    );
+    await handlePage.evaluate(() => {
+      const ownership = document.querySelector("[data-prefab-ownership]");
+      ownership.value = "group";
+      ownership.dispatchEvent(new Event("change", { bubbles: true }));
+      const backing = document.querySelector("[data-prefab-backing]");
+      backing.value = "floor";
+      backing.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await handlePage.evaluate(() =>
+      document.querySelector('[data-command="save-vmf"]').click(),
+    );
+    await handlePage
+      .locator("#status")
+      .filter({ hasText: "Saved VMF new-prefab.vmf" })
+      .waitFor();
+    assert.equal(
+      await handlePage.evaluate(() => window.__fileWorkflow.savePickerCalls),
+      1,
+      "saving a new prefab invokes Save As",
+    );
+    const firstGroupSave = await handlePage.evaluate(
+      () => window.__fileWorkflow.saveAsWrites[0],
+    );
+    await handlePage.evaluate(() => {
+      window.__fileWorkflow.openText = window.__fileWorkflow.saveAsWrites[0];
+    });
+    await handlePage.evaluate(() =>
+      document.querySelector('[data-command="open-vmf"]').click(),
+    );
+    await handlePage
+      .locator("#status")
+      .filter({ hasText: "Opened linked-prefab.vmf" })
+      .waitFor();
+    await handlePage.evaluate(() =>
+      document.querySelector('[data-command="save-vmf"]').click(),
+    );
+    await handlePage
+      .locator("#status")
+      .filter({ hasText: "Saved VMF linked-prefab.vmf" })
+      .waitFor();
+    assert.equal(
+      await handlePage.evaluate(() => window.__fileWorkflow.openWrites.length),
+      1,
+      "Save writes an opened prefab through its retained handle",
+    );
+    assert.match(
+      await handlePage.evaluate(() => window.__fileWorkflow.openWrites[0]),
+      /"prefab"\s+"1"/,
+      "direct Save writes a Hammer prefab VMF",
+    );
+    assert.match(
+      await handlePage.evaluate(() => window.__fileWorkflow.openWrites[0]),
+      /"hammer_prefab_ownership"\s+"group"/,
+      "prefab ownership settings survive in the VMF",
+    );
+    const secondGroupSave = await handlePage.evaluate(
+      () => window.__fileWorkflow.openWrites[0],
+    );
+    for (const saved of [firstGroupSave, secondGroupSave]) {
+      const savedDocument = parseVMFDocument(saved);
+      assert.equal(
+        savedDocument.world.brushes.filter(
+          (brush) => brush.editor?.keys?.hammer_prefab_backing === "1",
+        ).length,
+        1,
+        "repeated Hammer-group saves retain exactly one shared backing",
+      );
+    }
+    assert.equal(
+      await handlePage.evaluate(() => window.__fileWorkflow.savePickerCalls),
+      1,
+      "direct Save does not invoke another Save As picker",
+    );
+    await handlePage.close();
     console.log("hosted browser smoke passed");
   }
 } finally {

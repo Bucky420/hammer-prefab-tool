@@ -3,6 +3,8 @@ import {
   createProjectStore,
   ProjectStoreError,
 } from "../public/js/storage/project-store.js";
+import { findMatchingAutosave } from "../public/js/autosave-recovery.js";
+import { canonicalProjectHash } from "../public/js/dirty-state.js";
 
 function memoryIndexedDB() {
   const databases = new Map();
@@ -121,6 +123,86 @@ assert.deepEqual(
   "retention removes the oldest snapshot",
 );
 assert.equal(await store.getSnapshot("stable-1"), null);
+
+const identity = {
+  version: 1,
+  kind: "vmf",
+  access: "browser",
+  name: "matching.vmf",
+  locator: null,
+  modifiedAt: "2025-12-31T00:00:00.000Z",
+  fingerprint: "source-fingerprint",
+};
+const recoveryStore = createProjectStore({
+  indexedDB: memoryIndexedDB(),
+  databaseName: "test-recovery",
+  retention: 20,
+  now: () => new Date("2026-01-03T00:00:00.000Z"),
+  generateId: () => "matching-snapshot",
+});
+const recoveredProject = project("recovered");
+const matchingRecord = await recoveryStore.saveSnapshot(recoveredProject, {
+  source: identity,
+  projectHash: canonicalProjectHash(recoveredProject),
+  documentKind: "prefab",
+  fileHandle: { name: "matching.vmf" },
+});
+assert.deepEqual(matchingRecord.source, identity);
+assert.equal(matchingRecord.documentKind, "prefab");
+assert.equal(matchingRecord.fileHandle.name, "matching.vmf");
+const sourceProject = project("source");
+assert.equal(
+  (
+    await findMatchingAutosave(
+      [
+        {
+          ...matchingRecord,
+          id: "unrelated",
+          source: { ...identity, name: "other.vmf" },
+        },
+        matchingRecord,
+      ],
+      identity,
+      sourceProject,
+    )
+  ).id,
+  "matching-snapshot",
+  "only the matching newer VMF snapshot is restored",
+);
+assert.equal(
+  await findMatchingAutosave(
+    [matchingRecord],
+    { ...identity, fingerprint: "new-source-revision" },
+    sourceProject,
+  ),
+  null,
+  "a changed source VMF does not receive an unrelated autosave",
+);
+assert.equal(
+  await findMatchingAutosave(
+    [matchingRecord],
+    { ...identity, fingerprint: "new-source-revision" },
+    sourceProject,
+    { isSameEntry: async () => true },
+  ),
+  null,
+  "a matching file handle cannot bypass a changed VMF fingerprint",
+);
+assert.equal(
+  await findMatchingAutosave(
+    [{ ...matchingRecord, source: undefined }],
+    identity,
+    sourceProject,
+  ),
+  null,
+  "legacy metadata-free snapshots are safely ignored for automatic recovery",
+);
+assert.equal(
+  await findMatchingAutosave([matchingRecord], identity, recoveredProject),
+  null,
+  "an autosave identical to the imported document is ignored",
+);
+recoveryStore.close();
 
 const restored = await store.restoreSnapshot("stable-2");
 assert.equal(restored.name, "two");

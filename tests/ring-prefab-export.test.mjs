@@ -117,12 +117,12 @@ const backed = createRingPrefabDocument(source, {
   backing: "both",
   backingThickness: 32,
 });
-assert.equal(backed.world.brushes.length, 4);
+assert.equal(backed.world.brushes.length, 3);
 assert.equal(validateAll(backed.world.brushes).length, 0);
 assert.ok(
   backed.world.brushes.every((brush) => brush.material === "tools/toolsnodraw"),
 );
-assert.equal(new Set(backed.world.brushes.map((brush) => brush.id)).size, 4);
+assert.equal(new Set(backed.world.brushes.map((brush) => brush.id)).size, 3);
 const bounds = (brushes) => ({
   minX: Math.min(
     ...brushes.flatMap((brush) => brush.vertices.map((vertex) => vertex.x)),
@@ -139,17 +139,15 @@ const bounds = (brushes) => ({
 });
 const firstBounds = bounds(first);
 const secondBounds = bounds(second);
+const combinedBounds = bounds(source);
 const backingBounds = backed.world.brushes.map((brush) => bounds([brush]));
 assert.deepEqual(backingBounds, [
-  { ...firstBounds, minZ: firstBounds.minZ - 32, maxZ: firstBounds.minZ },
+  { ...combinedBounds, minZ: firstBounds.minZ - 32, maxZ: firstBounds.minZ },
   { ...firstBounds, minZ: firstBounds.maxZ, maxZ: firstBounds.maxZ + 32 },
-  { ...secondBounds, minZ: secondBounds.minZ - 32, maxZ: secondBounds.minZ },
   { ...secondBounds, minZ: secondBounds.maxZ, maxZ: secondBounds.maxZ + 32 },
 ]);
-assert.ok(
-  backingBounds[0].maxX < backingBounds[2].minX,
-  "per-ring backing must not bridge separate assemblies",
-);
+assert.ok(backingBounds[0].minX <= firstBounds.minX);
+assert.ok(backingBounds[0].maxX >= secondBounds.maxX);
 
 const imported = [
   box({ x: 0, y: 0, z: 0 }, { x: 32, y: 32, z: 32 }),
@@ -303,8 +301,8 @@ assert.deepEqual(
 assert.equal(fullPrefab.world.groups[0].keys.name, "Door Frame");
 assert.equal(
   fullPrefab.world.brushes.length,
-  4,
-  "one unrelated world brush plus three backings",
+  2,
+  "one unrelated world brush plus one shared floor backing",
 );
 assert.equal(
   new Set(fullPrefab.world.brushes.map((brush) => brush.id)).size,
@@ -369,5 +367,86 @@ assert.equal(
   roundTripIds.length,
   "all emitted VMF IDs must be unique",
 );
+
+const concentric = Array.from({ length: 7 }, (_, index) =>
+  generateRing({
+    radius: 128 + index * 48,
+    width: 24,
+    height: 64,
+    segments: 12,
+    grid: 16,
+  }),
+).flat();
+const concentricFloor = createRingPrefabDocument(concentric, {
+  backingBelow: true,
+  grid: 16,
+});
+assert.equal(concentricFloor.entities.length, 7);
+assert.equal(
+  concentricFloor.world.brushes.length,
+  1,
+  "seven concentric groups share exactly one world floor backing",
+);
+const concentricBoth = createRingPrefabDocument(concentric, {
+  backingBelow: true,
+  backingAbove: true,
+  grid: 16,
+});
+assert.equal(
+  concentricBoth.world.brushes.length,
+  2,
+  "floor and ceiling create exactly two shared world backings",
+);
+assert.ok(
+  concentricBoth.world.brushes.every(
+    (brush) =>
+      !brush.entityId &&
+      !brush.hammerEntityId &&
+      (brush.faceMaterials || brush.faces.map(() => brush.material)).every(
+        (material) => material === "tools/toolsnodraw",
+      ),
+  ),
+  "backing remains unowned worldspawn nodraw geometry",
+);
+assert.ok(
+  concentricBoth.world.brushes.every(
+    (brush) => brush.editor?.keys?.hammer_prefab_backing === "1",
+  ),
+  "generated backing carries a preserved replacement marker",
+);
+const concentricRoundTrip = parseVMFDocument(
+  writeRingPrefabVMF(concentric, {
+    backingBelow: true,
+    backingAbove: true,
+    grid: 16,
+  }),
+);
+assert.equal(concentricRoundTrip.world.brushes.length, 2);
+assert.equal(validateAll(concentricRoundTrip.brushes).length, 0);
+
+const offGridSupport = box({ x: 3, y: 5, z: 7 }, { x: 29, y: 31, z: 23 });
+offGridSupport.groupId = "off-grid";
+assert.throws(
+  () =>
+    createRingPrefabDocument([offGridSupport], {
+      backingBelow: true,
+      grid: 16,
+    }),
+  /support planes aligned to the Hammer grid/,
+  "backing rejects a support plane that cannot touch geometry on the grid",
+);
+
+const outwardBounds = box({ x: 3, y: 5, z: 0 }, { x: 29, y: 31, z: 16 });
+outwardBounds.groupId = "outward-bounds";
+const outwardBacking = createRingPrefabDocument([outwardBounds], {
+  backingBelow: true,
+  grid: 16,
+});
+assert.deepEqual(bounds(outwardBacking.world.brushes), {
+  minX: 0,
+  maxX: 32,
+  minZ: -16,
+  maxZ: 0,
+});
 
 console.log("ring prefab export tests passed");

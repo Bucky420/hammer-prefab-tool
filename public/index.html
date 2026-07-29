@@ -48,58 +48,11 @@
         </button>
       </nav>
       <div id="file-menu" class="drop-menu">
-        <button data-command="open-vmf">Open VMF <kbd>Ctrl+O</kbd></button
-        ><button data-command="open-project">Open Project</button
-        ><button data-command="restore-autosave" data-autosave-action hidden>
-          Restore Autosave</button
-        ><button data-command="discard-autosave" data-autosave-action hidden>
-          Discard Autosave
+        <button data-command="open-vmf">Open VMF... <kbd>Ctrl+O</kbd></button
+        ><button data-command="save-vmf">Save <kbd>Ctrl+S</kbd></button
+        ><button data-command="save-vmf-as">
+          Save As... <kbd>Ctrl+Shift+S</kbd>
         </button>
-        <span id="file-privacy-notice" class="privacy-notice"
-          >Your VMF and project files are processed locally in your browser and
-          are not uploaded.</span
-        >
-        <hr />
-        <label class="menu-filename"
-          >Project filename
-          <input
-            id="project-filename"
-            type="text"
-            value="untitled.hptproject.json"
-        /></label>
-        <label class="menu-filename"
-          >VMF filename <input id="vmf-filename" type="text" value="prefab.vmf"
-        /></label>
-        <button data-command="save-direct" hidden>
-          Save Current File <kbd>Ctrl+S</kbd></button
-        ><button data-command="save-direct-as" hidden>
-          Save Current File As...</button
-        ><button data-command="save-project-as" data-file-system-access hidden>
-          Save Project As File...</button
-        ><button data-command="save-project-download">
-          Save Project (Download) <kbd>Ctrl+S</kbd>
-        </button>
-        <hr />
-        <button data-command="export-vmf">Export VMF</button
-        ><button data-command="export-prefab-vmf">
-          Export Hammer Prefab VMF
-        </button>
-        <label class="menu-filename"
-          >Prefab mode
-          <select id="prefab-mode">
-            <option value="func_detail">func_detail per group</option>
-            <option value="group">Hammer groups</option>
-          </select></label
-        >
-        <label class="menu-filename"
-          >Structural backing
-          <select id="prefab-backing">
-            <option value="none">None</option>
-            <option value="floor">Floor</option>
-            <option value="ceiling">Ceiling</option>
-            <option value="both">Both</option>
-          </select></label
-        >
       </div>
       <div id="edit-menu" class="drop-menu">
         <button data-command="undo">Undo <kbd>Ctrl+Z</kbd></button
@@ -292,14 +245,8 @@
       type="file"
       accept=".vmf"
     />
-    <input
-      id="project-file-input"
-      class="hidden-file-input"
-      type="file"
-      accept=".json,.hptproject.json"
-    />
     <div id="drop-overlay" aria-hidden="true">
-      <strong>Drop one VMF or project file to open</strong>
+      <strong>Drop one VMF file to open</strong>
     </div>
     <footer>
       <span id="autosave-status">Autosave ready</span

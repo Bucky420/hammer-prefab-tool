@@ -55,6 +55,15 @@ function isoTime(value) {
   return date.toISOString();
 }
 
+function cloneSnapshotRecord(record) {
+  if (!record) return null;
+  const { fileHandle, ...json } = record;
+  return {
+    ...cloneJsonSafe(json),
+    ...(fileHandle ? { fileHandle } : {}),
+  };
+}
+
 export function compareSnapshotsNewestFirst(a, b) {
   return (
     String(b.createdAt).localeCompare(String(a.createdAt)) ||
@@ -173,9 +182,7 @@ export function createProjectStore(options = {}) {
     const result = await run("list snapshots", "readonly", (store) =>
       requestResult(store.getAll(), "list snapshots"),
     );
-    return result
-      .sort(compareSnapshotsNewestFirst)
-      .map((record) => cloneJsonSafe(record));
+    return result.sort(compareSnapshotsNewestFirst).map(cloneSnapshotRecord);
   }
 
   async function getSnapshot(id) {
@@ -186,7 +193,7 @@ export function createProjectStore(options = {}) {
     const record = await run("get snapshot", "readonly", (store) =>
       requestResult(store.get(id), "get snapshot"),
     );
-    return record ? cloneJsonSafe(record) : null;
+    return cloneSnapshotRecord(record);
   }
 
   async function discardSnapshot(id) {
@@ -245,13 +252,20 @@ export function createProjectStore(options = {}) {
       ),
       projectFormatVersion: normalizedProject.version,
       reason: String(snapshotOptions.reason || existing?.reason || "autosave"),
+      projectHash: snapshotOptions.projectHash,
+      source: snapshotOptions.source
+        ? cloneJsonSafe(snapshotOptions.source)
+        : undefined,
+      documentKind: snapshotOptions.documentKind,
+      documentSessionId: snapshotOptions.documentSessionId,
+      fileHandle: snapshotOptions.fileHandle,
       project: normalizedProject,
     };
     await run("save snapshot", "readwrite", (store) =>
       requestResult(store.put(record), "save snapshot"),
     );
     await enforceRetention();
-    return cloneJsonSafe(record);
+    return cloneSnapshotRecord(record);
   }
 
   async function restoreSnapshot(id, restoreOptions = {}) {

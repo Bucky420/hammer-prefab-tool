@@ -28,24 +28,28 @@ import { applyNodrawToHiddenFaces } from "./nodraw.js";
 import { fillSelectedLoop } from "./face-fill.js";
 import { bindExtrusionModeButtons } from "./extrusion-policy.js";
 import { assignExtrusionBrushIds, resolveExtrusion } from "./face-extrusion.js";
+import { createProject, normalizeProject } from "./project-format.js";
 import {
-  createProject,
-  normalizeProject,
-  parseProject,
-  serializeProject,
-} from "./project-format.js";
-import { createDirtyStateService } from "./dirty-state.js";
+  canonicalProjectHash,
+  createDirtyStateService,
+} from "./dirty-state.js";
 import {
   downloadText,
   FILE_KINDS,
-  projectFilename,
   readSingleBrowserFile,
   vmfFilename,
 } from "./files/browser-files.js";
 import { createFileSystemAccessAdapter } from "./files/file-system-access.js";
 import { createLocalServerFileAdapter } from "./files/local-server-files.js";
 import { createProjectStore } from "./storage/project-store.js";
-import { createRingBackingBrushes, writeRingPrefabVMF } from "./ring-export.js";
+import {
+  createSharedPrefabBackingBrushes,
+  writeRingPrefabVMF,
+} from "./ring-export.js";
+import {
+  createVmfSourceIdentity,
+  findMatchingAutosave,
+} from "./autosave-recovery.js";
 import { updateManager } from "./update-manager.js";
 
 /**
@@ -71,6 +75,10 @@ state.groups ||= [];
 state.ringMaterialRoles ||= {};
 state.ringSettings ||= {};
 state.projectSettings ||= {};
+state.projectSettings.prefab ||= {
+  ownership: "func_detail",
+  backing: "none",
+};
 state.vmf ||= {};
 const history = state.history || (state.history = new History());
 const status = $("status");
@@ -90,14 +98,13 @@ const storageMode =
 const fileSystem = createFileSystemAccessAdapter(window);
 const serverFiles =
   storageMode === "server" ? createLocalServerFileAdapter(api) : null;
-if (serverFiles)
-  $("file-privacy-notice").textContent =
-    "Files are read from and written to your configured local server directories.";
 const dirtyState = createDirtyStateService();
 let cleanProject = null;
-let projectHandle = null;
 let vmfHandle = null;
-let activeArtifact = "project";
+let documentKind = "prefab";
+let sourceIdentity = null;
+let directSaveAllowed = false;
+let documentSessionId = crypto.randomUUID();
 let autosaveStore = null;
 let autosaveSnapshots = [];
 let autosaveTimer = null;
@@ -329,15 +336,29 @@ state.generator ||= {
   rings: 12,
 };
 state.grid ||= 16;
-state.projectFilename =
-  localStorage.getItem("hammer-project-filename") || state.projectFilename;
 state.vmfFilename =
   localStorage.getItem("hammer-vmf-filename") || state.vmfFilename;
 const brushPanel = document.createElement("aside");
 brushPanel.className = "brush-panel";
 brushPanel.hidden = false;
-brushPanel.innerHTML = `<header><strong>BRUSH TOOLS</strong></header><label>Shape <select data-shape><option value="block">Block</option><option value="arch">Arch</option><option value="cylinder">Cylinder</option><option value="sphere">Sphere</option><option value="torus">Torus</option></select></label><label>Width <input type="number" data-setting="width" min="1" max="4096" step="${state.grid}" value="64"><output data-output="width">64</output></label><label>Depth <input type="number" data-setting="depth" min="1" max="4096" step="${state.grid}" value="64"><output data-output="depth">64</output></label><label>Height <input type="number" data-setting="height" min="1" max="4096" step="${state.grid}" value="128"><output data-output="height">128</output></label><label>Radius <input type="number" data-setting="radius" min="8" max="4096" step="${state.grid}" value="256"><output data-output="radius">256</output></label><label>Sides <input type="number" data-setting="segments" min="3" max="128" step="1" value="32"><output data-output="segments">32</output></label><label>Rings <input type="number" data-setting="rings" min="2" max="64" step="1" value="12"><output data-output="rings">12</output></label><label>Arc <input type="number" data-setting="arc" min="1" max="360" step="1" value="180"><output data-output="arc">180</output></label><label data-arch-setting>Bevel <input type="number" data-setting="bevel" min="0" max="128" step="${state.grid}" value="0"><output data-output="bevel">0</output></label><label class="check-row"><input type="checkbox" data-setting="powerOfTwo"> Power of 2</label><label class="check-row"><input type="checkbox" data-square> Square</label><label class="advanced-setting">Elevation <input type="number" data-setting="addHeight" min="-4096" max="4096" step="${state.grid}" value="0"><output data-output="addHeight">0</output></label><button class="generate-brush" data-generate>Generate Brush</button>`;
+brushPanel.innerHTML = `<header><strong>BRUSH TOOLS</strong></header><label>Shape <select data-shape><option value="block">Block</option><option value="arch">Arch</option><option value="cylinder">Cylinder</option><option value="sphere">Sphere</option><option value="torus">Torus</option></select></label><label>Width <input type="number" data-setting="width" min="1" max="4096" step="${state.grid}" value="64"><output data-output="width">64</output></label><label>Depth <input type="number" data-setting="depth" min="1" max="4096" step="${state.grid}" value="64"><output data-output="depth">64</output></label><label>Height <input type="number" data-setting="height" min="1" max="4096" step="${state.grid}" value="128"><output data-output="height">128</output></label><label>Radius <input type="number" data-setting="radius" min="8" max="4096" step="${state.grid}" value="256"><output data-output="radius">256</output></label><label>Sides <input type="number" data-setting="segments" min="3" max="128" step="1" value="32"><output data-output="segments">32</output></label><label>Rings <input type="number" data-setting="rings" min="2" max="64" step="1" value="12"><output data-output="rings">12</output></label><label>Arc <input type="number" data-setting="arc" min="1" max="360" step="1" value="180"><output data-output="arc">180</output></label><label data-arch-setting>Bevel <input type="number" data-setting="bevel" min="0" max="128" step="${state.grid}" value="0"><output data-output="bevel">0</output></label><label class="check-row"><input type="checkbox" data-setting="powerOfTwo"> Power of 2</label><label class="check-row"><input type="checkbox" data-square> Square</label><label class="advanced-setting">Elevation <input type="number" data-setting="addHeight" min="-4096" max="4096" step="${state.grid}" value="0"><output data-output="addHeight">0</output></label><button class="generate-brush" data-generate>Generate Brush</button><section class="prefab-settings"><strong>PREFAB</strong><label>Ownership <select data-prefab-ownership><option value="func_detail">func_detail per group</option><option value="group">Hammer groups</option><option value="world">World brushes</option></select></label><label>Structural backing <select data-prefab-backing><option value="none">None</option><option value="floor">Floor</option><option value="ceiling">Ceiling</option><option value="both">Floor and ceiling</option></select></label></section>`;
 toolRail.append(brushPanel);
+const prefabOwnershipInput = brushPanel.querySelector(
+  "[data-prefab-ownership]",
+);
+const prefabBackingInput = brushPanel.querySelector("[data-prefab-backing]");
+prefabOwnershipInput.value = state.projectSettings.prefab.ownership;
+prefabBackingInput.value = state.projectSettings.prefab.backing;
+for (const input of [prefabOwnershipInput, prefabBackingInput]) {
+  input.onchange = () => {
+    state.projectSettings.prefab = {
+      ownership: prefabOwnershipInput.value,
+      backing: prefabBackingInput.value,
+    };
+    changed("document", false);
+    setStatus("Prefab save settings updated");
+  };
+}
 // Square toggle — persists across reloads via localStorage
 const squareChk = brushPanel.querySelector("[data-square]");
 if (squareChk) {
@@ -972,6 +993,9 @@ function snapshot() {
     textureLock: state.textureLock,
     faceExtrusionMode: state.faceExtrusionMode,
     vmfPath: state.vmfPath,
+    documentKind,
+    sourceIdentity,
+    documentSessionId,
   };
 }
 function redraw() {
@@ -1036,7 +1060,6 @@ function updateDocumentStatus() {
     ? "Document has unsaved changes"
     : "Document matches the saved checkpoint";
   document.title = `${dirty ? "* " : ""}${title} - Hammer Prefab Tool`;
-  updateFileCommands();
 }
 function updateDirtyState() {
   dirtyState.update(currentProject());
@@ -1122,6 +1145,11 @@ function restore(data) {
   state.showTextureAxes = Boolean(data.showTextureAxes);
   state.textureLock = data.textureLock || "world";
   state.vmfPath = data.vmfPath || null;
+  documentKind =
+    data.documentKind === "complete-map" ? "complete-map" : "prefab";
+  sourceIdentity = data.sourceIdentity || null;
+  documentSessionId = data.documentSessionId || crypto.randomUUID();
+  directSaveAllowed = false;
   activeView = data.view || activeView;
   state.view = activeView;
   view.kind = activeView;
@@ -1150,7 +1178,6 @@ function saveHmrState() {
         camera: { scale: view.scale, offset: view.offset },
         history: history.items,
         historyIndex: history.index,
-        activeArtifact,
       }),
     );
     return true;
@@ -1176,7 +1203,6 @@ function restoreHmrState() {
       history.items = data.history;
       history.index = data.historyIndex ?? data.history.length - 1;
     }
-    activeArtifact = data.activeArtifact === "vmf" ? "vmf" : "project";
     return true;
   } catch (error) {
     sessionStorage.removeItem(RELOAD_STATE_KEY);
@@ -1284,10 +1310,16 @@ function applyProjectSettings(project) {
   state.faceExtrusionGridSnap = project.settings.extrusion.gridSnap;
   state.faceRailMaxAngle = project.settings.extrusion.railMaxAngle;
   state.faceSourceMaxAngle = project.settings.extrusion.sourceMaxAngle;
+  state.projectSettings.prefab ||= {
+    ownership: "func_detail",
+    backing: "none",
+  };
   $("grid").value = String(state.grid);
   faceGridSnapInput.checked = state.faceExtrusionGridSnap;
   railAngleInput.value = String(state.faceRailMaxAngle);
   sourceAngleInput.value = String(state.faceSourceMaxAngle);
+  prefabOwnershipInput.value = state.projectSettings.prefab.ownership;
+  prefabBackingInput.value = state.projectSettings.prefab.backing;
 }
 function replaceDocument(projectInput, options = {}) {
   const project = normalizeProject(projectInput);
@@ -1316,21 +1348,13 @@ function replaceDocument(projectInput, options = {}) {
   state.faceSelection = new Set();
   activateObjectMode();
 
-  if (options.kind === FILE_KINDS.VMF) {
-    state.vmfFilename = vmfFilename(options.filename || state.vmfFilename);
-    state.vmfPath = options.serverPath || null;
-    vmfHandle = options.handle || null;
-    projectHandle = null;
-    activeArtifact = "vmf";
-  } else {
-    state.projectFilename = projectFilename(
-      options.filename || state.projectFilename,
-    );
-    state.vmfPath = null;
-    projectHandle = options.handle || null;
-    vmfHandle = null;
-    activeArtifact = "project";
-  }
+  state.vmfFilename = vmfFilename(options.filename || state.vmfFilename);
+  state.vmfPath = options.serverPath || null;
+  vmfHandle = options.handle || null;
+  documentKind = options.documentKind || "prefab";
+  sourceIdentity = options.sourceIdentity || null;
+  directSaveAllowed = Boolean(options.directSaveAllowed);
+  documentSessionId = options.documentSessionId || crypto.randomUUID();
   syncFilenameControls();
   history.items = [];
   history.index = -1;
@@ -1344,7 +1368,15 @@ function replaceDocument(projectInput, options = {}) {
   refreshAutosaves();
   return true;
 }
+function kindForVMF(documentModel) {
+  return documentModel.versionInfo?.prefab === "1" ||
+    documentModel.world?.keys?.hammer_prefab_tool_version === "1"
+    ? "prefab"
+    : "complete-map";
+}
 function projectFromVMF(documentModel, name) {
+  const ownership = documentModel.world?.keys?.hammer_prefab_ownership;
+  const backing = documentModel.world?.keys?.hammer_prefab_backing;
   return createProject({
     projectName: String(name || "Imported VMF").replace(/\.vmf$/i, ""),
     brushes: documentModel.brushes,
@@ -1352,7 +1384,16 @@ function projectFromVMF(documentModel, name) {
     groups: documentModel.groups,
     ringMaterialRoles: {},
     ringSettings: {},
-    projectSettings: state.projectSettings,
+    projectSettings: {
+      prefab: {
+        ownership: ["func_detail", "group", "world"].includes(ownership)
+          ? ownership
+          : "func_detail",
+        backing: ["none", "floor", "ceiling", "both"].includes(backing)
+          ? backing
+          : "none",
+      },
+    },
     grid: state.grid,
     faceExtrusionMode: state.faceExtrusionMode,
     faceExtrusionGridSnap: state.faceExtrusionGridSnap,
@@ -1363,23 +1404,40 @@ function projectFromVMF(documentModel, name) {
 }
 async function importBrowserFiles(files, options = {}) {
   const loaded = await readSingleBrowserFile(files, {
-    allowedKinds: options.allowedKinds,
+    allowedKinds: [FILE_KINDS.VMF],
   });
-  const project =
-    loaded.kind === FILE_KINDS.VMF
-      ? projectFromVMF(parseVMFDocument(loaded.text), loaded.name)
-      : parseProject(loaded.text, { name: loaded.name });
+  const documentModel = parseVMFDocument(loaded.text);
+  const freshProject = projectFromVMF(documentModel, loaded.name);
+  const source = await createVmfSourceIdentity(loaded.file, loaded.text, {
+    access: options.handle ? "file-system-access" : "browser",
+  });
+  const matching = autosaveStore
+    ? await findMatchingAutosave(
+        autosaveSnapshots,
+        source,
+        freshProject,
+        options.handle,
+      )
+    : null;
+  const project = matching
+    ? await autosaveStore.restoreSnapshot(matching.id)
+    : freshProject;
   const replaced = replaceDocument(project, {
-    kind: loaded.kind,
     filename: loaded.name,
     handle: options.handle,
-    clean: loaded.kind === FILE_KINDS.PROJECT,
+    clean: !matching,
+    documentKind: matching?.documentKind || kindForVMF(documentModel),
+    documentSessionId: matching?.documentSessionId,
+    sourceIdentity: source,
+    directSaveAllowed: kindForVMF(documentModel) === "prefab",
   });
   if (replaced) {
     const gridReport = countOffGridCoordinates(state.brushes, state.grid);
     setStatus(
-      `Opened ${loaded.name}: ${state.brushes.length} brushes · ${gridReport.offGrid}/${gridReport.total} coordinates off grid ${state.grid}`,
-      gridReport.offGrid > 0,
+      matching
+        ? "Recovered autosave."
+        : `Opened ${loaded.name}: ${state.brushes.length} brushes · ${gridReport.offGrid}/${gridReport.total} coordinates off grid ${state.grid}${kindForVMF(documentModel) === "complete-map" ? " · complete-map editing is experimental; Save As is required" : ""}`,
+      !matching && gridReport.offGrid > 0,
     );
   }
   return replaced;
@@ -1388,120 +1446,172 @@ const PICKER_TYPES = {
   vmf: [
     { description: "Valve Map Format", accept: { "text/plain": [".vmf"] } },
   ],
-  project: [
-    {
-      description: "Hammer Prefab Tool Project",
-      accept: { "application/json": [".json", ".hptproject.json"] },
-    },
-  ],
 };
-async function openLocalFile(kind) {
-  if (serverFiles) return openBrowser(kind);
-  const input =
-    kind === FILE_KINDS.VMF ? $("vmf-file-input") : $("project-file-input");
+async function openLocalFile() {
+  if (serverFiles) return openBrowser();
+  const input = $("vmf-file-input");
   if (!fileSystem.supported) return input.click();
-  const opened = await fileSystem.open({ types: PICKER_TYPES[kind] });
+  const opened = await fileSystem.open({ types: PICKER_TYPES.vmf });
   if (!opened) return;
   await importBrowserFiles([opened.file], {
-    allowedKinds: [kind],
     handle: opened.handle,
   });
 }
 function syncFilenameControls() {
-  $("project-filename").value = state.projectFilename;
-  $("vmf-filename").value = state.vmfFilename;
-  localStorage.setItem("hammer-project-filename", state.projectFilename);
   localStorage.setItem("hammer-vmf-filename", state.vmfFilename);
-  updateFileCommands();
 }
-function updateFileCommands() {
-  const direct = document.querySelector('[data-command="save-direct"]');
-  const directAs = document.querySelector('[data-command="save-direct-as"]');
-  if (!direct) return;
-  const handle = activeArtifact === "vmf" ? vmfHandle : projectHandle;
-  const filename =
-    activeArtifact === "vmf" ? state.vmfFilename : state.projectFilename;
-  direct.hidden = !serverFiles && !fileSystem.supported;
-  direct.disabled = !serverFiles && !handle;
-  direct.innerHTML = `Save ${activeArtifact === "vmf" ? "VMF" : "Project"}: ${escapeHtml(filename)} <kbd>Ctrl+S</kbd>`;
-  directAs.textContent = `Save ${activeArtifact === "vmf" ? "VMF" : "Project"} As File...`;
-  directAs.hidden = !serverFiles && !fileSystem.supported;
-}
-async function saveProjectDocument({
-  direct = false,
-  saveAs = false,
-  download = false,
-} = {}) {
-  const savedProject = currentProject();
-  const text = serializeProject(savedProject);
-  const filename = projectFilename(state.projectFilename);
-  let result;
-  if (download) {
-    downloadText(text, filename, { type: "application/json;charset=utf-8" });
-  } else if (serverFiles) {
-    result = await serverFiles.saveProject(filename, savedProject);
-    state.projectFilename = projectFilename(result.path || filename);
-  } else if (direct && projectHandle && !saveAs) {
-    if (!(await fileSystem.write(projectHandle, text))) return false;
-  } else if (saveAs && fileSystem.supported) {
-    result = await fileSystem.save(text, {
-      suggestedName: filename,
-      types: PICKER_TYPES.project,
-    });
-    if (!result) return false;
-    projectHandle = result.handle;
-    state.projectFilename = projectFilename(result.handle.name || filename);
-  } else {
-    downloadText(text, filename, { type: "application/json;charset=utf-8" });
+function removeGroupOwnership(brush) {
+  const copy = clone(brush);
+  const preservedGroup =
+    copy.groupId ||
+    copy.hammerGroupId ||
+    copy.assemblyId ||
+    copy.editor?.keys?.hammer_prefab_group;
+  delete copy.groupId;
+  delete copy.hammerGroupId;
+  if (preservedGroup) {
+    copy.editor ||= { keys: {}, properties: [] };
+    copy.editor.keys ||= {};
+    copy.editor.keys.hammer_prefab_group = String(preservedGroup);
   }
-  activeArtifact = "project";
-  syncFilenameControls();
-  markDocumentClean(savedProject);
-  setStatus(`Saved project ${state.projectFilename}`);
-  return true;
+  if (copy.editor?.keys) delete copy.editor.keys.groupid;
+  if (copy.editor?.properties)
+    copy.editor.properties = copy.editor.properties.filter(
+      ({ key }) => key !== "groupid",
+    );
+  return copy;
 }
-function standardVMFText() {
-  assertExportable("VMF");
-  return writeVMFDocument(currentVMFDocument());
-}
-async function exportVMFDocument({
-  prefab = false,
-  direct = false,
-  saveAs = false,
-} = {}) {
-  // Like the former writeVMF(state.brushes) path, exports read committed state only.
-  assertExportable(prefab ? "Hammer prefab VMF" : "VMF");
-  const savedProject = currentProject();
-  const backing = $("prefab-backing").value;
+function prefabVMFText() {
+  const backing = state.projectSettings.prefab.backing;
   const prefabOptions = {
     backingBelow: backing === "floor" || backing === "both",
     backingAbove: backing === "ceiling" || backing === "both",
+    grid: state.grid,
+    worldKeys: {
+      hammer_prefab_ownership: state.projectSettings.prefab.ownership,
+      hammer_prefab_backing: state.projectSettings.prefab.backing,
+    },
   };
-  let text;
-  if (!prefab) text = standardVMFText();
-  else if ($("prefab-mode").value === "group") {
-    const documentModel = { ...state.vmf, ...currentVMFDocument() };
-    const backingBrushes = createRingBackingBrushes(
-      state.brushes,
-      prefabOptions,
+  const source = currentVMFDocument();
+  const ownership = state.projectSettings.prefab.ownership;
+  source.world.brushes = source.world.brushes.filter(
+    (brush) => brush.editor?.keys?.hammer_prefab_backing !== "1",
+  );
+  if (ownership !== "func_detail") {
+    const generatedEntities = source.entities.filter(
+      (entity) => entity.keys?.hammer_prefab_generated_group === "1",
     );
-    documentModel.world.brushes.push(...backingBrushes);
-    documentModel.brushes.push(...backingBrushes);
-    text = writeVMFDocument(documentModel, {
-      purpose: VMF_EXPORT_PURPOSE.PREFAB,
-    });
-  } else
-    text = writeRingPrefabVMF(
-      { ...state.vmf, ...currentVMFDocument() },
-      prefabOptions,
+    source.entities = source.entities.filter(
+      (entity) => entity.keys?.hammer_prefab_generated_group !== "1",
     );
-  const filename = vmfFilename(state.vmfFilename);
+    for (const brush of generatedEntities.flatMap(
+      (entity) => entity.brushes || [],
+    )) {
+      const restored = clone(brush);
+      const preservedGroup = restored.editor?.keys?.hammer_prefab_group;
+      if (ownership === "group" && preservedGroup)
+        restored.groupId = preservedGroup;
+      source.world.brushes.push(
+        ownership === "world" ? removeGroupOwnership(restored) : restored,
+      );
+    }
+  }
+  source.brushes = [
+    ...source.world.brushes,
+    ...source.entities.flatMap((entity) => entity.brushes || []),
+  ];
+  if (ownership === "func_detail")
+    return writeRingPrefabVMF(source, prefabOptions);
+  const documentModel = {
+    ...source,
+    world: { ...source.world, brushes: [...source.world.brushes] },
+    entities: source.entities.map((entity) => ({
+      ...entity,
+      brushes: [...(entity.brushes || [])],
+    })),
+  };
+  const backingBrushes = createSharedPrefabBackingBrushes(
+    source,
+    prefabOptions,
+  );
+  if (ownership === "world") {
+    documentModel.world.brushes =
+      documentModel.world.brushes.map(removeGroupOwnership);
+  }
+  documentModel.world.keys = {
+    ...(documentModel.world.keys || {}),
+    ...prefabOptions.worldKeys,
+  };
+  documentModel.world.brushes.push(...backingBrushes);
+  documentModel.brushes = [
+    ...documentModel.world.brushes,
+    ...documentModel.entities.flatMap((entity) => entity.brushes || []),
+  ];
+  return writeVMFDocument(documentModel, {
+    purpose: VMF_EXPORT_PURPOSE.PREFAB,
+  });
+}
+function savedVMFText() {
+  assertExportable("VMF");
+  const text =
+    documentKind === "prefab"
+      ? prefabVMFText()
+      : writeVMFDocument(currentVMFDocument());
+  const reparsed = parseVMFDocument(text);
+  const issues = validateAll(reparsed.brushes);
+  if (issues.length)
+    throw new Error(`Saved VMF validation failed: ${issues[0]}`);
+  return text;
+}
+async function updateSavedSource(text, options = {}) {
+  let file = options.file || null;
+  if (!file && vmfHandle?.getFile) {
+    try {
+      file = await vmfHandle.getFile();
+    } catch {
+      // The successful write remains valid even if metadata cannot be refreshed.
+    }
+  }
+  sourceIdentity = await createVmfSourceIdentity(file, text, {
+    access: options.access || (vmfHandle ? "file-system-access" : "browser"),
+    name: state.vmfFilename,
+    locator: options.locator || null,
+    modifiedAt: options.modifiedAt || new Date().toISOString(),
+  });
+}
+async function saveVMF({ saveAs = false } = {}) {
+  const protectingCompleteMap =
+    documentKind === "complete-map" && !directSaveAllowed;
+  if (protectingCompleteMap) saveAs = true;
+  if (!directSaveAllowed && !vmfHandle && !state.vmfPath) saveAs = true;
+  const savedProject = currentProject();
+  const text = savedVMFText();
+  let filename = vmfFilename(state.vmfFilename);
+  let downloaded = false;
   if (serverFiles) {
+    if (saveAs || !directSaveAllowed) {
+      const suggested = protectingCompleteMap
+        ? filename.replace(/\.vmf$/i, "-edited.vmf")
+        : filename;
+      const requested = prompt("Save VMF as:", suggested);
+      if (!requested) return false;
+      filename = vmfFilename(requested);
+      if (
+        protectingCompleteMap &&
+        filename.toLowerCase() === state.vmfFilename.toLowerCase()
+      )
+        throw new Error(
+          "Choose a new VMF filename so the original complete map is not overwritten",
+        );
+    }
     const result = await serverFiles.saveVmf(filename, text);
     state.vmfPath = result.path || filename;
     state.vmfFilename = vmfFilename(state.vmfPath);
-  } else if (direct && vmfHandle) {
-    if (!(await fileSystem.write(vmfHandle, text))) return false;
+    directSaveAllowed = true;
+    await updateSavedSource(text, {
+      access: "server",
+      locator: `server:export:${state.vmfPath}`,
+    });
   } else if (saveAs && fileSystem.supported) {
     const result = await fileSystem.save(text, {
       suggestedName: filename,
@@ -1510,32 +1620,31 @@ async function exportVMFDocument({
     if (!result) return false;
     vmfHandle = result.handle;
     state.vmfFilename = vmfFilename(result.handle.name || filename);
+    directSaveAllowed = true;
+    await updateSavedSource(text);
+  } else if (directSaveAllowed && vmfHandle) {
+    if (!(await fileSystem.write(vmfHandle, text))) return false;
+    await updateSavedSource(text);
   } else {
     downloadText(text, filename, { type: "text/plain;charset=utf-8" });
+    state.vmfFilename = filename;
+    downloaded = true;
+    directSaveAllowed = false;
+    await updateSavedSource(text, { access: "download" });
   }
-  if (serverFiles || direct || saveAs) activeArtifact = "vmf";
   syncFilenameControls();
   markDocumentClean(savedProject);
+  for (const snapshot of autosaveSnapshots) {
+    if (snapshot.documentSessionId === documentSessionId)
+      await autosaveStore?.discardSnapshot(snapshot.id);
+  }
+  await refreshAutosaves();
   setStatus(
-    `Exported ${prefab ? "Hammer prefab " : ""}VMF ${state.vmfFilename}`,
+    downloaded
+      ? `Downloaded VMF ${state.vmfFilename}`
+      : `Saved VMF ${state.vmfFilename}`,
   );
   return true;
-}
-async function saveCurrentArtifact() {
-  if (serverFiles)
-    return activeArtifact === "vmf"
-      ? exportVMFDocument({ direct: true })
-      : saveProjectDocument({ direct: true });
-  if (activeArtifact === "vmf" && vmfHandle)
-    return exportVMFDocument({ direct: true });
-  if (activeArtifact === "project" && projectHandle)
-    return saveProjectDocument({ direct: true });
-  return saveProjectDocument();
-}
-async function saveCurrentArtifactAs() {
-  return activeArtifact === "vmf"
-    ? exportVMFDocument({ saveAs: true })
-    : saveProjectDocument({ saveAs: true });
 }
 const escapeHtml = (value) =>
   String(value).replace(
@@ -1581,27 +1690,20 @@ function renderBrowser() {
     button.ondblclick = loadSelected;
   });
 }
-let browserKind = FILE_KINDS.VMF;
-async function openBrowser(kind = FILE_KINDS.VMF) {
-  browserKind = kind;
+async function openBrowser() {
   browserSelected = null;
-  browser.querySelector("strong").textContent =
-    kind === FILE_KINDS.VMF ? "OPEN VMF" : "OPEN PROJECT";
+  browser.querySelector("strong").textContent = "OPEN VMF";
   $("browser-status").textContent = "Loading...";
   browser.showModal();
   search.focus();
   try {
-    if (kind === FILE_KINDS.VMF) {
-      allFiles = (await serverFiles.listFiles("export")).files.filter((file) =>
-        file.name.toLowerCase().endsWith(".vmf"),
-      );
-    } else {
-      allFiles = (await serverFiles.listProjects()).projects;
-    }
+    allFiles = (await serverFiles.listFiles("export")).files.filter((file) =>
+      file.name.toLowerCase().endsWith(".vmf"),
+    );
     visibleFiles = allFiles;
     filterFiles();
     $("browser-status").textContent =
-      `${allFiles.length} ${kind === FILE_KINDS.VMF ? "VMF" : "project"} file${allFiles.length === 1 ? "" : "s"} · double-click to open`;
+      `${allFiles.length} VMF file${allFiles.length === 1 ? "" : "s"} · double-click to open`;
     search.focus();
   } catch (error) {
     allFiles = [];
@@ -1613,24 +1715,38 @@ async function openBrowser(kind = FILE_KINDS.VMF) {
 async function loadSelected() {
   if (!browserSelected) return;
   try {
-    const result =
-      browserKind === FILE_KINDS.VMF
-        ? await serverFiles.openVmf(browserSelected.name, "export")
-        : await serverFiles.loadProject(browserSelected.name);
-    const project =
-      browserKind === FILE_KINDS.VMF
-        ? projectFromVMF(parseVMFDocument(result.vmf), result.path)
-        : normalizeProject(result.project, { name: result.path });
+    const result = await serverFiles.openVmf(browserSelected.name, "export");
+    const documentModel = parseVMFDocument(result.vmf);
+    const freshProject = projectFromVMF(documentModel, result.path);
+    const source = await createVmfSourceIdentity(null, result.vmf, {
+      access: "server",
+      name: result.path || browserSelected.name,
+      locator: `server:export:${result.path || browserSelected.name}`,
+      size: browserSelected.size,
+      modifiedAt: browserSelected.modified,
+    });
+    const matching = autosaveStore
+      ? await findMatchingAutosave(autosaveSnapshots, source, freshProject)
+      : null;
+    const project = matching
+      ? await autosaveStore.restoreSnapshot(matching.id)
+      : freshProject;
+    const kind = matching?.documentKind || kindForVMF(documentModel);
     const replaced = replaceDocument(project, {
-      kind: browserKind,
       filename: result.path || browserSelected.name,
       serverPath: result.path,
-      clean: browserKind === FILE_KINDS.PROJECT,
+      clean: !matching,
+      documentKind: kind,
+      documentSessionId: matching?.documentSessionId,
+      sourceIdentity: source,
+      directSaveAllowed: kind === "prefab",
     });
     if (replaced) {
       browser.close();
       setStatus(
-        `Opened ${result.path || browserSelected.name}: ${state.brushes.length} brushes`,
+        matching
+          ? "Recovered autosave."
+          : `Opened ${result.path || browserSelected.name}: ${state.brushes.length} brushes${kind === "complete-map" ? " · complete-map editing is experimental; Save As is required" : ""}`,
       );
     }
   } catch (error) {
@@ -1642,20 +1758,10 @@ function renderAutosaveState(message, error = false) {
   element.textContent = message;
   element.style.color = error ? "#ff8290" : "";
 }
-function updateAutosaveActions() {
-  document.querySelectorAll("[data-autosave-action]").forEach((button) => {
-    button.hidden = autosaveSnapshots.length === 0;
-  });
-  const latest = autosaveSnapshots[0];
-  if (latest)
-    document.querySelector('[data-command="restore-autosave"]').textContent =
-      `Restore Autosave (${new Date(latest.updatedAt).toLocaleString()})`;
-}
 async function refreshAutosaves() {
   if (!autosaveStore) return;
   try {
     autosaveSnapshots = await autosaveStore.listSnapshots();
-    updateAutosaveActions();
   } catch (error) {
     renderAutosaveState(`Autosave unavailable: ${error.message}`, true);
   }
@@ -1664,10 +1770,16 @@ async function autosaveNow(reason = "autosave", force = false) {
   if (!autosaveStore || (!force && !dirtyState.isDirty())) return null;
   renderAutosaveState("Autosaving...");
   try {
-    const record = await autosaveStore.saveSnapshot(currentProject(), {
-      reason: `${reason}:${state.projectFilename}`,
+    const project = currentProject();
+    const record = await autosaveStore.saveSnapshot(project, {
+      reason: `${reason}:${state.vmfFilename}`,
       projectName: state.projectName,
       lastModifiedAt: new Date(),
+      projectHash: canonicalProjectHash(project),
+      source: sourceIdentity,
+      documentKind,
+      documentSessionId,
+      fileHandle: vmfHandle,
       applicationVersion:
         document
           .querySelector('meta[name="hammer-build-id"]')
@@ -1694,41 +1806,6 @@ function startAutosaveTimer() {
     () => void autosaveNow("interval"),
     autosaveIntervalMs,
   );
-}
-async function restoreLatestAutosave() {
-  const latest = autosaveSnapshots[0];
-  if (!latest) return setStatus("No autosave is available", true);
-  try {
-    const project = await autosaveStore.restoreSnapshot(latest.id);
-    if (
-      replaceDocument(project, {
-        kind: FILE_KINDS.PROJECT,
-        filename: state.projectFilename,
-        clean: false,
-      })
-    )
-      setStatus(
-        `Restored autosave from ${new Date(latest.updatedAt).toLocaleString()}`,
-      );
-  } catch (error) {
-    setStatus(`Autosave restore failed: ${error.message}`, true);
-  }
-}
-async function discardLatestAutosave() {
-  const latest = autosaveSnapshots[0];
-  if (!latest) return;
-  if (!confirm("Discard the most recent autosave snapshot?")) return;
-  try {
-    await autosaveStore.discardSnapshot(latest.id);
-    await refreshAutosaves();
-    renderAutosaveState(
-      autosaveSnapshots.length
-        ? `Autosave available from ${new Date(autosaveSnapshots[0].updatedAt).toLocaleTimeString()}`
-        : "Autosave ready",
-    );
-  } catch (error) {
-    setStatus(`Autosave discard failed: ${error.message}`, true);
-  }
 }
 /**
  * @param {ResolvedExtrusion | null} [resolved]
@@ -1974,20 +2051,9 @@ function run(command) {
       `${command === "inner-radius" ? "Inner" : "Outer"} radius set for ${count} vertices`,
     );
   }
-  if (command === "open-vmf") runFileAction(openLocalFile(FILE_KINDS.VMF));
-  if (command === "open-project")
-    runFileAction(openLocalFile(FILE_KINDS.PROJECT));
-  if (command === "save-direct") runFileAction(saveCurrentArtifact());
-  if (command === "save-direct-as") runFileAction(saveCurrentArtifactAs());
-  if (command === "save-project-as")
-    runFileAction(saveProjectDocument({ saveAs: true }));
-  if (command === "save-project-download")
-    runFileAction(saveProjectDocument({ download: true }));
-  if (command === "export-vmf") runFileAction(exportVMFDocument());
-  if (command === "export-prefab-vmf")
-    runFileAction(exportVMFDocument({ prefab: true }));
-  if (command === "restore-autosave") runFileAction(restoreLatestAutosave());
-  if (command === "discard-autosave") runFileAction(discardLatestAutosave());
+  if (command === "open-vmf") runFileAction(openLocalFile());
+  if (command === "save-vmf") runFileAction(saveVMF());
+  if (command === "save-vmf-as") runFileAction(saveVMF({ saveAs: true }));
 }
 
 function runFileAction(action) {
@@ -2032,24 +2098,6 @@ $("vmf-file-input").onchange = (event) => {
       importBrowserFiles(files, { allowedKinds: [FILE_KINDS.VMF] }),
     );
 };
-$("project-file-input").onchange = (event) => {
-  const files = Array.from(event.target.files || []);
-  event.target.value = "";
-  if (files?.length)
-    runFileAction(
-      importBrowserFiles(files, { allowedKinds: [FILE_KINDS.PROJECT] }),
-    );
-};
-for (const element of document.querySelectorAll("[data-file-system-access]"))
-  element.hidden = Boolean(serverFiles) || !fileSystem.supported;
-$("project-filename").onchange = (event) => {
-  state.projectFilename = projectFilename(event.target.value);
-  syncFilenameControls();
-};
-$("vmf-filename").onchange = (event) => {
-  state.vmfFilename = vmfFilename(event.target.value);
-  syncFilenameControls();
-};
 let dragDepth = 0;
 function supportedDrag(event) {
   const items = Array.from(event.dataTransfer?.items || []);
@@ -2075,7 +2123,11 @@ window.addEventListener("drop", (event) => {
   event.preventDefault();
   dragDepth = 0;
   document.body.classList.remove("file-drag-active");
-  runFileAction(importBrowserFiles(event.dataTransfer?.files));
+  runFileAction(
+    importBrowserFiles(event.dataTransfer?.files, {
+      allowedKinds: [FILE_KINDS.VMF],
+    }),
+  );
 });
 search.oninput = () => {
   localStorage.setItem("hammer-vmf-search", search.value);
@@ -2216,7 +2268,7 @@ window.addEventListener("keydown", (event) => {
   }
   if ((event.ctrlKey || event.metaKey) && key === "s") {
     event.preventDefault();
-    run("save-direct");
+    run(event.shiftKey ? "save-vmf-as" : "save-vmf");
     return;
   }
   if ((event.ctrlKey || event.metaKey) && key === "z") {
@@ -2360,6 +2412,63 @@ $("update-available").onclick = () => {
     })(),
   );
 };
+async function restoreStartupAutosave() {
+  for (const record of autosaveSnapshots) {
+    if (!record.fileHandle?.getFile) continue;
+    try {
+      const file = await record.fileHandle.getFile();
+      const text = await file.text();
+      const documentModel = parseVMFDocument(text);
+      const freshProject = projectFromVMF(documentModel, file.name);
+      const source = await createVmfSourceIdentity(file, text, {
+        access: "file-system-access",
+      });
+      const matching = await findMatchingAutosave(
+        [record],
+        source,
+        freshProject,
+        record.fileHandle,
+      );
+      if (!matching) continue;
+      const project = await autosaveStore.restoreSnapshot(record.id);
+      replaceDocument(project, {
+        filename: file.name,
+        handle: record.fileHandle,
+        clean: false,
+        documentKind: record.documentKind || kindForVMF(documentModel),
+        documentSessionId: record.documentSessionId,
+        sourceIdentity: source,
+        directSaveAllowed: kindForVMF(documentModel) === "prefab",
+      });
+      setStatus("Recovered autosave.");
+      return true;
+    } catch {
+      // Permission can be unavailable until the user explicitly opens the VMF.
+    }
+  }
+  const candidate = autosaveSnapshots.find(
+    (record) => record.source || record.documentSessionId,
+  );
+  if (
+    candidate &&
+    confirm(
+      `Recover the autosave for ${candidate.source?.name || candidate.projectName || "the previous document"}?`,
+    )
+  ) {
+    const project = await autosaveStore.restoreSnapshot(candidate.id);
+    replaceDocument(project, {
+      filename: candidate.source?.name || "recovered.vmf",
+      clean: false,
+      documentKind: candidate.documentKind || "prefab",
+      documentSessionId: candidate.documentSessionId,
+      sourceIdentity: candidate.source || null,
+      directSaveAllowed: false,
+    });
+    setStatus("Recovered autosave.");
+    return true;
+  }
+  return false;
+}
 async function start() {
   if (serverFiles) {
     try {
@@ -2371,7 +2480,8 @@ async function start() {
       setStatus(error.message, true);
     }
   }
-  if (!state.__initialized && !restoreHmrState()) {
+  const restoredSession = state.__initialized || restoreHmrState();
+  if (!restoredSession) {
     state.brushes = [];
     history.items = [];
     history.index = -1;
@@ -2385,13 +2495,18 @@ async function start() {
     const pendingUpdateSnapshot = localStorage.getItem(UPDATE_RECOVERY_KEY);
     if (pendingUpdateSnapshot) {
       try {
+        const record = await autosaveStore.getSnapshot(pendingUpdateSnapshot);
         const project = await autosaveStore.restoreSnapshot(
           pendingUpdateSnapshot,
         );
         replaceDocument(project, {
-          kind: FILE_KINDS.PROJECT,
-          filename: projectFilename(project.name),
+          filename: record?.source?.name || "recovered.vmf",
           clean: false,
+          documentKind: record?.documentKind || "prefab",
+          documentSessionId: record?.documentSessionId,
+          sourceIdentity: record?.source || null,
+          handle: record?.fileHandle || null,
+          directSaveAllowed: false,
         });
         localStorage.removeItem(UPDATE_RECOVERY_KEY);
         setStatus("Restored editing state after update");
@@ -2399,6 +2514,8 @@ async function start() {
         localStorage.removeItem(UPDATE_RECOVERY_KEY);
         setStatus(`Update recovery failed: ${error.message}`, true);
       }
+    } else if (!restoredSession) {
+      await restoreStartupAutosave();
     }
     renderAutosaveState(
       autosaveSnapshots.length

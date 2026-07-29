@@ -1,11 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { History } from "../public/js/history.js";
-import {
-  createProject,
-  parseProject,
-  serializeProject,
-} from "../public/js/project-format.js";
+import { createProject } from "../public/js/project-format.js";
 
 const app = readFileSync(
   new URL("../public/js/app.js", import.meta.url),
@@ -31,10 +27,6 @@ assert.ok(
   app.indexOf("parseVMFDocument(loaded.text)") <
     app.indexOf("replaceDocument(project, {"),
 );
-assert.ok(
-  app.indexOf("parseProject(loaded.text") <
-    app.indexOf("replaceDocument(project, {"),
-);
 assert.match(app, /function changed\(kind = "document"/);
 assert.match(app, /changeType === "selection-commit"\) changed\("session"\)/);
 assert.match(app, /window\.addEventListener\("beforeunload"/);
@@ -52,20 +44,56 @@ const restore = app.slice(
 );
 assert.equal(restore.includes("applyNodrawToHiddenFaces"), false);
 
-assert.match(
-  html,
-  /Your VMF and project files are processed locally in your browser\s+and\s+are not\s+uploaded\./,
-);
 assert.match(html, /id="vmf-file-input"[^>]*accept="\.vmf"/);
-assert.match(
-  html,
-  /id="project-file-input"[^>]*accept="\.json,\.hptproject\.json"/,
+const fileMenu = html.slice(
+  html.indexOf('<div id="file-menu"'),
+  html.indexOf('<div id="edit-menu"'),
 );
+assert.deepEqual(
+  [...fileMenu.matchAll(/data-command="([^"]+)"/g)].map((match) => match[1]),
+  ["open-vmf", "save-vmf", "save-vmf-as"],
+  "the File menu contains only Open VMF, Save, and Save As",
+);
+for (const forbidden of [
+  "Open Project",
+  "Save Project",
+  "Export VMF",
+  "Export Hammer Prefab VMF",
+  "Restore Autosave",
+  "Discard Autosave",
+  "project-filename",
+  "vmf-filename",
+  "prefab-mode",
+  "prefab-backing",
+])
+  assert.equal(
+    fileMenu.includes(forbidden),
+    false,
+    `${forbidden} is not visible`,
+  );
 assert.equal(
-  (html.match(/data-command="save-direct"/g) || []).length,
+  (fileMenu.match(/data-command="save-vmf"/g) || []).length,
   1,
-  "direct save appears only in the File menu",
+  "Save appears once in the File menu",
 );
+assert.match(app, /command === "save-vmf"\) runFileAction\(saveVMF\(\)\)/);
+assert.match(app, /run\(event\.shiftKey \? "save-vmf-as" : "save-vmf"\)/);
+assert.match(
+  app,
+  /if \(!directSaveAllowed && !vmfHandle && !state\.vmfPath\) saveAs = true/,
+);
+assert.match(
+  app,
+  /else if \(directSaveAllowed && vmfHandle\)[\s\S]*fileSystem\.write\(vmfHandle, text\)/,
+);
+assert.match(app, /downloadText\(text, filename,[\s\S]*Downloaded VMF/);
+assert.match(app, /const reparsed = parseVMFDocument\(text\)/);
+assert.match(app, /documentKind === "prefab"[\s\S]*prefabVMFText\(\)/);
+assert.match(app, /data-prefab-ownership/);
+assert.match(app, /data-prefab-backing/);
+assert.match(app, /hammer_prefab_ownership/);
+assert.match(app, /hammer_prefab_backing/);
+assert.match(app, /filename\.replace\(\/\\\.vmf\$\/i, "-edited\.vmf"\)/);
 
 const project = createProject({
   projectName: "Metadata",
@@ -82,7 +110,7 @@ const project = createProject({
     },
   },
 });
-assert.deepEqual(parseProject(serializeProject(project)).vmf, project.vmf);
+assert.equal(project.vmf.world.keys.skyname, "sky_day01_01");
 
 const history = new History();
 history.push({ brushes: [1] });

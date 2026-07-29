@@ -1,6 +1,7 @@
 import { box } from "./geometry-model.js";
 import { validateBrush } from "./brush-validation.js";
 import { VMF_EXPORT_PURPOSE, writeVMFDocument } from "./vmf-writer.js";
+import { roundToGrid } from "./grid.js";
 
 const NODRAW = "tools/toolsnodraw";
 let nextBackingId = 1;
@@ -58,6 +59,7 @@ function assemblyBuckets(brushes, groups) {
 
   for (const brush of brushes) {
     const groupKey = brush.groupId ?? brush.hammerGroupId;
+    const preservedGroup = brush.editor?.keys?.hammer_prefab_group;
     const group =
       groupKey === undefined ? undefined : groupsById.get(String(groupKey));
     let key;
@@ -78,6 +80,7 @@ function assemblyBuckets(brushes, groups) {
           : previousLegacySegment;
       }
     } else if (groupKey !== undefined) key = `group:${groupKey}`;
+    else if (preservedGroup) key = `preserved:${preservedGroup}`;
     if (key) add(key, brush, group);
     else worldBrushes.push(brush);
   }
@@ -160,6 +163,31 @@ export function createRingBackingBrushes(brushes, options = {}) {
     y: bounds.max.y + settings.padding,
     z: bounds.max.z,
   };
+  const grid = Number(options.grid);
+  if (Number.isFinite(grid) && grid > 0) {
+    const supportValues = [
+      ...(settings.below ? [min.z] : []),
+      ...(settings.above ? [max.z] : []),
+    ];
+    if (
+      supportValues.some(
+        (value) => Math.abs(roundToGrid(value, grid) - value) > 1e-6,
+      )
+    )
+      throw new Error(
+        "Structural backing requires support planes aligned to the Hammer grid",
+      );
+    min.x = Math.floor(min.x / grid) * grid;
+    min.y = Math.floor(min.y / grid) * grid;
+    max.x = Math.ceil(max.x / grid) * grid;
+    max.y = Math.ceil(max.y / grid) * grid;
+    min.z = roundToGrid(min.z, grid);
+    max.z = roundToGrid(max.z, grid);
+    settings.thickness = Math.max(
+      grid,
+      Math.ceil(settings.thickness / grid) * grid,
+    );
+  }
   if (!(max.x > min.x) || !(max.y > min.y))
     throw new RangeError(
       "Ring backing requires non-zero rectangular X/Y bounds",
@@ -173,6 +201,8 @@ export function createRingBackingBrushes(brushes, options = {}) {
       NODRAW,
     );
     brush.id = `${prefix}-below`;
+    brush.faceMaterials = brush.faces.map(() => NODRAW);
+    brush.editor = { keys: { hammer_prefab_backing: "1" } };
     backing.push(brush);
   }
   if (settings.above) {
@@ -182,6 +212,8 @@ export function createRingBackingBrushes(brushes, options = {}) {
       NODRAW,
     );
     brush.id = `${prefix}-above`;
+    brush.faceMaterials = brush.faces.map(() => NODRAW);
+    brush.editor = { keys: { hammer_prefab_backing: "1" } };
     backing.push(brush);
   }
   for (const brush of backing) {
@@ -189,6 +221,91 @@ export function createRingBackingBrushes(brushes, options = {}) {
     if (issues.length) throw new Error(`Invalid ring backing: ${issues[0]}`);
   }
   return backing;
+}
+
+function positiveBoundsOverlap(a, b) {
+  return ["x", "y", "z"].every(
+    (axis) =>
+      Math.min(a.max[axis], b.max[axis]) > Math.max(a.min[axis], b.min[axis]),
+  );
+}
+
+function sharedBackingBrushes(buckets, options) {
+  const settings = backingOptions(options);
+  const supports = { below: new Map(), above: new Map() };
+  const add = (map, level, brushes) => {
+    if (!map.has(level)) map.set(level, []);
+    map.get(level).push(...brushes);
+  };
+  for (const bucket of buckets) {
+    const bounds = brushBounds(bucket.brushes);
+    if (!bounds) continue;
+    if (settings.below) add(supports.below, bounds.min.z, bucket.brushes);
+    if (settings.above) add(supports.above, bounds.max.z, bucket.brushes);
+  }
+  const backing = [];
+  let index = 0;
+  for (const [direction, levels] of Object.entries(supports)) {
+    for (const brushes of levels.values()) {
+      backing.push(
+        ...createRingBackingBrushes(brushes, {
+          ...options,
+          backingBelow: direction === "below",
+          backingAbove: direction === "above",
+          backingIdPrefix: `prefab-backing-${++index}`,
+        }),
+      );
+    }
+  }
+  const bounds = backing.map((brush) => brushBounds([brush]));
+  for (let first = 0; first < bounds.length; first++) {
+    for (let second = first + 1; second < bounds.length; second++) {
+      if (positiveBoundsOverlap(bounds[first], bounds[second]))
+        throw new Error(
+          "Structural backing could not be generated without overlapping slabs",
+        );
+    }
+  }
+  const sourceBounds = buckets.flatMap((bucket) =>
+    bucket.brushes.map((brush) => brushBounds([brush])),
+  );
+  if (
+    bounds.some((backingBounds) =>
+      sourceBounds.some((brushBounds) =>
+        positiveBoundsOverlap(backingBounds, brushBounds),
+      ),
+    )
+  )
+    throw new Error(
+      "Structural backing would overlap geometry on another support level",
+    );
+  return backing;
+}
+
+function backingBuckets(source, sourceGroups, worldBuckets) {
+  const buckets = [...worldBuckets];
+  for (const entity of source.entities || []) {
+    if (entity.keys?.hammer_prefab_generated_group !== "1") continue;
+    if (entity.brushes?.length)
+      buckets.push({
+        key: `entity:${entity.keys.targetname || buckets.length}`,
+        brushes: entity.brushes,
+      });
+  }
+  return buckets;
+}
+
+export function createSharedPrefabBackingBrushes(input, options = {}) {
+  const source = inputDocument(input);
+  const sourceGroups = source.world?.groups || source.groups || [];
+  const { buckets } = assemblyBuckets(
+    source.world?.brushes || [],
+    sourceGroups,
+  );
+  return sharedBackingBrushes(
+    backingBuckets(source, sourceGroups, buckets),
+    options,
+  );
 }
 
 function inputDocument(input) {
@@ -210,6 +327,11 @@ function inputDocument(input) {
 }
 
 function removeGroupOwnership(brush) {
+  const preservedGroup =
+    brush.groupId ||
+    brush.hammerGroupId ||
+    brush.assemblyId ||
+    brush.editor?.keys?.hammer_prefab_group;
   const editor = brush.editor
     ? {
         ...brush.editor,
@@ -222,7 +344,8 @@ function removeGroupOwnership(brush) {
           ({ key }) => key !== "groupid",
         ),
       }
-    : undefined;
+    : { keys: {}, properties: [] };
+  if (preservedGroup) editor.keys.hammer_prefab_group = String(preservedGroup);
   return {
     ...brush,
     groupId: undefined,
@@ -246,22 +369,20 @@ export function createRingPrefabDocument(input, options = {}) {
     source.world?.brushes || [],
     sourceGroups,
   );
-  const backing = [];
+  const backing = sharedBackingBrushes(
+    backingBuckets(source, sourceGroups, buckets),
+    options,
+  );
   const generatedEntities = buckets.map((bucket, index) => {
     const baseName = `ring_${String(index + 1).padStart(2, "0")}`;
     const suffix = sanitizeName(bucket.description);
     const name = suffix ? `${baseName}_${suffix}` : baseName;
-    backing.push(
-      ...createRingBackingBrushes(bucket.brushes, {
-        ...options,
-        backingIdPrefix: `${baseName}-backing`,
-      }),
-    );
     return {
       classname: "func_detail",
       keys: {
         classname: "func_detail",
         targetname: name,
+        hammer_prefab_generated_group: "1",
       },
       brushes: bucket.brushes.map(removeGroupOwnership),
     };

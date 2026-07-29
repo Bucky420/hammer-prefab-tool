@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "test": "npm run check",
     "test:persistence": "node tests/project-format.test.mjs && node tests/browser-files.test.mjs && node tests/project-store.test.mjs && node tests/dirty-state.test.mjs && node tests/app-file-contracts.test.mjs",
-    "test:vmf": "node tests/vmf-document.test.mjs && node tests/ring-prefab-export.test.mjs",
+    "test:vmf": "node tests/vmf-document.test.mjs && node tests/ring-prefab-export.test.mjs && node tests/local-server-vmf.test.mjs",
     "test:browser": "node tests/browser-smoke.test.mjs",
     "test:static-build": "npm run build && node tests/static-build.test.mjs",
     "test:update-manager": "node tests/update-manager.test.mjs",

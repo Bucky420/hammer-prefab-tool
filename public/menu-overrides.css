@@ -290,6 +290,20 @@ header {
 .brush-panel .advanced-setting.enabled {
   opacity: 1;
 }
+.prefab-settings {
+  margin-top: 9px;
+  padding-top: 8px;
+  border-top: 1px solid #354a63;
+}
+.prefab-settings > strong {
+  color: #66dde3;
+  font-size: 10px;
+  letter-spacing: 0.8px;
+}
+.brush-panel .prefab-settings label {
+  grid-template-columns: 72px 1fr;
+  margin: 5px 0;
+}
 .extrusion-toggles {
   display: flex;
   gap: 4px;

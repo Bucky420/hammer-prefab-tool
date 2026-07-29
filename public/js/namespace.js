@@ -15,24 +15,30 @@ const state = {
   faceExtrusionGridSnap: false,
   textureLock: "world",
   projectName: "Untitled",
-  projectFilename: "untitled.hptproject.json",
   vmfFilename: "prefab.vmf",
   vmfPath: null,
   entities: [],
   groups: [],
   ringMaterialRoles: {},
   ringSettings: {},
-  projectSettings: {},
+  projectSettings: {
+    prefab: { ownership: "func_detail", backing: "none" },
+  },
   vmf: {},
 };
 
 const VALID_MODES = ["straight", "snap", "parallel"];
 const getPersistedMode = () => {
   try {
-    const v = typeof localStorage !== "undefined" ? localStorage.getItem("faceExtrudeMode") : null;
+    const v =
+      typeof localStorage !== "undefined"
+        ? localStorage.getItem("faceExtrudeMode")
+        : null;
     if (v === "forward-snap") return "straight";
     return VALID_MODES.includes(v) ? v : null;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 };
 const getPersistedRailAngle = () => {
   try {
@@ -68,7 +74,8 @@ const getPersistedExtrusionGridSnap = () => {
   }
 };
 state.faceExtrusionGridSnap = getPersistedExtrusionGridSnap();
-let faceExtrusionMode = state.faceExtrusionMode || getPersistedMode() || "straight";
+let faceExtrusionMode =
+  state.faceExtrusionMode || getPersistedMode() || "straight";
 
 Object.defineProperty(state, "faceExtrusionMode", {
   enumerable: true,
@@ -80,7 +87,9 @@ Object.defineProperty(state, "faceExtrusionMode", {
     const prev = faceExtrusionMode;
     faceExtrusionMode = VALID_MODES.includes(value) ? value : "straight";
     if (faceExtrusionMode !== prev) {
-      try { localStorage.setItem("faceExtrudeMode", faceExtrusionMode); } catch {}
+      try {
+        localStorage.setItem("faceExtrudeMode", faceExtrusionMode);
+      } catch {}
     }
     if (typeof document === "undefined") return;
     queueMicrotask(() => {
