@@ -95,6 +95,34 @@ const storageMode =
     ? "server"
     : "browser";
 const fileSystem = createFileSystemAccessAdapter(window);
+const fileAccessWarning = $("file-access-warning");
+const fileAccessWarningText = $("file-access-warning-text");
+const fileAccessHelp = $("file-access-help");
+const braveFileAccessUrl = "brave://flags/#file-system-access-api";
+async function updateFileAccessWarning() {
+  if (fileSystem.supported || storageMode === "server") return;
+  let isBrave = false;
+  try {
+    isBrave = (await navigator.brave?.isBrave?.()) === true;
+  } catch {
+    // Browser detection is advisory only.
+  }
+  fileAccessWarningText.textContent = isBrave
+    ? "Brave has its File System Access API disabled. Click the address, paste it into the address bar, enable the flag, and relaunch Brave."
+    : "This browser cannot overwrite opened files. Use Chrome or Edge for direct Ctrl+S saving.";
+  fileAccessHelp.hidden = !isBrave;
+  fileAccessWarning.hidden = false;
+  document.body.classList.add("file-access-warning-visible");
+}
+fileAccessHelp.onclick = async () => {
+  try {
+    await navigator.clipboard.writeText(braveFileAccessUrl);
+    setStatus("Brave File System Access flag address copied");
+  } catch {
+    window.prompt("Copy this address into Brave", braveFileAccessUrl);
+  }
+};
+void updateFileAccessWarning();
 const serverFiles =
   storageMode === "server" ? createLocalServerFileAdapter(api) : null;
 const dirtyState = createDirtyStateService();
@@ -2545,16 +2573,4 @@ async function start() {
   updateDocumentStatus();
   redraw();
 }
-start()
-  .then(() => {
-    if (
-      storageMode === "browser" &&
-      window.self !== window.top &&
-      !fileSystem.supported
-    )
-      setStatus(
-        "Embedded browser cannot directly overwrite files; open this URL in a normal Chrome, Edge, or Brave tab",
-        true,
-      );
-  })
-  .catch((error) => setStatus(error.message || String(error), true));
+start().catch((error) => setStatus(error.message || String(error), true));

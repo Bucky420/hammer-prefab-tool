@@ -686,10 +686,44 @@ body.file-drag-active #drop-overlay {
   background: #ffcf65;
   color: #ffcf65;
 }
+.file-access-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-bottom: 1px solid #a66a1f;
+  background: #3a2814;
+  color: #ffd99a;
+}
+.file-access-warning[hidden] {
+  display: none;
+}
+.file-access-warning strong {
+  color: #ffbd69;
+  white-space: nowrap;
+}
+.file-access-warning button {
+  padding: 2px 6px;
+  border-color: #c68a36;
+  background: #211a12;
+  color: #75dce4;
+  font-family: Consolas, monospace;
+  text-decoration: underline;
+}
+body.file-access-warning-visible {
+  grid-template-rows: 38px auto minmax(0, 1fr) 24px;
+}
 
 @media (max-width: 700px) {
   body {
     grid-template-rows: 38px minmax(0, 1fr) 24px;
+  }
+  body.file-access-warning-visible {
+    grid-template-rows: 38px auto minmax(0, 1fr) 24px;
+  }
+  .file-access-warning {
+    flex-wrap: wrap;
+    gap: 4px 7px;
   }
   body > header {
     gap: 2px;
