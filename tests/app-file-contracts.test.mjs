@@ -30,10 +30,10 @@ assert.ok(
 assert.match(app, /function changed\(kind = "document"/);
 assert.match(app, /changeType === "selection-commit"\) changed\("session"\)/);
 assert.match(app, /window\.addEventListener\("beforeunload"/);
-assert.match(
-  app,
-  /if \(updateReloadPending \|\| !dirtyState\.isDirty\(\)\) return/,
-);
+assert.match(app, /if \(!dirtyState\.isDirty\(\)\) return/);
+assert.equal(app.includes("updateManager"), false);
+assert.equal(html.includes("update-available"), false);
+assert.match(app, /hammer-pending-update-snapshot/);
 assert.match(
   app,
   /if \(import\.meta\.hot\) \{[\s\S]*document\.createElement\("span"\)/,

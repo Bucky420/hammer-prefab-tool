@@ -596,12 +596,6 @@ body > footer #fps {
 #dirty-indicator[data-dirty="true"] {
   color: #ffcb72;
 }
-#update-available {
-  color: #101720;
-  background: #66dde3;
-  border-color: #66dde3;
-  white-space: nowrap;
-}
 .hidden-file-input {
   position: fixed;
   width: 1px;

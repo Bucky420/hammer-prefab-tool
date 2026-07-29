@@ -5,6 +5,7 @@ An experimental browser tool for creating and refining Source Engine brush geome
 ## [Open Hammer Prefab Tool →](https://bucky420.github.io/hammer-prefab-tool/)
 
 No installation is required. VMF files are processed locally in your browser and are not uploaded.
+Opening or refreshing the editor loads the latest deployed version. An already-open tab continues running its current version until it is refreshed.
 
 ![Hammer Prefab Tool preview](docs/hammer-prefab-tool-preview-v2.jpg)
 

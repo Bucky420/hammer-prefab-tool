@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
+import { removeLegacyServiceWorker } from "../public/js/service-worker-cleanup.js";
 
 const root = path.resolve(import.meta.dirname, "..");
 const dist = path.join(root, "dist");
@@ -26,150 +27,120 @@ const textOutput = filesIn(dist)
 
 assert.match(index, /<meta name="hammer-build-id" content="[^"]+"/);
 const expectedBase = process.env.HAMMER_BASE_PATH || "./";
-if (expectedBase === "./")
-  assert.match(
-    index,
-    /(?:src|href)="\.\/assets\//,
-    "default build base is relative",
-  );
-else
-  assert.ok(
-    index.includes(`="${expectedBase}assets/`),
-    `build uses configured base ${expectedBase}`,
-  );
-assert.equal(
-  index.includes("data-local-server"),
-  false,
-  "local import map is removed",
-);
-assert.equal(
-  textOutput.includes("/_deps"),
-  false,
-  "hosted output has no dependency shim request",
-);
-assert.equal(
-  textOutput.includes("/api"),
-  false,
-  "hosted output has no server API request",
-);
+if (expectedBase === "./") assert.match(index, /(?:src|href)="\.\/assets\//);
+else assert.ok(index.includes(`="${expectedBase}assets/`));
+assert.equal(index.includes("data-local-server"), false);
+assert.equal(textOutput.includes("/_deps"), false);
+assert.equal(textOutput.includes("/api"), false);
+assert.equal(textOutput.includes("update-available"), false);
+assert.equal(version.id, "updates-retired-v1");
+assert.equal(version.retired, true);
+assert.equal("files" in version, false, "retirement metadata has no manifest");
+assert.equal(worker.includes('addEventListener("fetch"'), false);
+assert.match(worker, /registration\.unregister\(\)/);
+assert.match(worker, /name\.startsWith\(CACHE_PREFIX\)/);
 
-assert.equal(typeof version.id, "string");
-assert.ok(version.id.length > 0);
-assert.ok(version.files.includes("index.html"));
+function memoryCaches(events) {
+  const entries = new Map([
+    [
+      "hammer-prefab-tool-mixed",
+      [
+        { url: "https://example.test/tool/index.html" },
+        { url: "https://example.test/other/index.html" },
+      ],
+    ],
+    [
+      "hammer-prefab-tool-owned",
+      [{ url: "https://example.test/tool/assets/app.js" }],
+    ],
+    [
+      "hammer-prefab-tool-other-scope",
+      [{ url: "https://example.test/other/index.html" }],
+    ],
+    ["unrelated-cache", [{ url: "https://example.test/tool/data" }]],
+  ]);
+  return {
+    keys: async () => [...entries.keys()],
+    open: async (name) => ({
+      keys: async () => [...(entries.get(name) || [])],
+      delete: async (request) => {
+        entries.set(
+          name,
+          (entries.get(name) || []).filter((item) => item.url !== request.url),
+        );
+        events.push(`entry:${name}:${request.url}`);
+      },
+    }),
+    delete: async (name) => {
+      entries.delete(name);
+      events.push(`cache:${name}`);
+    },
+  };
+}
+
+const listeners = new Map();
+const cacheEvents = [];
+const messages = [];
+let unregistered = 0;
+let claimed = 0;
+let skipped = 0;
+vm.runInNewContext(worker, {
+  self: {
+    registration: {
+      scope: "https://example.test/tool/",
+      unregister: async () => unregistered++,
+    },
+    clients: {
+      claim: async () => claimed++,
+      matchAll: async () => [
+        { postMessage: (message) => messages.push(message) },
+      ],
+    },
+    skipWaiting: async () => skipped++,
+    addEventListener: (type, listener) => listeners.set(type, listener),
+  },
+  caches: memoryCaches(cacheEvents),
+});
+let pending;
+listeners.get("install")({ waitUntil: (promise) => (pending = promise) });
+await pending;
+assert.equal(skipped, 1);
+listeners.get("activate")({ waitUntil: (promise) => (pending = promise) });
+await pending;
 assert.ok(
-  version.files.some((file) => /^assets\/.*-[A-Za-z0-9_-]{6,}\.js$/.test(file)),
-);
-assert.ok(
-  version.files.some((file) =>
-    /^assets\/.*-[A-Za-z0-9_-]{6,}\.css$/.test(file),
+  cacheEvents.includes(
+    "entry:hammer-prefab-tool-mixed:https://example.test/tool/index.html",
   ),
 );
-for (const file of version.files)
-  assert.ok(
-    fs.existsSync(path.join(dist, file)),
-    `manifest file exists: ${file}`,
-  );
+assert.ok(cacheEvents.includes("cache:hammer-prefab-tool-owned"));
+assert.equal(cacheEvents.includes("cache:hammer-prefab-tool-mixed"), false);
+assert.equal(claimed, 1);
+assert.equal(unregistered, 1);
+assert.equal(messages[0].type, "UPDATE_ACTIVATED");
 
-assert.ok(
-  worker.includes(JSON.stringify(version.id)),
-  "worker matches version metadata",
-);
-assert.equal(worker.includes("__HAMMER_BUILD_ID__"), false);
-assert.match(worker, /version\?\.id !== BUILD_ID/);
-assert.match(
-  worker,
-  /await Promise\.all\(/,
-  "worker stages the complete manifest",
-);
-assert.match(worker, /request\.mode === "navigate"/);
-assert.match(worker, /matchRetainedCaches\(INDEX_URL\)/);
-assert.match(worker, /cached \|\| fetch\(request\)/);
-const runtimeFetchSource = worker.slice(
-  worker.indexOf("async function networkFirst"),
-);
-assert.equal(
-  runtimeFetchSource.includes("cache.put"),
-  false,
-  "staged generation caches remain immutable",
-);
-assert.match(worker, /isHashedAsset\(url\)/);
-assert.match(worker, /const RETAINED_GENERATIONS = 3/);
-assert.match(worker, /protectedCaches = new Set/);
-assert.match(worker, /GET_CLIENT_VERSION/);
-assert.match(worker, /matchRetainedCaches\(fallbackUrl\)/);
-assert.match(
-  worker,
-  /names\.reverse\(\)\.filter/,
-  "hashed fallback searches retained caches",
-);
-const installSource = worker.slice(
-  worker.indexOf('self.addEventListener("install"'),
-  worker.indexOf('self.addEventListener("message"'),
-);
-assert.match(
-  installSource,
-  /await stageBuild\(\);\s*await self\.skipWaiting\(\)/,
-  "complete staging activates immediately",
-);
-const activateSource = worker.slice(
-  worker.indexOf('self.addEventListener("activate"'),
-  worker.indexOf("function isHashedAsset"),
-);
-assert.match(activateSource, /await pruneBuildCaches\(clients\)/);
-assert.match(activateSource, /await self\.clients\.claim\(\)/);
-assert.equal(activateSource.includes("location.reload"), false);
-
-const sourceWorker = fs.readFileSync(
-  path.join(root, "public", "sw.js"),
-  "utf8",
-);
-const workerListeners = new Map();
-const deletedCaches = [];
-let installPromise = null;
-let skipWaitingCalls = 0;
-let missingAsset = true;
-const workerSelf = {
-  registration: { scope: "https://example.test/tool/" },
-  location: { origin: "https://example.test" },
-  clients: { claim: async () => {} },
-  skipWaiting: async () => skipWaitingCalls++,
-  addEventListener(type, listener) {
-    workerListeners.set(type, listener);
+const cleanupEvents = [];
+await removeLegacyServiceWorker({
+  document: { baseURI: "https://example.test/tool/" },
+  navigator: {
+    serviceWorker: {
+      getRegistrations: async () => [
+        {
+          scope: "https://example.test/tool/",
+          unregister: async () => cleanupEvents.push("unregister-owned"),
+        },
+        {
+          scope: "https://example.test/other/",
+          unregister: async () => cleanupEvents.push("unregister-other"),
+        },
+      ],
+    },
   },
-};
-vm.runInNewContext(sourceWorker, {
-  self: workerSelf,
-  URL,
-  Request,
-  console,
-  caches: {
-    open: async () => ({ put: async () => {} }),
-    delete: async (name) => deletedCaches.push(name),
-    keys: async () => [],
-  },
-  fetch: async (request) => {
-    const url = typeof request === "string" ? request : request.url;
-    if (url.endsWith("version.json"))
-      return new Response(
-        JSON.stringify({ id: "__HAMMER_BUILD_ID__", files: ["index.html"] }),
-      );
-    return missingAsset
-      ? new Response("missing", { status: 404 })
-      : new Response("complete", { status: 200 });
-  },
+  caches: memoryCaches(cleanupEvents),
 });
-workerListeners.get("install")({
-  waitUntil: (promise) => (installPromise = promise),
-});
-await assert.rejects(installPromise, /index\.html request failed \(404\)/);
-assert.deepEqual(deletedCaches, ["hammer-prefab-tool-__HAMMER_BUILD_ID__"]);
-assert.equal(skipWaitingCalls, 0, "incomplete deploy does not activate");
-missingAsset = false;
-workerListeners.get("install")({
-  waitUntil: (promise) => (installPromise = promise),
-});
-await installPromise;
-assert.equal(skipWaitingCalls, 1, "fully staged deploy activates immediately");
+assert.ok(cleanupEvents.includes("unregister-owned"));
+assert.ok(cleanupEvents.includes("cache:hammer-prefab-tool-owned"));
+assert.equal(cleanupEvents.includes("unregister-other"), false);
+assert.equal(cleanupEvents.includes("cache:hammer-prefab-tool-mixed"), false);
 
 const viteConfig = fs.readFileSync(path.join(root, "vite.config.mjs"), "utf8");
 assert.ok(viteConfig.includes('process.env.HAMMER_BASE_PATH || "./"'));

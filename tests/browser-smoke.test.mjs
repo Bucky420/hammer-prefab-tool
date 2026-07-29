@@ -23,6 +23,17 @@ const server = http.createServer((request, response) => {
   const relative = request.url.startsWith(prefix)
     ? request.url.slice(prefix.length).split("?")[0] || "index.html"
     : "";
+  if (relative === "legacy-sw.js") {
+    response
+      .writeHead(200, {
+        "Content-Type": "text/javascript; charset=utf-8",
+        "Cache-Control": "no-store",
+      })
+      .end(
+        'self.addEventListener("install",event=>event.waitUntil(self.skipWaiting()));',
+      );
+    return;
+  }
   const file = path.resolve(dist, relative);
   if (
     !relative ||
@@ -66,7 +77,26 @@ try {
     });
     assert.equal(await page.title(), "Untitled - Hammer Prefab Tool");
     assert.equal(await page.locator("#editor").count(), 1);
+    assert.equal(await page.locator("#update-available").count(), 0);
     assert.deepEqual(pageErrors, []);
+
+    await page.evaluate(async () => {
+      await navigator.serviceWorker.register("./legacy-sw.js", { scope: "./" });
+      const owned = await caches.open("hammer-prefab-tool-old");
+      await owned.put(location.href, new Response("owned"));
+      const unrelated = await caches.open("unrelated-cache");
+      await unrelated.put(location.href, new Response("unrelated"));
+    });
+    await page.reload({ waitUntil: "networkidle" });
+    await page.waitForFunction(async () => {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      const names = await caches.keys();
+      return (
+        registrations.length === 0 &&
+        !names.includes("hammer-prefab-tool-old") &&
+        names.includes("unrelated-cache")
+      );
+    });
 
     const vmf = writeVMF([box({ x: 0, y: 0, z: 0 }, { x: 64, y: 64, z: 64 })]);
     await page.locator("#vmf-file-input").setInputFiles({

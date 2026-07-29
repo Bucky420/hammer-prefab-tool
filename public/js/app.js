@@ -50,7 +50,6 @@ import {
   createVmfSourceIdentity,
   findMatchingAutosave,
 } from "./autosave-recovery.js";
-import { updateManager } from "./update-manager.js";
 
 /**
  * @typedef {import("./face-extrusion.js").ResolvedExtrusion} ResolvedExtrusion
@@ -110,8 +109,6 @@ let autosaveSnapshots = [];
 let autosaveTimer = null;
 let autosaveDebounce = null;
 let autosaveIntervalMs = 30000;
-let availableUpdate = null;
-let updateReloadPending = false;
 const UPDATE_RECOVERY_KEY = "hammer-pending-update-snapshot";
 function describeUIError(error, fallbackMessage = "Unknown UI error") {
   const message = error?.message || String(error || fallbackMessage);
@@ -2372,46 +2369,10 @@ if (import.meta.hot) {
   import.meta.hot.on("vite:beforeFullReload", saveHmrState);
 }
 window.addEventListener("beforeunload", (event) => {
-  if (updateReloadPending || !dirtyState.isDirty()) return;
+  if (!dirtyState.isDirty()) return;
   event.preventDefault();
   event.returnValue = "";
 });
-updateManager.onUpdateAvailable((update) => {
-  availableUpdate = update;
-  $("update-available").hidden = false;
-  $("update-available").textContent = update.version
-    ? `Update ${update.version} available`
-    : "Update available";
-});
-$("update-available").onclick = () => {
-  if (!availableUpdate) return;
-  runFileAction(
-    (async () => {
-      $("update-available").disabled = true;
-      try {
-        setStatus("Saving recovery state before update...");
-        const autosaved = await autosaveNow("update", true);
-        const sessionSaved = saveHmrState();
-        if (!autosaved && !sessionSaved)
-          throw new Error(
-            "The update was not applied because recovery state could not be saved",
-          );
-        if (!sessionSaved && autosaved)
-          localStorage.setItem(UPDATE_RECOVERY_KEY, autosaved.id);
-        else localStorage.removeItem(UPDATE_RECOVERY_KEY);
-        updateReloadPending = true;
-        try {
-          await availableUpdate.applyUpdate();
-        } catch (error) {
-          updateReloadPending = false;
-          throw error;
-        }
-      } finally {
-        $("update-available").disabled = false;
-      }
-    })(),
-  );
-};
 async function restoreStartupAutosave() {
   for (const record of autosaveSnapshots) {
     if (!record.fileHandle?.getFile) continue;

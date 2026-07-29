@@ -76,18 +76,11 @@ function hostedBuildPlugin() {
           );
       },
     },
-    generateBundle(_options, bundle) {
-      const files = [
-        "index.html",
-        ...Object.keys(bundle).filter(
-          (file) => file !== "index.html" && !file.endsWith(".map"),
-        ),
-      ].sort();
-
+    generateBundle() {
       const version = {
-        id: BUILD_ID,
+        id: "updates-retired-v1",
         generatedAt: new Date().toISOString(),
-        files,
+        retired: true,
       };
       this.emitFile({
         type: "asset",
@@ -97,10 +90,7 @@ function hostedBuildPlugin() {
       this.emitFile({
         type: "asset",
         fileName: "sw.js",
-        source: SERVICE_WORKER_SOURCE.replace(
-          '"__HAMMER_BUILD_ID__"',
-          JSON.stringify(BUILD_ID),
-        ),
+        source: SERVICE_WORKER_SOURCE,
       });
     },
   };
