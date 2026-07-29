@@ -6,7 +6,7 @@ const state = {
   faceSelection: new Set(),
   faceSelectionScope: "group",
   faceToolMode: "extrude",
-  selectionScope: "group",
+  selectionScope: "object",
   showTextureAxes: false,
   mode: "selection",
   tool: "box",

@@ -376,40 +376,32 @@ const railTools = document.createElement("div");
 railTools.className = "rail-tools";
 railButtons.forEach((button) => railTools.append(button));
 const selectionScopeToggle = $("selection-scope-toggle");
+const selectionModeSelect = $("selection-mode-select");
 function updateSelectionScopeToggle() {
-  const scope =
-    state.mode === "face" ? state.faceSelectionScope : state.selectionScope;
-  selectionScopeToggle.hidden = false;
-  selectionScopeToggle.dataset.scope = scope;
-  selectionScopeToggle.title =
-    state.mode === "face"
-      ? `${scope === "group" ? "Grouped semantic faces" : "Single face"} selection`
-      : `${scope === "group" ? "Group" : "Object"} selection`;
+  const faceMode = state.mode === "face";
+  selectionScopeToggle.hidden = !faceMode;
+  selectionModeSelect.closest("label").hidden = faceMode;
+  selectionModeSelect.value = state.selectionScope;
+  selectionScopeToggle.dataset.scope = state.faceSelectionScope;
+  selectionScopeToggle.title = `${state.faceSelectionScope === "group" ? "Grouped semantic faces" : "Single face"} selection`;
 }
 selectionScopeToggle.onclick = () => {
-  const faceMode = state.mode === "face";
-  const nextScope =
-    (faceMode ? state.faceSelectionScope : state.selectionScope) === "group"
-      ? "object"
-      : "group";
+  const nextScope = state.faceSelectionScope === "group" ? "object" : "group";
   state.faceSelectionScope = nextScope;
-  state.selectionScope = nextScope;
-  if (faceMode) state.faceSelection.clear();
-  else {
-    state.mode = "selection";
-    state.tool = "box";
-    railButtons.forEach((item) =>
-      item.classList.toggle("active", item.dataset.toolMode === "selection"),
-    );
-  }
+  state.faceSelection.clear();
   updateSelectionScopeToggle();
   setStatus(
-    faceMode
-      ? `${state.faceSelectionScope === "group" ? "Grouped inner, outer, top, or bottom faces" : "Single-face"} selection active`
-      : `${state.selectionScope === "group" ? "Group" : "Object"} selection active`,
+    `${state.faceSelectionScope === "group" ? "Grouped inner, outer, top, or bottom faces" : "Single-face"} selection active`,
   );
-  if (faceMode) changed("session");
-  else redraw();
+  changed("session");
+};
+selectionModeSelect.onchange = () => {
+  state.selectionScope = selectionModeSelect.value;
+  activateObjectMode();
+  redraw();
+  setStatus(
+    `${selectionModeSelect.options[selectionModeSelect.selectedIndex].text} selection active`,
+  );
 };
 updateSelectionScopeToggle();
 const textureAxesToggle = $("texture-axes-toggle");
@@ -1136,7 +1128,11 @@ function restore(data) {
       : "group";
   state.faceToolMode = data.faceToolMode || "extrude";
   state.selectionScope =
-    data.selectionScopeVersion === 1 ? data.selectionScope || "group" : "group";
+    data.selectionScopeVersion === 1
+      ? ["group", "object", "solid"].includes(data.selectionScope)
+        ? data.selectionScope
+        : "object"
+      : "object";
   state.mode = data.mode || "selection";
   state.tool = data.tool || "box";
   state.showTextureAxes = Boolean(data.showTextureAxes);
@@ -1433,7 +1429,7 @@ async function importBrowserFiles(files, options = {}) {
     setStatus(
       matching
         ? "Recovered autosave."
-        : `Opened ${loaded.name}: ${state.brushes.length} brushes · ${gridReport.offGrid}/${gridReport.total} coordinates off grid ${state.grid}${kindForVMF(documentModel) === "complete-map" ? " · complete-map editing is experimental; Save As is required" : ""}`,
+        : `Opened ${loaded.name}: ${state.brushes.length} brushes · ${gridReport.offGrid}/${gridReport.total} coordinates off grid ${state.grid}${kindForVMF(documentModel) === "complete-map" ? ` · complete-map editing is experimental${options.handle ? "" : "; Save As is required"}` : ""}`,
       !matching && gridReport.offGrid > 0,
     );
   }
@@ -1578,7 +1574,10 @@ async function updateSavedSource(text, options = {}) {
 }
 async function saveVMF({ saveAs = false } = {}) {
   const protectingCompleteMap =
-    documentKind === "complete-map" && !directSaveAllowed;
+    documentKind === "complete-map" &&
+    !directSaveAllowed &&
+    !vmfHandle &&
+    !state.vmfPath;
   if (protectingCompleteMap) saveAs = true;
   if (!directSaveAllowed && !vmfHandle && !state.vmfPath) saveAs = true;
   const savedProject = currentProject();
@@ -1619,7 +1618,7 @@ async function saveVMF({ saveAs = false } = {}) {
     state.vmfFilename = vmfFilename(result.handle.name || filename);
     directSaveAllowed = true;
     await updateSavedSource(text);
-  } else if (directSaveAllowed && vmfHandle) {
+  } else if (vmfHandle) {
     if (!(await fileSystem.write(vmfHandle, text))) return false;
     await updateSavedSource(text);
   } else {

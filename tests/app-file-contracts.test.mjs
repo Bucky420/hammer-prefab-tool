@@ -80,11 +80,11 @@ assert.match(app, /command === "save-vmf"\) runFileAction\(saveVMF\(\)\)/);
 assert.match(app, /run\(event\.shiftKey \? "save-vmf-as" : "save-vmf"\)/);
 assert.match(
   app,
-  /if \(!directSaveAllowed && !vmfHandle && !state\.vmfPath\) saveAs = true/,
+  /documentKind === "complete-map"[\s\S]*!vmfHandle[\s\S]*!state\.vmfPath/,
 );
 assert.match(
   app,
-  /else if \(directSaveAllowed && vmfHandle\)[\s\S]*fileSystem\.write\(vmfHandle, text\)/,
+  /else if \(vmfHandle\)[\s\S]*fileSystem\.write\(vmfHandle, text\)/,
 );
 assert.match(app, /downloadText\(text, filename,[\s\S]*Downloaded VMF/);
 assert.match(app, /const reparsed = parseVMFDocument\(text\)/);

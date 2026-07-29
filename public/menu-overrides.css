@@ -455,7 +455,7 @@ dialog form {
   position: absolute;
   z-index: 6;
   bottom: 10px;
-  left: 52px;
+  right: 8px;
   width: 26px;
   height: 26px;
   padding: 0;
@@ -467,7 +467,8 @@ dialog form {
 }
 
 #editor-key {
-  left: 52px;
+  right: 8px;
+  left: auto;
   bottom: 44px;
   display: grid;
   gap: 5px;
@@ -511,6 +512,20 @@ main.rail-open #editor-key {
   justify-content: flex-end;
   margin-left: auto;
   padding-right: 18px;
+}
+.selection-mode-control {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #9db3cf;
+}
+.selection-mode-control[hidden],
+.header-tools button[hidden] {
+  display: none;
+}
+.selection-mode-control select {
+  min-width: 76px;
+  padding: 3px 5px;
 }
 .header-tools button {
   display: grid;

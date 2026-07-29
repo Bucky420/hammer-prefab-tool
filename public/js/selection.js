@@ -23,6 +23,17 @@ export function applySelection(current, ids, operation = "replace") {
   });
   return next;
 }
+export function selectionKey(brush, scope) {
+  if (scope === "solid") return brush.id;
+  if (scope === "object") return brush.entityId || brush.id;
+  return brush.groupId || brush.entityId || brush.id;
+}
+export function selectionTargets(brushes, source, scope) {
+  const key = selectionKey(source, scope);
+  return brushes
+    .filter((brush) => selectionKey(brush, scope) === key)
+    .map((brush) => brush.id);
+}
 export function ringVertexIds(brushes, role) {
   return brushes.flatMap((brush) =>
     (brush.vertexRoles?.[role] || []).map((index) => `${brush.id}:v:${index}`),

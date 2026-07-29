@@ -4,6 +4,8 @@ import {
   connectedFaceIds,
   faceRole,
   selectByShape,
+  selectionKey,
+  selectionTargets,
 } from "./selection.js";
 import { roundToGrid } from "./grid.js";
 import { distanceToSegment, pointInPolygon } from "./math.js";
@@ -2994,15 +2996,11 @@ export class Viewport {
           cloneDrag = false;
         if (this.state.mode === "selection") {
           cloneDrag = event.shiftKey && this.state.brushSelection.has(brush.id);
-          const target =
-            this.state.selectionScope === "group"
-              ? this.state.brushes
-                  .filter(
-                    (item) =>
-                      (item.groupId || item.id) === (brush.groupId || brush.id),
-                  )
-                  .map((item) => item.id)
-              : [brush.id];
+          const target = selectionTargets(
+            this.state.brushes,
+            brush,
+            this.state.selectionScope,
+          );
           const operation = cloneDrag
             ? "replace"
             : this.selectionOperation(event);
@@ -3434,15 +3432,16 @@ export class Viewport {
                   this.brushIntersectsBox(brush, { minX, maxX, minY, maxY }),
                 )
               : [];
-            const groups =
-              this.state.selectionScope === "group"
-                ? new Set(hit.map((brush) => brush.groupId || brush.id))
-                : null;
-            const selected = groups
-              ? this.visibleBrushes()
-                  .filter((brush) => groups.has(brush.groupId || brush.id))
-                  .map((brush) => brush.id)
-              : hit.map((brush) => brush.id);
+            const keys = new Set(
+              hit.map((brush) =>
+                selectionKey(brush, this.state.selectionScope),
+              ),
+            );
+            const selected = this.visibleBrushes()
+              .filter((brush) =>
+                keys.has(selectionKey(brush, this.state.selectionScope)),
+              )
+              .map((brush) => brush.id);
             this.state.brushSelection = applySelection(
               this.state.brushSelection,
               selected,

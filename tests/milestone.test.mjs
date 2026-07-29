@@ -10,6 +10,7 @@ import {
   ringVertexIds,
   semanticFaceIds,
   selectByShape,
+  selectionTargets,
 } from "../public/js/selection.js";
 import { History } from "../public/js/history.js";
 import {
@@ -532,6 +533,29 @@ assert.equal(applySelection(new Set(), inner.slice(0, 2), "replace").size, 2);
 assert.equal(
   applySelection(new Set(inner), inner.slice(0, 2), "remove").size,
   30,
+);
+const selectionBrushes = [
+  { id: "world-a", groupId: "group-a" },
+  { id: "world-b", groupId: "group-a" },
+  { id: "detail-a", groupId: "group-b", entityId: "detail-1" },
+  { id: "detail-b", groupId: "group-b", entityId: "detail-1" },
+  { id: "detail-c", entityId: "detail-2" },
+  { id: "detail-d", entityId: "detail-2" },
+];
+assert.deepEqual(
+  selectionTargets(selectionBrushes, selectionBrushes[2], "group"),
+  ["detail-a", "detail-b"],
+  "Groups mode expands Hammer group ownership",
+);
+assert.deepEqual(
+  selectionTargets(selectionBrushes, selectionBrushes[4], "object"),
+  ["detail-c", "detail-d"],
+  "Objects mode selects every solid in a brush entity",
+);
+assert.deepEqual(
+  selectionTargets(selectionBrushes, selectionBrushes[2], "solid"),
+  ["detail-a"],
+  "Solids mode selects only the targeted solid",
 );
 const faceSelectionViewport = Object.create(Viewport.prototype);
 faceSelectionViewport.state = {
