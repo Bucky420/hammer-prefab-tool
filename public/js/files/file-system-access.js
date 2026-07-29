@@ -67,6 +67,20 @@ export async function writeFileHandle(handle, data, options = {}) {
     });
   let writable;
   try {
+    if (
+      typeof handle.queryPermission === "function" &&
+      typeof handle.requestPermission === "function"
+    ) {
+      const permissionOptions = { mode: "readwrite" };
+      let permission = await handle.queryPermission(permissionOptions);
+      if (permission !== "granted")
+        permission = await handle.requestPermission(permissionOptions);
+      if (permission !== "granted")
+        throw new FileSystemAccessError(
+          "Write permission was not granted for this file",
+          { code: "PERMISSION_DENIED" },
+        );
+    }
     writable = await handle.createWritable(options.writableOptions);
     await writable.write(data);
     await writable.close();
@@ -79,6 +93,7 @@ export async function writeFileHandle(handle, data, options = {}) {
         // Preserve the original write error.
       }
     }
+    if (error instanceof FileSystemAccessError) throw error;
     if (isFileSystemAbort(error)) return null;
     throw new FileSystemAccessError(
       `Writing the file failed: ${error?.message || error}`,

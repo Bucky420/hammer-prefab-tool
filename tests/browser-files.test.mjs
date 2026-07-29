@@ -138,6 +138,30 @@ const writableHandle = {
 };
 assert.equal(await writeFileHandle(writableHandle, "project"), writableHandle);
 assert.deepEqual(writes, ["project", "closed"]);
+let permissionRequests = 0;
+const permissionHandle = {
+  queryPermission: async ({ mode }) => (mode === "readwrite" ? "prompt" : "denied"),
+  requestPermission: async ({ mode }) => {
+    permissionRequests++;
+    return mode === "readwrite" ? "granted" : "denied";
+  },
+  createWritable: writableHandle.createWritable,
+};
+assert.equal(await writeFileHandle(permissionHandle, "permitted"), permissionHandle);
+assert.equal(permissionRequests, 1);
+await assert.rejects(
+  () =>
+    writeFileHandle(
+      {
+        queryPermission: async () => "prompt",
+        requestPermission: async () => "denied",
+        createWritable: writableHandle.createWritable,
+      },
+      "denied",
+    ),
+  (error) =>
+    error instanceof FileSystemAccessError && error.code === "PERMISSION_DENIED",
+);
 assert.deepEqual(
   await saveFileWithPicker(
     "saved",
