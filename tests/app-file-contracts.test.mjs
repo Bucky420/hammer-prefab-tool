@@ -99,6 +99,8 @@ assert.equal(
 );
 assert.match(app, /downloadText\(text, filename,[\s\S]*Downloaded VMF/);
 assert.match(app, /event\.key === "F5"[\s\S]*reloadWithAutosave\(\)/);
+assert.match(app, /options\.handle \|\| matching\?\.fileHandle \|\| null/);
+assert.match(app, /handle: candidate\.fileHandle \|\| null/);
 assert.match(app, /const reparsed = parseVMFDocument\(text\)/);
 assert.match(app, /documentKind === "prefab"[\s\S]*prefabVMFText\(\)/);
 assert.match(app, /data-prefab-ownership/);

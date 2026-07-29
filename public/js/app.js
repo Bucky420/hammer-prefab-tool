@@ -1436,21 +1436,23 @@ async function importBrowserFiles(files, options = {}) {
   const project = matching
     ? await autosaveStore.restoreSnapshot(matching.id)
     : freshProject;
+  const recoveredHandle = options.handle || matching?.fileHandle || null;
   const replaced = replaceDocument(project, {
     filename: loaded.name,
-    handle: options.handle,
+    handle: recoveredHandle,
     clean: !matching,
     documentKind: matching?.documentKind || kindForVMF(documentModel),
     documentSessionId: matching?.documentSessionId,
     sourceIdentity: source,
-    directSaveAllowed: kindForVMF(documentModel) === "prefab",
+    directSaveAllowed:
+      kindForVMF(documentModel) === "prefab" || Boolean(recoveredHandle),
   });
   if (replaced) {
     const gridReport = countOffGridCoordinates(state.brushes, state.grid);
     setStatus(
       matching
-        ? "Recovered autosave."
-        : `Opened ${loaded.name}: ${state.brushes.length} brushes · ${gridReport.offGrid}/${gridReport.total} coordinates off grid ${state.grid}${kindForVMF(documentModel) === "complete-map" ? ` · complete-map editing is experimental${options.handle ? "" : "; Save As is required"}` : ""}`,
+        ? `Recovered autosave${recoveredHandle ? "; direct save linked." : "; direct save unavailable."}`
+        : `Opened ${loaded.name}: ${state.brushes.length} brushes · ${gridReport.offGrid}/${gridReport.total} coordinates off grid ${state.grid}${kindForVMF(documentModel) === "complete-map" ? ` · complete-map editing is experimental${recoveredHandle ? " · direct save linked" : "; direct save unavailable"}` : recoveredHandle ? " · direct save linked" : ""}`,
       !matching && gridReport.offGrid > 0,
     );
   }
@@ -2450,7 +2452,7 @@ async function restoreStartupAutosave() {
         sourceIdentity: source,
         directSaveAllowed: kindForVMF(documentModel) === "prefab",
       });
-      setStatus("Recovered autosave.");
+      setStatus("Recovered autosave; direct save linked.");
       return true;
     } catch {
       // Permission can be unavailable until the user explicitly opens the VMF.
@@ -2468,13 +2470,16 @@ async function restoreStartupAutosave() {
     const project = await autosaveStore.restoreSnapshot(candidate.id);
     replaceDocument(project, {
       filename: candidate.source?.name || "recovered.vmf",
+      handle: candidate.fileHandle || null,
       clean: false,
       documentKind: candidate.documentKind || "prefab",
       documentSessionId: candidate.documentSessionId,
       sourceIdentity: candidate.source || null,
-      directSaveAllowed: false,
+      directSaveAllowed: Boolean(candidate.fileHandle),
     });
-    setStatus("Recovered autosave.");
+    setStatus(
+      `Recovered autosave${candidate.fileHandle ? "; direct save linked." : "; direct save unavailable."}`,
+    );
     return true;
   }
   return false;
