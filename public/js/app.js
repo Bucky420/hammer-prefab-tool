@@ -90,14 +90,8 @@ if (import.meta.hot) {
   hmrIndicator.title = "Development reload connecting";
   document.querySelector("header").append(hmrIndicator);
 }
-const requestedStorage = new URLSearchParams(location.search).get("storage");
-const embeddedLocalServer =
-  window.self !== window.top &&
-  location.hostname === "localhost" &&
-  location.port === "8787";
 const storageMode =
-  requestedStorage === "server" ||
-  (requestedStorage !== "browser" && embeddedLocalServer)
+  new URLSearchParams(location.search).get("storage") === "server"
     ? "server"
     : "browser";
 const fileSystem = createFileSystemAccessAdapter(window);
@@ -2551,4 +2545,16 @@ async function start() {
   updateDocumentStatus();
   redraw();
 }
-start().catch((error) => setStatus(error.message || String(error), true));
+start()
+  .then(() => {
+    if (
+      storageMode === "browser" &&
+      window.self !== window.top &&
+      !fileSystem.supported
+    )
+      setStatus(
+        "Embedded browser cannot directly overwrite files; open this URL in a normal Chrome, Edge, or Brave tab",
+        true,
+      );
+  })
+  .catch((error) => setStatus(error.message || String(error), true));

@@ -103,7 +103,7 @@ assert.match(app, /options\.handle \|\| matching\?\.fileHandle \|\| null/);
 assert.match(app, /handle: candidate\.fileHandle \|\| null/);
 assert.match(
   app,
-  /window\.self !== window\.top[\s\S]*location\.hostname === "localhost"[\s\S]*location\.port === "8787"/,
+  /window\.self !== window\.top[\s\S]*!fileSystem\.supported[\s\S]*Embedded browser cannot directly overwrite files/,
 );
 assert.match(
   app,
