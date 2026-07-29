@@ -3,6 +3,7 @@ import {
   applySelection,
   connectedFaceIds,
   faceRole,
+  isFuncDetailBrush,
   selectByShape,
   selectionKey,
   selectionTargets,
@@ -259,7 +260,11 @@ export class Viewport {
   }
   visibleBrushes() {
     const brushes = this.state.brushes.filter(
-      (brush) => !this.state.hiddenBrushes?.has(brush.id),
+      (brush) =>
+        !this.state.hiddenBrushes?.has(brush.id) &&
+        (isFuncDetailBrush(brush)
+          ? this.state.showFuncDetailBrushes !== false
+          : this.state.showRegularBrushes !== false),
     );
     assertBrushesGeometry(brushes, "viewport visible brushes");
     return brushes;

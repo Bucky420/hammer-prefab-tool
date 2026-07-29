@@ -7,6 +7,7 @@ import {
   applySelection,
   connectedFaceIds,
   faceRole,
+  isFuncDetailBrush,
   ringVertexIds,
   semanticFaceIds,
   selectByShape,
@@ -542,6 +543,16 @@ const selectionBrushes = [
   { id: "detail-c", entityId: "detail-2" },
   { id: "detail-d", entityId: "detail-2" },
 ];
+assert.equal(
+  isFuncDetailBrush({ entityClassname: "func_detail" }),
+  true,
+  "func_detail visibility recognizes brush entities",
+);
+assert.equal(
+  isFuncDetailBrush({ entityClassname: "func_brush" }),
+  false,
+  "non-func_detail entities remain regular brushes",
+);
 assert.deepEqual(
   selectionTargets(selectionBrushes, selectionBrushes[2], "group"),
   ["detail-a", "detail-b"],

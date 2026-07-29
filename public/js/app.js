@@ -109,6 +109,7 @@ let autosaveSnapshots = [];
 let autosaveTimer = null;
 let autosaveDebounce = null;
 let autosaveIntervalMs = 30000;
+let reloadAfterAutosave = false;
 const UPDATE_RECOVERY_KEY = "hammer-pending-update-snapshot";
 function describeUIError(error, fallbackMessage = "Unknown UI error") {
   const message = error?.message || String(error || fallbackMessage);
@@ -376,12 +377,19 @@ const railTools = document.createElement("div");
 railTools.className = "rail-tools";
 railButtons.forEach((button) => railTools.append(button));
 const selectionScopeToggle = $("selection-scope-toggle");
-const selectionModeSelect = $("selection-mode-select");
+const selectionModeButtons = $("selection-mode-buttons");
+const scopeButtons = [
+  ...selectionModeButtons.querySelectorAll("[data-selection-scope]"),
+];
 function updateSelectionScopeToggle() {
   const faceMode = state.mode === "face";
   selectionScopeToggle.hidden = !faceMode;
-  selectionModeSelect.closest("label").hidden = faceMode;
-  selectionModeSelect.value = state.selectionScope;
+  selectionModeButtons.hidden = faceMode;
+  scopeButtons.forEach((button) => {
+    const active = button.dataset.selectionScope === state.selectionScope;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
   selectionScopeToggle.dataset.scope = state.faceSelectionScope;
   selectionScopeToggle.title = `${state.faceSelectionScope === "group" ? "Grouped semantic faces" : "Single face"} selection`;
 }
@@ -395,14 +403,15 @@ selectionScopeToggle.onclick = () => {
   );
   changed("session");
 };
-selectionModeSelect.onchange = () => {
-  state.selectionScope = selectionModeSelect.value;
-  activateObjectMode();
-  redraw();
-  setStatus(
-    `${selectionModeSelect.options[selectionModeSelect.selectedIndex].text} selection active`,
-  );
-};
+scopeButtons.forEach(
+  (button) =>
+    (button.onclick = () => {
+      state.selectionScope = button.dataset.selectionScope;
+      activateObjectMode();
+      redraw();
+      setStatus(`${button.title} selection active`);
+    }),
+);
 updateSelectionScopeToggle();
 const textureAxesToggle = $("texture-axes-toggle");
 function updateTextureAxesToggle() {
@@ -972,6 +981,8 @@ function snapshot() {
     selection: [...state.selection],
     brushSelection: [...state.brushSelection],
     hiddenBrushes: [...state.hiddenBrushes],
+    showFuncDetailBrushes: state.showFuncDetailBrushes,
+    showRegularBrushes: state.showRegularBrushes,
     faceSelection: [...state.faceSelection],
     faceSelectionScope: state.faceSelectionScope,
     faceToolMode: state.faceToolMode,
@@ -1043,6 +1054,9 @@ function updateDocumentStatus() {
   const dirty = dirtyState.isDirty();
   const title = state.projectName || "Untitled";
   $("document-title").textContent = title;
+  $("footer-filename").textContent = state.vmfFilename;
+  $("footer-filename").title = state.vmfFilename;
+  $("footer-grid").textContent = `Grid: ${state.grid}`;
   $("dirty-indicator").textContent = dirty ? "Unsaved" : "Saved";
   $("dirty-indicator").dataset.dirty = String(dirty);
   $("dirty-indicator").title = dirty
@@ -1121,6 +1135,8 @@ function restore(data) {
   state.selection = new Set(data.selection || []);
   state.brushSelection = new Set(data.brushSelection || []);
   state.hiddenBrushes = new Set(data.hiddenBrushes || []);
+  state.showFuncDetailBrushes = data.showFuncDetailBrushes !== false;
+  state.showRegularBrushes = data.showRegularBrushes !== false;
   state.faceSelection = new Set(data.faceSelection || []);
   state.faceSelectionScope =
     data.selectionScopeVersion === 1
@@ -1148,6 +1164,7 @@ function restore(data) {
   view.kind = activeView;
   updateSelectionScopeToggle();
   updateTextureAxesToggle();
+  updateViewFilters();
   railButtons.forEach((item) =>
     item.classList.toggle("active", item.dataset.toolMode === state.mode),
   );
@@ -1260,6 +1277,7 @@ function setGrid(delta) {
   $("grid").value = state.grid;
   document.querySelector(".menu-note").textContent =
     `Current grid: ${state.grid}. Use [ and ] to change.`;
+  $("footer-grid").textContent = `Grid: ${state.grid}`;
   changed("document", false);
 }
 function clearVMF() {
@@ -1452,6 +1470,8 @@ async function openLocalFile() {
 }
 function syncFilenameControls() {
   localStorage.setItem("hammer-vmf-filename", state.vmfFilename);
+  $("footer-filename").textContent = state.vmfFilename;
+  $("footer-filename").title = state.vmfFilename;
 }
 function removeGroupOwnership(brush) {
   const copy = clone(brush);
@@ -1578,8 +1598,6 @@ async function saveVMF({ saveAs = false } = {}) {
     !directSaveAllowed &&
     !vmfHandle &&
     !state.vmfPath;
-  if (protectingCompleteMap) saveAs = true;
-  if (!directSaveAllowed && !vmfHandle && !state.vmfPath) saveAs = true;
   const savedProject = currentProject();
   const text = savedVMFText();
   let filename = vmfFilename(state.vmfFilename);
@@ -1802,6 +1820,11 @@ function startAutosaveTimer() {
     () => void autosaveNow("interval"),
     autosaveIntervalMs,
   );
+}
+async function reloadWithAutosave() {
+  await autosaveNow("reload", true);
+  reloadAfterAutosave = true;
+  location.reload();
 }
 /**
  * @param {ResolvedExtrusion | null} [resolved]
@@ -2062,8 +2085,25 @@ $("grid").onchange = (event) => {
   state.grid = +event.target.value;
   document.querySelector(".menu-note").textContent =
     `Current grid: ${state.grid}. Use [ and ] to change.`;
+  $("footer-grid").textContent = `Grid: ${state.grid}`;
   changed("document", false);
 };
+const showFuncDetailInput = $("show-func-detail");
+const showRegularBrushesInput = $("show-regular-brushes");
+function updateViewFilters() {
+  showFuncDetailInput.checked = state.showFuncDetailBrushes !== false;
+  showRegularBrushesInput.checked = state.showRegularBrushes !== false;
+}
+for (const input of [showFuncDetailInput, showRegularBrushesInput])
+  input.onchange = () => {
+    state.showFuncDetailBrushes = showFuncDetailInput.checked;
+    state.showRegularBrushes = showRegularBrushesInput.checked;
+    changed("session");
+    setStatus(
+      `${input === showFuncDetailInput ? "func_detail" : "Regular"} brushes ${input.checked ? "shown" : "hidden"}`,
+    );
+  };
+updateViewFilters();
 $("view-selector").onclick = () => {
   activeView =
     viewNames[(viewNames.indexOf(activeView) + 1) % viewNames.length];
@@ -2231,6 +2271,11 @@ window.addEventListener("keydown", (event) => {
     setStatus("Interaction cancelled");
     return;
   }
+  if (event.key === "F5") {
+    event.preventDefault();
+    void reloadWithAutosave();
+    return;
+  }
   if (["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName))
     return;
   const key = event.key.toLowerCase();
@@ -2293,18 +2338,16 @@ window.addEventListener("keydown", (event) => {
     state.selection.forEach((id) => selected.add(id.split(":v:")[0]));
     state.faceSelection.forEach((id) => selected.add(id.split(":f:")[0]));
     if (!selected.size)
-      return setStatus(
-        "Select objects, faces, or vertices to keep visible",
-        true,
-      );
-    state.hiddenBrushes = new Set(
-      state.brushes
-        .filter((brush) => !selected.has(brush.id))
-        .map((brush) => brush.id),
-    );
+      return setStatus("Select objects, faces, or vertices first", true);
+    const hidden = event.ctrlKey
+      ? state.brushes.filter((brush) => !selected.has(brush.id))
+      : state.brushes.filter((brush) => selected.has(brush.id));
+    hidden.forEach((brush) => state.hiddenBrushes.add(brush.id));
     changed("session");
     setStatus(
-      `Hidden ${state.hiddenBrushes.size} brushes; ${selected.size} remain visible`,
+      event.ctrlKey
+        ? `Hidden unselected brushes; ${selected.size} selected remain visible`
+        : `Hidden ${hidden.length} selected brushes`,
     );
     return;
   }
@@ -2368,6 +2411,7 @@ if (import.meta.hot) {
   import.meta.hot.on("vite:beforeFullReload", saveHmrState);
 }
 window.addEventListener("beforeunload", (event) => {
+  if (reloadAfterAutosave) return;
   if (!dirtyState.isDirty()) return;
   event.preventDefault();
   event.returnValue = "";

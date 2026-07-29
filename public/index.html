@@ -126,19 +126,41 @@
           Center World Origin <kbd>Home</kbd></button
         ><button data-command="grid-down">Smaller Grid <kbd>[</kbd></button
         ><button data-command="grid-up">Larger Grid <kbd>]</kbd></button>
+        <hr />
+        <label class="view-filter-control"
+          ><input id="show-func-detail" type="checkbox" checked /> func_detail
+          brushes</label
+        ><label class="view-filter-control"
+          ><input id="show-regular-brushes" type="checkbox" checked /> Regular
+          brushes</label
+        >
       </div>
       <span id="document-title">Untitled</span
       ><span id="dirty-indicator" title="Saved">Saved</span>
       <span id="status"></span>
       <div class="header-tools">
-        <label class="selection-mode-control" title="Hammer selection mode">
-          <span>Selection</span>
-          <select id="selection-mode-select" aria-label="Hammer selection mode">
-            <option value="group">Groups</option>
-            <option value="object">Objects</option>
-            <option value="solid">Solids</option>
-          </select>
-        </label>
+        <div
+          id="selection-mode-buttons"
+          class="selection-mode-buttons"
+          role="group"
+          aria-label="Hammer selection mode"
+        >
+          <button type="button" data-selection-scope="group" title="Groups">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="3" y="5" width="10" height="10" />
+              <rect x="11" y="9" width="10" height="10" />
+            </svg></button
+          ><button type="button" data-selection-scope="object" title="Objects">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="4" y="4" width="16" height="16" />
+              <path d="M4 12h16" />
+            </svg></button
+          ><button type="button" data-selection-scope="solid" title="Solids">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 8l8-4 8 4-8 4zM4 8v9l8 4 8-4V8M12 12v9" />
+            </svg>
+          </button>
+        </div>
         <button
           id="selection-scope-toggle"
           type="button"
@@ -254,8 +276,10 @@
       <strong>Drop one VMF file to open</strong>
     </div>
     <footer>
-      <span id="autosave-status">Autosave ready</span
+      <span id="footer-filename">prefab.vmf</span
+      ><span id="autosave-status">Autosave ready</span
       ><span id="stats">0 brushes · 0 selected vertices</span
+      ><span id="footer-grid">Grid: 16</span
       ><span id="fps">FPS: --</span>
     </footer>
     <script type="importmap" data-local-server>

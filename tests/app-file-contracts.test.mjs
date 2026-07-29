@@ -86,7 +86,14 @@ assert.match(
   app,
   /else if \(vmfHandle\)[\s\S]*fileSystem\.write\(vmfHandle, text\)/,
 );
+assert.match(app, /else if \(saveAs && fileSystem\.supported\)/);
+assert.equal(
+  app.includes("if (!directSaveAllowed && !vmfHandle && !state.vmfPath) saveAs = true"),
+  false,
+  "Save without a writable handle downloads to the current filename",
+);
 assert.match(app, /downloadText\(text, filename,[\s\S]*Downloaded VMF/);
+assert.match(app, /event\.key === "F5"[\s\S]*reloadWithAutosave\(\)/);
 assert.match(app, /const reparsed = parseVMFDocument\(text\)/);
 assert.match(app, /documentKind === "prefab"[\s\S]*prefabVMFText\(\)/);
 assert.match(app, /data-prefab-ownership/);

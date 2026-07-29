@@ -246,7 +246,7 @@ try {
       backing.dispatchEvent(new Event("change", { bubbles: true }));
     });
     await handlePage.evaluate(() =>
-      document.querySelector('[data-command="save-vmf"]').click(),
+      document.querySelector('[data-command="save-vmf-as"]').click(),
     );
     await handlePage
       .locator("#status")
@@ -255,7 +255,7 @@ try {
     assert.equal(
       await handlePage.evaluate(() => window.__fileWorkflow.savePickerCalls),
       1,
-      "saving a new prefab invokes Save As",
+      "explicit Save As invokes the picker",
     );
     const firstGroupSave = await handlePage.evaluate(
       () => window.__fileWorkflow.saveAsWrites[0],

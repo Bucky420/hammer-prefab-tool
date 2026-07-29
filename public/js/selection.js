@@ -34,6 +34,9 @@ export function selectionTargets(brushes, source, scope) {
     .filter((brush) => selectionKey(brush, scope) === key)
     .map((brush) => brush.id);
 }
+export function isFuncDetailBrush(brush) {
+  return String(brush.entityClassname || "").toLowerCase() === "func_detail";
+}
 export function ringVertexIds(brushes, role) {
   return brushes.flatMap((brush) =>
     (brush.vertexRoles?.[role] || []).map((index) => `${brush.id}:v:${index}`),

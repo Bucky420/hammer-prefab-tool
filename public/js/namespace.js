@@ -3,6 +3,8 @@ const state = {
   selection: new Set(),
   brushSelection: new Set(),
   hiddenBrushes: new Set(),
+  showFuncDetailBrushes: true,
+  showRegularBrushes: true,
   faceSelection: new Set(),
   faceSelectionScope: "group",
   faceToolMode: "extrude",

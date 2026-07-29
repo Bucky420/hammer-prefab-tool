@@ -513,19 +513,14 @@ main.rail-open #editor-key {
   margin-left: auto;
   padding-right: 18px;
 }
-.selection-mode-control {
+.selection-mode-buttons {
   display: flex;
   align-items: center;
-  gap: 5px;
-  color: #9db3cf;
+  gap: 2px;
 }
-.selection-mode-control[hidden],
+.selection-mode-buttons[hidden],
 .header-tools button[hidden] {
   display: none;
-}
-.selection-mode-control select {
-  min-width: 76px;
-  padding: 3px 5px;
 }
 .header-tools button {
   display: grid;
@@ -560,6 +555,16 @@ body > footer #stats {
   margin-left: auto;
   color: #b7c9de;
   white-space: nowrap;
+}
+#footer-filename,
+#footer-grid {
+  color: #b7c9de;
+  white-space: nowrap;
+}
+#footer-filename {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 body > footer #fps {
   color: #66dde3;
@@ -634,6 +639,13 @@ body.file-drag-active #drop-overlay {
 }
 #autosave-status {
   color: #93a8c4;
+  white-space: nowrap;
+}
+.view-filter-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 7px;
   white-space: nowrap;
 }
 
