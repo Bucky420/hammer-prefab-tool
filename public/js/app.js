@@ -11,6 +11,8 @@ import { buildStagedBrushes } from "./brush-tool.js";
 import { bindBrushPanel, createBrushPanel } from "./brush-panel.js";
 import { bindContextMenu } from "./context-menu.js";
 import { bindFacePanel, createFacePanel } from "./face-panel.js";
+import { bindFileBrowser } from "./file-browser.js";
+import { bindFileDrop } from "./file-drop.js";
 import { generateHallway } from "./hallway-generator.js";
 import { bindGridControls } from "./grid-controls.js";
 import { bindMenuBar } from "./menu-bar.js";
@@ -206,9 +208,6 @@ window.addEventListener("unhandledrejection", (event) => {
   console.error("[UI unhandled rejection]", event.reason);
   if (status) setTimeout(() => setStatus(`UI error: ${details}`, true), 0);
 });
-const browser = $("project-browser");
-const search = $("file-search");
-search.value = localStorage.getItem("hammer-vmf-search") || "";
 let activeView = state.view || "top";
 let brushPanelController = null;
 let facePanelController = null;
@@ -218,6 +217,7 @@ let selectionControls = null;
 let gridControls = null;
 let viewControls = null;
 let menuBar = null;
+let fileBrowser = null;
 const view = new Viewport(
   $("editor"),
   activeView,
@@ -389,10 +389,6 @@ function buildBrushesFromBounds(bounds) {
 document.querySelector(".brush-panel")?.remove();
 let selectionShape = "box";
 const RELOAD_STATE_KEY = "hammer-prefab-tool-hmr-state";
-let allFiles = [];
-let visibleFiles = [];
-let browserSelected = null;
-
 state.generator ||= {
   radius: 256,
   width: 64,
@@ -569,6 +565,17 @@ viewControls = bindViewControls({
 });
 menuBar = bindMenuBar({ run });
 bindContextMenu({ editor: $("editor"), run });
+fileBrowser = bindFileBrowser({
+  loadFiles: async () => (await serverFiles.listFiles("export")).files,
+  openFile: loadSelected,
+});
+bindFileDrop({
+  input: $("vmf-file-input"),
+  onFiles: (files) =>
+    runFileAction(
+      importBrowserFiles(files, { allowedKinds: [FILE_KINDS.VMF] }),
+    ),
+});
 function entityMetadata(entity) {
   const metadata = { ...entity };
   delete metadata.brushes;
@@ -1337,112 +1344,43 @@ async function saveVMF({ saveAs = false } = {}) {
   );
   return true;
 }
-const escapeHtml = (value) =>
-  String(value).replace(
-    /[&<>"]/g,
-    (character) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[character],
-  );
-function wildcard(expression) {
-  const query = expression.trim();
-  const pattern = query.includes("*") ? query : `*${query}*`;
-  return new RegExp(
-    `^${pattern
-      .split("*")
-      .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
-      .join(".*")}$`,
-    "i",
-  );
-}
-function filterFiles() {
-  const query = search.value.trim();
-  const matcher = query ? wildcard(query) : null;
-  visibleFiles = allFiles.filter((file) => !matcher || matcher.test(file.name));
-  browserSelected = null;
-  renderBrowser();
-}
-function renderBrowser() {
-  const list = $("browser-list");
-  if (!visibleFiles.length) {
-    list.innerHTML = `<p class="browser-empty">No files match this search.</p>`;
-    return;
-  }
-  list.innerHTML = visibleFiles
-    .map(
-      (file, index) =>
-        `<button type="button" data-file="${index}" class="${browserSelected?.name === file.name ? "active" : ""}"><span>${escapeHtml(file.name)}</span><small>${new Date(file.modified).toLocaleString()} · ${file.size} B</small></button>`,
-    )
-    .join("");
-  list.querySelectorAll("[data-file]").forEach((button) => {
-    button.onclick = () => {
-      browserSelected = visibleFiles[+button.dataset.file];
-      renderBrowser();
-    };
-    button.ondblclick = loadSelected;
-  });
-}
 async function openBrowser() {
-  browserSelected = null;
-  browser.querySelector("strong").textContent = "OPEN VMF";
-  $("browser-status").textContent = "Loading...";
-  browser.showModal();
-  search.focus();
-  try {
-    allFiles = (await serverFiles.listFiles("export")).files.filter((file) =>
-      file.name.toLowerCase().endsWith(".vmf"),
-    );
-    visibleFiles = allFiles;
-    filterFiles();
-    $("browser-status").textContent =
-      `${allFiles.length} VMF file${allFiles.length === 1 ? "" : "s"} · double-click to open`;
-    search.focus();
-  } catch (error) {
-    allFiles = [];
-    visibleFiles = [];
-    renderBrowser();
-    $("browser-status").textContent = error.message;
-  }
+  await fileBrowser.open();
 }
-async function loadSelected() {
-  if (!browserSelected) return;
-  try {
-    const result = await serverFiles.openVmf(browserSelected.name, "export");
-    const documentModel = parseVMFDocument(result.vmf);
-    const freshProject = projectFromVMF(documentModel, result.path);
-    const source = await createVmfSourceIdentity(null, result.vmf, {
-      access: "server",
-      name: result.path || browserSelected.name,
-      locator: `server:export:${result.path || browserSelected.name}`,
-      size: browserSelected.size,
-      modifiedAt: browserSelected.modified,
-    });
-    const matching = autosaveStore
-      ? await findMatchingAutosave(autosaveSnapshots, source, freshProject)
-      : null;
-    const project = matching
-      ? await autosaveStore.restoreSnapshot(matching.id)
-      : freshProject;
-    const kind = matching?.documentKind || kindForVMF(documentModel);
-    const replaced = replaceDocument(project, {
-      filename: result.path || browserSelected.name,
-      serverPath: result.path,
-      clean: !matching,
-      documentKind: kind,
-      documentSessionId: matching?.documentSessionId,
-      sourceIdentity: source,
-      directSaveAllowed: true,
-    });
-    if (replaced) {
-      browser.close();
-      setStatus(
-        matching
-          ? "Recovered autosave; direct server save linked."
-          : `Opened ${result.path || browserSelected.name}: ${state.brushes.length} brushes${kind === "complete-map" ? " · complete-map editing is experimental" : ""} · direct server save linked`,
-      );
-    }
-  } catch (error) {
-    $("browser-status").textContent = error.message;
-  }
+async function loadSelected(file) {
+  const result = await serverFiles.openVmf(file.name, "export");
+  const documentModel = parseVMFDocument(result.vmf);
+  const freshProject = projectFromVMF(documentModel, result.path);
+  const source = await createVmfSourceIdentity(null, result.vmf, {
+    access: "server",
+    name: result.path || file.name,
+    locator: `server:export:${result.path || file.name}`,
+    size: file.size,
+    modifiedAt: file.modified,
+  });
+  const matching = autosaveStore
+    ? await findMatchingAutosave(autosaveSnapshots, source, freshProject)
+    : null;
+  const project = matching
+    ? await autosaveStore.restoreSnapshot(matching.id)
+    : freshProject;
+  const kind = matching?.documentKind || kindForVMF(documentModel);
+  const replaced = replaceDocument(project, {
+    filename: result.path || file.name,
+    serverPath: result.path,
+    clean: !matching,
+    documentKind: kind,
+    documentSessionId: matching?.documentSessionId,
+    sourceIdentity: source,
+    directSaveAllowed: true,
+  });
+  if (replaced)
+    setStatus(
+      matching
+        ? "Recovered autosave; direct server save linked."
+        : `Opened ${result.path || file.name}: ${state.brushes.length} brushes${kind === "complete-map" ? " · complete-map editing is experimental" : ""} · direct server save linked`,
+    );
+  return replaced;
 }
 function renderAutosaveState(message, error = false) {
   const element = $("autosave-status");
@@ -1783,61 +1721,9 @@ function runFileAction(action) {
   );
 }
 
-const handleVmfInput = (event) => {
-  const files = Array.from(event.target.files || []);
-  event.target.value = "";
-  if (files.length)
-    runFileAction(
-      importBrowserFiles(files, { allowedKinds: [FILE_KINDS.VMF] }),
-    );
-};
-$("vmf-file-input").oninput = handleVmfInput;
-$("vmf-file-input").onchange = handleVmfInput;
-let dragDepth = 0;
-function supportedDrag(event) {
-  const items = Array.from(event.dataTransfer?.items || []);
-  return items.length === 1 && items[0].kind === "file";
-}
-window.addEventListener("dragenter", (event) => {
-  event.preventDefault();
-  if (!supportedDrag(event)) return;
-  dragDepth++;
-  document.body.classList.add("file-drag-active");
-});
-window.addEventListener("dragover", (event) => {
-  event.preventDefault();
-  if (event.dataTransfer)
-    event.dataTransfer.dropEffect = supportedDrag(event) ? "copy" : "none";
-});
-window.addEventListener("dragleave", (event) => {
-  event.preventDefault();
-  dragDepth = Math.max(0, dragDepth - 1);
-  if (!dragDepth) document.body.classList.remove("file-drag-active");
-});
-window.addEventListener("drop", (event) => {
-  event.preventDefault();
-  dragDepth = 0;
-  document.body.classList.remove("file-drag-active");
-  runFileAction(
-    importBrowserFiles(event.dataTransfer?.files, {
-      allowedKinds: [FILE_KINDS.VMF],
-    }),
-  );
-});
-search.oninput = () => {
-  localStorage.setItem("hammer-vmf-search", search.value);
-  filterFiles();
-};
-search.onkeydown = (event) => {
-  event.stopPropagation();
-  if (event.key === "Enter" && browserSelected) {
-    event.preventDefault();
-    loadSelected();
-  }
-};
 window.addEventListener("keydown", (event) => {
-  if (browser.open && event.key === "Escape") {
-    browser.close();
+  if (fileBrowser.isOpen() && event.key === "Escape") {
+    fileBrowser.close();
     return;
   }
   if (event.key === "Escape" && menuBar.closeForEscape()) return;

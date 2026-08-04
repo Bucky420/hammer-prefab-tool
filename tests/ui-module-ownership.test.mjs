@@ -12,6 +12,8 @@ for (const [file, pattern] of [
   ["view-controls.js", /view-selector/],
   ["menu-bar.js", /data-menu/],
   ["context-menu.js", /contextmenu/],
+  ["file-browser.js", /browser-list/],
+  ["file-drop.js", /dragenter/],
 ])
   assert.match(source(file), pattern, `${file} owns its UI behavior`);
 
@@ -22,6 +24,8 @@ for (const pattern of [
   /\$\("view-selector"\)/,
   /querySelectorAll\("\[data-menu\]"\)/,
   /addEventListener\("contextmenu"/,
+  /browser-list|file-search/,
+  /addEventListener\("dragenter"/,
 ])
   assert.doesNotMatch(app, pattern, `app composition excludes ${pattern}`);
 
