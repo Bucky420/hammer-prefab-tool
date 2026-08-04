@@ -10,6 +10,23 @@ export function createBrushPanel(grid) {
 
 export function bindBrushPanel({ panel, state, view }) {
   let brushDepth = 64;
+  const segmentLimits = {
+      block: 128,
+      arch: 128,
+      cylinder: 32,
+      sphere: 16,
+      torus: 128,
+    },
+    segmentDefaults = {
+      block: 32,
+      arch: 32,
+      cylinder: 32,
+      sphere: 8,
+      torus: 24,
+    };
+  state.generator.segmentCounts ||= {};
+  let activeShape = state.generator.shape || "block";
+  state.generator.segmentCounts[activeShape] ??= state.generator.segments;
   const shapeSelect = panel.querySelector("[data-shape]"),
     footer = panel.querySelector(".prefab-settings"),
     squareInput = panel.querySelector("[data-square]"),
@@ -77,6 +94,12 @@ export function bindBrushPanel({ panel, state, view }) {
 
   const updateShape = () => {
     const shape = shapeSelect.value;
+    if (shape !== activeShape) {
+      state.generator.segmentCounts[activeShape] = state.generator.segments;
+      state.generator.segments =
+        state.generator.segmentCounts[shape] ?? segmentDefaults[shape];
+      activeShape = shape;
+    }
     state.generator.shape = shape;
     const visibleSettings = {
       block: ["height"],
@@ -97,12 +120,12 @@ export function bindBrushPanel({ panel, state, view }) {
       shape === "arch" ? "Wall width " : "Width ";
     widthInput.min = shape === "arch" ? 2 : 1;
     sidesInput.closest("label").firstChild.textContent = "Sides ";
-    sidesInput.max =
-      { cylinder: 32, sphere: 16, arch: 128, torus: 128 }[shape] || 128;
+    sidesInput.max = segmentLimits[shape];
     state.generator.segments = Math.min(
       Number(sidesInput.max),
       Math.max(3, Math.floor(state.generator.segments)),
     );
+    state.generator.segmentCounts[shape] = state.generator.segments;
     sidesInput.value = String(state.generator.segments);
     startAngleLabel.hidden = shape !== "arch";
     squareInput.closest("label").hidden = shape !== "block";
@@ -140,6 +163,8 @@ export function bindBrushPanel({ panel, state, view }) {
       if (input.dataset.setting === "depth") brushDepth = value;
       if (input.dataset.setting in state.generator)
         state.generator[input.dataset.setting] = value;
+      if (input.dataset.setting === "segments")
+        state.generator.segmentCounts[activeShape] = value;
       input.value = String(value);
       if (
         view.creationBox &&

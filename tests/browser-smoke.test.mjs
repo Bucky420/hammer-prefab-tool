@@ -329,7 +329,18 @@ try {
       waitUntil: "networkidle",
     });
     await primitivePage.locator('[data-tool-mode="brush"]').click();
+    await primitivePage.locator("[data-shape]").selectOption("sphere");
+    assert.equal(
+      await primitivePage.locator('[data-setting="segments"]').inputValue(),
+      "8",
+      "Sphere keeps its own subdivision count",
+    );
     await primitivePage.locator("[data-shape]").selectOption("cylinder");
+    assert.equal(
+      await primitivePage.locator('[data-setting="segments"]').inputValue(),
+      "32",
+      "Cylinder restores its independent side count after Sphere",
+    );
     assert.equal(
       await primitivePage.locator("[data-generate]").count(),
       0,
