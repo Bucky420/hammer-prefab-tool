@@ -249,7 +249,10 @@ export function applyStagedBrushHandle({
   } else if (handle.type === "shape-thickness") {
     const outerRadius =
         Math.abs(handle.end[horizontal] - handle.start[horizontal]) / 2,
-      innerRadius = Math.abs(current[horizontal] - center[horizontal]);
+      innerRadius = Math.hypot(
+        current[horizontal] - center[horizontal],
+        current[vertical] - center[vertical],
+      );
     nextSettings.width = Math.max(
       grid,
       Math.min(
@@ -270,8 +273,14 @@ export function applyStagedBrushHandle({
           180) /
         Math.PI,
       startAngle = Number(settings.startAngle) || 0,
-      arc = ((angle - startAngle) % 360 + 360) % 360;
-    nextSettings.arc = Math.max(1, Math.round(arc || 360));
+      rawArc = ((angle - startAngle) % 360 + 360) % 360;
+    let arc = Math.max(1, Math.round(rawArc || 360));
+    if (rawArc <= 5 || rawArc >= 355) arc = 360;
+    else {
+      const snapped = Math.round(rawArc / 45) * 45;
+      if (Math.abs(rawArc - snapped) <= 5) arc = snapped;
+    }
+    nextSettings.arc = arc;
   }
   return { bounds: nextBounds, settings: nextSettings };
 }

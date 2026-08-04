@@ -403,6 +403,65 @@ try {
     assert.deepEqual(primitiveErrors, []);
     await primitivePage.close();
 
+    const archPage = await browser.newPage();
+    const archErrors = [];
+    archPage.on("pageerror", (error) => archErrors.push(error));
+    await archPage.goto(`http://127.0.0.1:${port}${prefix}`, {
+      waitUntil: "networkidle",
+    });
+    await archPage.locator('[data-tool-mode="brush"]').click();
+    await archPage.locator("[data-shape]").selectOption("arch");
+    const archBounds = await archPage.locator("#editor").boundingBox();
+    assert.ok(archBounds);
+    const archCenter = {
+      x: archBounds.x + archBounds.width / 2,
+      y: archBounds.y + archBounds.height / 2,
+    };
+    await archPage.mouse.move(archCenter.x - 192, archCenter.y - 192);
+    await archPage.mouse.down();
+    await archPage.mouse.move(archCenter.x + 192, archCenter.y + 192);
+    await archPage.mouse.up();
+    await archPage.mouse.move(archCenter.x + 128, archCenter.y);
+    await archPage.mouse.down();
+    await archPage.mouse.move(
+      archCenter.x + Math.SQRT1_2 * 96,
+      archCenter.y - Math.SQRT1_2 * 96,
+    );
+    await archPage.mouse.up();
+    assert.equal(
+      await archPage.locator('[data-setting="width"]').inputValue(),
+      "96",
+      "pink Thickness handle responds to radial movement",
+    );
+    await archPage.mouse.move(archCenter.x - 192, archCenter.y);
+    await archPage.mouse.down();
+    const nearNinety = (87 * Math.PI) / 180;
+    await archPage.mouse.move(
+      archCenter.x + Math.cos(nearNinety) * 192,
+      archCenter.y - Math.sin(nearNinety) * 192,
+    );
+    await archPage.mouse.up();
+    assert.equal(
+      await archPage.locator('[data-setting="arc"]').inputValue(),
+      "90",
+      "Arc handle magnetically snaps near 90 degrees",
+    );
+    await archPage.mouse.move(archCenter.x, archCenter.y - 192);
+    await archPage.mouse.down();
+    const nearFullCircle = (357 * Math.PI) / 180;
+    await archPage.mouse.move(
+      archCenter.x + Math.cos(nearFullCircle) * 192,
+      archCenter.y - Math.sin(nearFullCircle) * 192,
+    );
+    await archPage.mouse.up();
+    assert.equal(
+      await archPage.locator('[data-setting="arc"]').inputValue(),
+      "360",
+      "Arc handle snaps to its full-circle endpoint",
+    );
+    assert.deepEqual(archErrors, []);
+    await archPage.close();
+
     const closedPathPage = await browser.newPage();
     const closedPathErrors = [];
     closedPathPage.on("pageerror", (error) => closedPathErrors.push(error));

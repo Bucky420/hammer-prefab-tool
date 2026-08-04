@@ -220,10 +220,14 @@ const thickerArch = applyStagedBrushHandle({
   bounds: stagedBounds,
   settings: stagedSettings,
   handle: archHandles.find((handle) => handle.type === "shape-thickness"),
-  current: { x: 32, z: 0 },
+  current: { x: Math.SQRT1_2 * 32, z: Math.SQRT1_2 * 32 },
   grid: 16,
 });
-assert.equal(thickerArch.settings.width, 96, "thickness handle updates wall width");
+assert.equal(
+  thickerArch.settings.width,
+  96,
+  "thickness handle updates wall width from radial pointer movement",
+);
 const quarterArch = applyStagedBrushHandle({
   bounds: stagedBounds,
   settings: stagedSettings,
@@ -232,6 +236,25 @@ const quarterArch = applyStagedBrushHandle({
   grid: 16,
 });
 assert.equal(quarterArch.settings.arc, 90, "arc handle updates Arch fullness");
+for (const [degrees, expected] of [
+  [43, 45],
+  [87, 90],
+  [357, 360],
+]) {
+  const radians = (degrees * Math.PI) / 180,
+    snappedArch = applyStagedBrushHandle({
+      bounds: stagedBounds,
+      settings: stagedSettings,
+      handle: archHandles.find((handle) => handle.type === "shape-arc"),
+      current: { x: Math.cos(radians) * 128, z: Math.sin(radians) * 128 },
+      grid: 16,
+    });
+  assert.equal(
+    snappedArch.settings.arc,
+    expected,
+    `Arch arc snaps ${degrees} degrees to ${expected}`,
+  );
+}
 assert.equal(
   validateAll(ring).length,
   0,
