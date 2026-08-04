@@ -3959,6 +3959,7 @@ export class Viewport {
         const [horizontal, vertical] = this.axes();
         const point = this.pathPoints[this.drag.index];
         if (this.drag.index === 0 && this.pathSourceAttachment) return;
+        delete point.routeGenerated;
         if (
           this.snapMovedPathEnd(this.drag.index, {
             x: current[horizontal],
@@ -4217,7 +4218,18 @@ export class Viewport {
     this.canvas.addEventListener("pointerup", () => {
       if (!this.drag) return;
       if (this.drag.type.startsWith("path-")) {
+        const pathDrag = this.drag;
         this.drag = null;
+        if (
+          ["path-node", "path-move"].includes(pathDrag.type) &&
+          this.state.pathSettings?.avoidShapes !== false &&
+          !this.pathModel.closed &&
+          !this.reroutePathAroundShapes()
+        ) {
+          this.pathPoints = pathDrag.originalPath;
+          this.pathModel.nodes = this.pathPoints;
+          this.refreshPathPreview();
+        }
         this.onChange("path-preview");
         this.requestDraw();
         return;
