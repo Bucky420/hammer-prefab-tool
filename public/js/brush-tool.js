@@ -119,6 +119,8 @@ export function buildStagedBrushes({
       brushes: placeLocalBrushes(
         generateCylinder({
           radius: footprintRadius,
+          radiusX: width / 2,
+          radiusY: height / 2,
           height: depthSize,
           segments: settings.segments,
           grid,

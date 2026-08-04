@@ -39,48 +39,49 @@ function outward(face, vertices) {
 let nextId = 60000;
 export function generateCylinder({
   radius = 128,
+  radiusX = radius,
+  radiusY = radius,
   height = 128,
   segments = 16,
   addHeight = 0,
   grid = 16,
 } = {}) {
-  const brushes = [],
-    count = Math.max(3, Math.floor(segments)),
+  const count = Math.max(3, Math.min(32, Math.floor(segments))),
     z0 = snap(addHeight, grid),
-    z1 = snap(addHeight + height, grid);
-  for (let index = 0; index < count; index++) {
-    const start = polar(radius, (index * 360) / count),
-      end = polar(radius, ((index + 1) * 360) / count);
-    const vertices = [
-      { x: 0, y: 0, z: z0 },
-      { x: snap(start.x, grid), y: snap(start.y, grid), z: z0 },
-      { x: snap(end.x, grid), y: snap(end.y, grid), z: z0 },
-      { x: 0, y: 0, z: z1 },
-      { x: snap(start.x, grid), y: snap(start.y, grid), z: z1 },
-      { x: snap(end.x, grid), y: snap(end.y, grid), z: z1 },
-    ];
-    const faces = [
-      [0, 2, 1],
-      [3, 4, 5],
-      [1, 2, 5, 4],
-      [0, 1, 4, 3],
-      [2, 0, 3, 5],
-    ].map((face) => outward(face, vertices));
-    brushes.push({
+    z1 = snap(addHeight + height, grid),
+    points = Array.from({ length: count }, (_, index) => {
+      const angle = (index * Math.PI * 2) / count;
+      return {
+        x: Math.round(Math.sin(angle) * radiusX),
+        y: Math.round(Math.cos(angle) * radiusY),
+      };
+    }),
+    vertices = [
+      ...points.map((point) => ({ ...point, z: z0 })),
+      ...points.map((point) => ({ ...point, z: z1 })),
+    ],
+    bottom = Array.from({ length: count }, (_, index) => index),
+    top = Array.from({ length: count }, (_, index) => count + index),
+    sides = Array.from({ length: count }, (_, index) => {
+      const next = (index + 1) % count;
+      return [index, next, count + next, count + index];
+    }),
+    faces = [bottom, top, ...sides].map((face) => outward(face, vertices));
+  return [
+    {
       id: `cylinder-${nextId++}`,
       material: "dev/dev_measurewall01a",
       vertices,
       faces,
       generator: {
         type: "cylinder",
-        segment: index,
         segments: count,
-        radius,
+        radiusX,
+        radiusY,
         height,
       },
-    });
-  }
-  return brushes;
+    },
+  ];
 }
 export function generateSphere({
   radius = 128,

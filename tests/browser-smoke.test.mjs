@@ -380,14 +380,14 @@ try {
     await primitivePage.keyboard.press("Enter");
     await primitivePage
       .locator("#status")
-      .filter({ hasText: "Cylinder created: 32 snapped brush segments" })
+      .filter({ hasText: "Cylinder created: 1 brush solid" })
       .waitFor();
     await primitivePage.evaluate(() =>
       document.querySelector('[data-command="validate"]').click(),
     );
     await primitivePage
       .locator("#status")
-      .filter({ hasText: "Validated 32 brush solids" })
+      .filter({ hasText: "Validated 1 brush solids" })
       .waitFor();
     assert.deepEqual(primitiveErrors, []);
     await primitivePage.close();

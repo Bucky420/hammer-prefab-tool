@@ -77,6 +77,34 @@ for (const [name, brushes] of [
     `${name} generator must create valid convex brushes`,
   );
 }
+const sdkCylinder = generateCylinder({
+  radius: 64,
+  height: 64,
+  segments: 32,
+  grid: 16,
+});
+assert.equal(
+  sdkCylinder.length,
+  1,
+  "Source 2017 Cylinder is one convex solid, not radial wedge brushes",
+);
+assert.equal(sdkCylinder[0].faces.length, 34, "Cylinder has two caps and 32 sides");
+assert.equal(
+  new Set(
+    sdkCylinder[0].vertices
+      .slice(0, 32)
+      .map((vertex) => `${vertex.x},${vertex.y}`),
+  ).size,
+  32,
+  "small 32-side Cylinder keeps every V_rint perimeter point",
+);
+assert.ok(
+  sdkCylinder[0].vertices.every(
+    (vertex) => Number.isInteger(vertex.x) && Number.isInteger(vertex.y),
+  ),
+  "Cylinder perimeter follows Source 2017 integer rounding",
+);
+assert.equal(validateAll(sdkCylinder).length, 0, "small SDK Cylinder is valid");
 const stagedBounds = {
     start: { x: -128, z: -128 },
     end: { x: 128, z: 128 },

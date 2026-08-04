@@ -97,7 +97,13 @@ export function bindBrushPanel({ panel, state, view }) {
       shape === "arch" ? "Wall width " : "Width ";
     widthInput.min = shape === "arch" ? 2 : 1;
     sidesInput.closest("label").firstChild.textContent = "Sides ";
-    sidesInput.max = shape === "arch" ? 2048 : 128;
+    sidesInput.max =
+      { cylinder: 32, sphere: 16, arch: 128, torus: 128 }[shape] || 128;
+    state.generator.segments = Math.min(
+      Number(sidesInput.max),
+      Math.max(3, Math.floor(state.generator.segments)),
+    );
+    sidesInput.value = String(state.generator.segments);
     startAngleLabel.hidden = shape !== "arch";
     squareInput.closest("label").hidden = shape !== "block";
     const elevationLabel = elevationInput.closest("label");

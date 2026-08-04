@@ -1385,7 +1385,9 @@ function add(brushes, label, selectCreated = false) {
     activateObjectMode();
   }
   changed();
-  setStatus(`${label}: ${brushes.length} snapped brush segments`);
+  setStatus(
+    `${label}: ${brushes.length} brush solid${brushes.length === 1 ? "" : "s"}`,
+  );
 }
 function setGrid(delta) {
   const index = Math.max(
