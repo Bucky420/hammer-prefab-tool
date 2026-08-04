@@ -102,6 +102,7 @@ export class Viewport {
     onPathCommit = () => {},
     onPathSource = () => null,
     onPathEndSnap = () => null,
+    onPathRoute = () => ({ points: [], obstacles: [], errors: [] }),
   ) {
     this.canvas = canvas;
     this.canvas.tabIndex = 0;
@@ -115,6 +116,7 @@ export class Viewport {
     this.onPathCommit = onPathCommit;
     this.onPathSource = onPathSource;
     this.onPathEndSnap = onPathEndSnap;
+    this.onPathRoute = onPathRoute;
     this.ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
     this.rect = canvas.getBoundingClientRect();
     this.scale = 1;
@@ -386,6 +388,73 @@ export class Viewport {
       delete this.pathPoints[this.selectedPathNode].tangentOut;
     }
     this.refreshPathPreview();
+    return true;
+  }
+  routePathPoints(start, end, outsideWidth, height, excludeBrushIds = []) {
+    if (this.state.pathSettings?.avoidShapes === false)
+      return { points: [start, end], obstacles: [], errors: [] };
+    return this.onPathRoute({
+      start,
+      end,
+      outsideWidth,
+      height,
+      floorZ: start.z,
+      excludeBrushIds,
+    });
+  }
+  appendRoutedPathNodes(startNode, endNode, excludeBrushIds = []) {
+    const currentBrushIds = this.state.brushes
+      .filter((brush) => brush.assemblyId === this.pathAssemblyId)
+      .map((brush) => brush.id);
+    const routed = this.routePathPoints(
+      startNode,
+      endNode,
+      Math.max(startNode.width, endNode.width),
+      Math.max(startNode.height, endNode.height),
+      [...new Set([...excludeBrushIds, ...currentBrushIds])],
+    );
+    if (routed.errors?.length || routed.points.length < 2) {
+      this.onChange(
+        `path-route-invalid:${routed.errors?.[0] || "No clear route exists"}`,
+      );
+      return false;
+    }
+    const lengths = [0];
+    for (let index = 1; index < routed.points.length; index++)
+      lengths.push(
+        lengths[index - 1] +
+          Math.hypot(
+            routed.points[index].x - routed.points[index - 1].x,
+            routed.points[index].y - routed.points[index - 1].y,
+          ),
+      );
+    const total = lengths.at(-1) || 1;
+    const routedAroundShape = routed.points.length > 2;
+    for (let index = 1; index < routed.points.length; index++) {
+      const amount = lengths[index] / total;
+      const final = index === routed.points.length - 1;
+      this.pathPoints.push(
+        final
+          ? { ...endNode, ...routed.points[index] }
+          : {
+              ...routed.points[index],
+              z: startNode.z + (endNode.z - startNode.z) * amount,
+              width:
+                startNode.width + (endNode.width - startNode.width) * amount,
+              height:
+                startNode.height +
+                (endNode.height - startNode.height) * amount,
+              tangentMode: "corner",
+              routeGenerated: true,
+            },
+      );
+      this.pathModel.segmentModes.push(
+        routedAroundShape
+          ? "straight"
+          : this.state.pathSettings?.segmentMode || "spline",
+      );
+    }
+    this.pathModel.nodes = this.pathPoints;
     return true;
   }
   pathNodeAt(x, y) {
@@ -3392,31 +3461,37 @@ export class Viewport {
             blendLength:
               Number(this.state.pathSettings?.blendLength) || distance,
           };
-          this.pathPoints.push(
-            {
-              ...source.center,
-              width: source.outsideWidth,
-              height: defaultHeight,
-              tangentMode: "smooth",
-              tangentOut: {
-                x: source.direction.x * distance,
-                y: source.direction.y * distance,
-                z: sourceSlope * distance,
-              },
+          const startNode = {
+            ...source.center,
+            width: source.outsideWidth,
+            height: defaultHeight,
+            tangentMode: "smooth",
+            tangentOut: {
+              x: source.direction.x * distance,
+              y: source.direction.y * distance,
+              z: sourceSlope * distance,
             },
-            {
-              ...snapped,
-              z: roundToGrid(elevationAt(snapped), this.state.grid),
-              width: source.outsideWidth,
-              height: defaultHeight,
-              tangentMode: "auto",
-            },
-          );
-          this.pathModel.nodes = this.pathPoints;
-          this.pathModel.segmentModes.push(
-            this.state.pathSettings?.segmentMode || "spline",
-          );
-          this.selectedPathNode = 1;
+          };
+          const endNode = {
+            ...snapped,
+            z: roundToGrid(elevationAt(snapped), this.state.grid),
+            width: source.outsideWidth,
+            height: defaultHeight,
+            tangentMode: "auto",
+          };
+          this.pathPoints.push(startNode);
+          if (
+            !this.appendRoutedPathNodes(
+              startNode,
+              endNode,
+              source.sourceBrushIds,
+            )
+          ) {
+            this.pathPoints.pop();
+            this.pathSourceAttachment = null;
+            return;
+          }
+          this.selectedPathNode = this.pathPoints.length - 1;
           this.onChange("path-source-acquired");
         } else {
           let attachment = null;
@@ -3449,13 +3524,12 @@ export class Viewport {
                 target.floorPlane.normal.y * endDirection.y
               ) / target.floorPlane.normal.z
             : 0;
-          this.pathPoints.push({
+          const endNode = {
             x: target?.center?.x ?? snapped.x,
             y: target?.center?.y ?? snapped.y,
             z: roundToGrid(
               target?.elevation ??
-                Number(this.state.pathSettings?.baseElevation) ??
-                0,
+                (Number(this.state.pathSettings?.baseElevation) || 0),
               this.state.grid,
             ),
             width: target?.outsideWidth || defaultWidth,
@@ -3470,12 +3544,19 @@ export class Viewport {
                   },
                 }
               : {}),
-          });
-          this.pathModel.nodes = this.pathPoints;
-          if (this.pathPoints.length > 1)
-            this.pathModel.segmentModes.push(
-              this.state.pathSettings?.segmentMode || "spline",
-            );
+          };
+          if (previous) {
+            if (
+              !this.appendRoutedPathNodes(previous, endNode, [
+                ...this.pathSourceBrushIds,
+                ...(target?.sourceBrushIds || []),
+              ])
+            )
+              return;
+          } else {
+            this.pathPoints.push(endNode);
+            this.pathModel.nodes = this.pathPoints;
+          }
           this.pathEndAttachment = target
             ? {
                 ...structuredClone(target),

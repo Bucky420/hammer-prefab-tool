@@ -494,7 +494,15 @@ function generateSampledHallway(options, nestedSettings) {
   if (typeof owner !== "string" || !owner) {
     return { brushes: [], errors: ["assemblyId must be a non-empty string"], path, stations };
   }
-  const canonicalSettings = { ...values, grid, materials };
+  const canonicalSettings = {
+    ...values,
+    grid,
+    materials,
+    avoidShapes: options.avoidShapes ?? nestedSettings.avoidShapes ?? true,
+    routeMargin: Number(
+      options.routeMargin ?? nestedSettings.routeMargin ?? 32,
+    ),
+  };
   const brushes = [];
   const addTriangle = (role, points, base, lowerOffsets, upperOffsets, material, segment) => {
     brushes.push(
@@ -843,7 +851,15 @@ export function generateHallway(options = {}) {
       stations: cloneMetadata(path),
     };
   }
-  const canonicalSettings = { ...values, grid, materials };
+  const canonicalSettings = {
+    ...values,
+    grid,
+    materials,
+    avoidShapes: options.avoidShapes ?? nestedSettings.avoidShapes ?? true,
+    routeMargin: Number(
+      options.routeMargin ?? nestedSettings.routeMargin ?? 32,
+    ),
+  };
   const halfWidth = values.interiorWidth / 2;
   const outerWidth = halfWidth + values.wallThickness;
   const brushes = [];

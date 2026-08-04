@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { box } from "../public/js/geometry-model.js";
+import { generateRing } from "../public/js/ring-generator.js";
+import { generateHallway } from "../public/js/hallway-generator.js";
 import {
   pathClearsObstacles,
   routePathAroundBrushes,
@@ -146,6 +148,55 @@ const route = (overrides = {}) =>
   const first = route({ brushes, outsideWidth: 8, margin: 2 });
   const second = route({ brushes: brushes.slice().reverse(), outsideWidth: 8, margin: 2 });
   assert.deepEqual(second, first);
+}
+
+{
+  // failtest4.vmf places this 32-sided wall ring beside the large floor ring.
+  const wallRing = generateRing({
+    radius: 349,
+    width: 70,
+    height: 128,
+    segments: 32,
+    grid: 1,
+  });
+  wallRing.forEach((brush) => {
+    brush.vertices.forEach((vertex) => {
+      vertex.x += 2432;
+    });
+  });
+  const result = route({
+    start: point(1536, 0),
+    end: point(3200, 0),
+    brushes: wallRing,
+    outsideWidth: 160,
+    margin: 32,
+    height: 128,
+  });
+  assert.deepEqual(result.errors, []);
+  assert.ok(result.points.length > 4, "failtest4 route bends around the ring");
+  assert.ok(
+    Math.max(...result.points.map(({ y }) => Math.abs(y))) > 500,
+    "failtest4 route includes the configured hallway clearance and margin",
+  );
+  assert.equal(pathClearsObstacles(result.points, result.obstacles), true);
+  const hallway = generateHallway({
+    path: {
+      nodes: result.points.map((routePoint) => ({
+        ...routePoint,
+        z: 0,
+        width: 160,
+        height: 128,
+        tangentMode: "corner",
+      })),
+      segmentModes: Array(result.points.length - 1).fill("straight"),
+    },
+    wallThickness: 16,
+    floorThickness: 16,
+    ceilingThickness: 16,
+    grid: 1,
+  });
+  assert.deepEqual(hallway.errors, []);
+  assert.ok(hallway.brushes.length > 0);
 }
 
 {

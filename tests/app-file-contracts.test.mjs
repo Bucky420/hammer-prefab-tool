@@ -93,7 +93,9 @@ assert.match(
 );
 assert.match(app, /else if \(saveAs && fileSystem\.supported\)/);
 assert.equal(
-  app.includes("if (!directSaveAllowed && !vmfHandle && !state.vmfPath) saveAs = true"),
+  app.includes(
+    "if (!directSaveAllowed && !vmfHandle && !state.vmfPath) saveAs = true",
+  ),
   false,
   "Save without a writable handle downloads to the current filename",
 );
@@ -102,12 +104,13 @@ assert.match(app, /event\.key === "F5"[\s\S]*reloadWithAutosave\(\)/);
 assert.match(app, /options\.handle \|\| matching\?\.fileHandle \|\| null/);
 assert.match(app, /handle: candidate\.fileHandle \|\| null/);
 assert.match(app, /navigator\.brave\?\.isBrave/);
-assert.match(app, /window\.self !== window\.top[\s\S]*fileSystem\.supported/);
 assert.match(app, /brave:\/\/flags\/#file-system-access-api/);
+assert.match(app, /window\.self !== window\.top[\s\S]*fileSystem\.supported/);
 assert.match(html, /id="file-access-warning"[\s\S]*id="file-access-help"/);
+assert.match(app, /serverPath: result\.path[\s\S]*directSaveAllowed: true/);
 assert.match(
   app,
-  /serverPath: result\.path[\s\S]*directSaveAllowed: true/,
+  /function saveHmrState\(\)\s*\{\s*\/\/ Vite's debug full reload[\s\S]*reloadAfterAutosave = true;/,
 );
 assert.match(app, /const reparsed = parseVMFDocument\(text\)/);
 assert.match(app, /documentKind === "prefab"[\s\S]*prefabVMFText\(\)/);

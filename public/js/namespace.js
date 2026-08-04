@@ -23,6 +23,8 @@ const state = {
     snapEnds: true,
     flare: 0,
     blendLength: 128,
+    avoidShapes: true,
+    routeMargin: 32,
     materials: {
       floor: "dev/dev_measuregeneric01b",
       wall: "dev/dev_measurewall01a",

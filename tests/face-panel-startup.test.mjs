@@ -2,16 +2,33 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { bindExtrusionModeButtons } from "../public/js/extrusion-policy.js";
 
-const appSource = readFileSync(new URL("../public/js/app.js", import.meta.url), "utf8");
-const markupStart = appSource.indexOf("facePanel.innerHTML =");
-const bindingStart = appSource.indexOf("bindExtrusionModeButtons(facePanel");
+const appSource = readFileSync(
+  new URL("../public/js/app.js", import.meta.url),
+  "utf8",
+);
+const panelSource = readFileSync(
+  new URL("../public/js/face-panel.js", import.meta.url),
+  "utf8",
+);
+const markupStart = panelSource.indexOf("panel.innerHTML =");
+const bindingStart = panelSource.indexOf("bindExtrusionModeButtons(panel");
 const restoreStart = appSource.indexOf("function restore(data)");
 const restoreEnd = appSource.indexOf("function saveHmrState", restoreStart);
-assert.ok(markupStart >= 0, "face panel markup is initialized");
+assert.ok(markupStart >= 0, "face panel markup is initialized in its module");
 assert.ok(bindingStart > markupStart, "face panel controls bind after markup");
-assert.ok(restoreStart >= 0 && restoreEnd > restoreStart, "restore function exists");
 assert.equal(
-  appSource.slice(restoreStart, restoreEnd).includes("state.faceExtrusionMode ="),
+  appSource.includes("<strong>FACE TOOLS</strong>"),
+  false,
+  "app composition does not own face panel markup",
+);
+assert.ok(
+  restoreStart >= 0 && restoreEnd > restoreStart,
+  "restore function exists",
+);
+assert.equal(
+  appSource
+    .slice(restoreStart, restoreEnd)
+    .includes("state.faceExtrusionMode ="),
   false,
   "geometry restore does not change the current extrusion mode",
 );
@@ -24,7 +41,7 @@ for (const selector of [
   'data-extrude-mode=\"parallel\"',
   'data-extrude-mode=\"snap\"',
 ])
-  assert.ok(appSource.includes(selector), `face panel contains ${selector}`);
+  assert.ok(panelSource.includes(selector), `face panel contains ${selector}`);
 
 function makeButton(mode) {
   const listeners = new Map();
@@ -53,10 +70,7 @@ function makeButton(mode) {
   return button;
 }
 
-const buttons = [
-  makeButton("parallel"),
-  makeButton("snap"),
-];
+const buttons = [makeButton("parallel"), makeButton("snap")];
 const state = { faceExtrusionMode: "straight" };
 bindExtrusionModeButtons({ querySelectorAll: () => buttons }, state);
 for (const button of buttons) {

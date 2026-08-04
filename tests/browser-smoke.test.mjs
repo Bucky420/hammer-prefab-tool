@@ -181,6 +181,7 @@ try {
       .waitFor();
 
     await page.locator('[data-tool-mode="path"]').click();
+    await page.locator("[data-path-avoid]").uncheck();
     const editorBounds = await page.locator("#editor").boundingBox();
     assert.ok(editorBounds, "editor canvas has measurable bounds");
     const pathY = editorBounds.y + editorBounds.height / 2;

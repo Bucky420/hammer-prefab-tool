@@ -363,6 +363,8 @@ for (const options of [
     },
   });
   assertValidResult(result, "curved source boundary");
+  assert.equal(result.brushes[0].generator.settings.avoidShapes, true);
+  assert.equal(result.brushes[0].generator.settings.routeMargin, 32);
   assert.deepEqual(sourceAttachment, original, "source attachment remains immutable");
   assert.deepEqual(
     result.brushes[0].generator.sourceAttachment,

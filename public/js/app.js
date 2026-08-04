@@ -9,11 +9,20 @@ import {
 import { generateRing } from "./ring-generator.js";
 import { buildStagedBrushes } from "./brush-tool.js";
 import { bindBrushPanel, createBrushPanel } from "./brush-panel.js";
+import { bindContextMenu } from "./context-menu.js";
+import { bindFacePanel, createFacePanel } from "./face-panel.js";
 import { generateHallway } from "./hallway-generator.js";
+import { bindGridControls } from "./grid-controls.js";
+import { bindMenuBar } from "./menu-bar.js";
+import { bindPathPanel, createPathPanel } from "./path-panel.js";
+import { bindSelectionControls } from "./selection-controls.js";
+import { createToolRail } from "./tool-rail.js";
+import { bindViewControls } from "./view-controls.js";
 import {
   acquireNearestPathSource,
   acquirePathSource,
 } from "./path-source-acquisition.js";
+import { routePathAroundBrushes } from "./path-routing.js";
 import { validateAll } from "./brush-validation.js";
 import { History } from "./history.js";
 import { Viewport } from "./viewport.js";
@@ -23,11 +32,9 @@ import {
   alignAllFacesToCenter,
   alignAllFacesToOuter,
 } from "./texture-alignment.js";
-import { GRID_VALUES, roundToGrid } from "./grid.js";
 import { ringVertexIds } from "./selection.js";
 import { applyNodrawToHiddenFaces } from "./nodraw.js";
 import { fillSelectedLoop } from "./face-fill.js";
-import { bindExtrusionModeButtons } from "./extrusion-policy.js";
 import { assignExtrusionBrushIds, resolveExtrusion } from "./face-extrusion.js";
 import { createProject, normalizeProject } from "./project-format.js";
 import {
@@ -90,6 +97,8 @@ state.pathSettings = {
   snapEnds: true,
   flare: 0,
   blendLength: 128,
+  avoidShapes: true,
+  routeMargin: 32,
   materials: {
     floor: "dev/dev_measuregeneric01b",
     wall: "dev/dev_measurewall01a",
@@ -200,13 +209,18 @@ window.addEventListener("unhandledrejection", (event) => {
 const browser = $("project-browser");
 const search = $("file-search");
 search.value = localStorage.getItem("hammer-vmf-search") || "";
-const viewNames = ["top", "front", "side"];
-const viewLabels = { top: "TOP / XY", front: "FRONT / YZ", side: "SIDE / XZ" };
 let activeView = state.view || "top";
+let brushPanelController = null;
+let facePanelController = null;
+let pathPanelController = null;
+let toolRailController = null;
+let selectionControls = null;
+let gridControls = null;
+let viewControls = null;
+let menuBar = null;
 const view = new Viewport(
   $("editor"),
   activeView,
-let brushPanelController = null;
   state,
   (changeType) => {
     if (changeType === "selection-commit") changed("session");
@@ -214,10 +228,10 @@ let brushPanelController = null;
       changed("document");
       setStatus("Duplicated selected brushes");
     } else if (changeType === "brush-preview") {
+      brushPanelController?.syncStagedSettings();
       redraw();
       setStatus(
         `${state.generator.shape[0].toUpperCase()}${state.generator.shape.slice(1)} preview ready; drag grid handles to adjust, Enter to create, or Escape to cancel`,
-      brushPanelController?.syncStagedSettings();
       );
     } else if (changeType === "brush-created") {
       redraw();
@@ -237,7 +251,7 @@ let brushPanelController = null;
       state.pathSettings.interiorWidth =
         view.pathSourceAttachment.interiorWidth;
       state.pathSettings.baseElevation = view.pathSourceAttachment.elevation;
-      updatePathControls();
+      pathPanelController?.updateControls();
       redraw();
       setStatus(
         `Hallway start matched to ${view.pathSourceBrushIds.length} selected floor brush${view.pathSourceBrushIds.length === 1 ? "" : "es"}`,
@@ -247,8 +261,16 @@ let brushPanelController = null;
       changeType.startsWith("path-source-invalid:")
     ) {
       setStatus(changeType.slice("path-source-invalid:".length), true);
+    } else if (
+      typeof changeType === "string" &&
+      changeType.startsWith("path-route-invalid:")
+    ) {
+      setStatus(
+        `Hallway route blocked: ${changeType.slice("path-route-invalid:".length)}`,
+        true,
+      );
     } else if (changeType === "path-control-selected") {
-      updatePathControls();
+      pathPanelController?.updateControls();
       redraw();
     } else if (changeType === "face-incompatible") {
       redraw();
@@ -318,6 +340,23 @@ let brushPanelController = null;
       0.01,
     );
   },
+  ({ start, end, outsideWidth, height, floorZ, excludeBrushIds }) =>
+    routePathAroundBrushes({
+      start,
+      end,
+      brushes: state.brushes.filter(
+        (brush) =>
+          !state.hiddenBrushes.has(brush.id) &&
+          (String(brush.entityClassname || "").toLowerCase() === "func_detail"
+            ? state.showFuncDetailBrushes !== false
+            : state.showRegularBrushes !== false),
+      ),
+      outsideWidth,
+      margin: Number(state.pathSettings.routeMargin) || 0,
+      floorZ,
+      height,
+      excludeBrushIds,
+    }),
 );
 /*
   Brush creation is intentionally staged: Hammer lets the user resize the
@@ -333,13 +372,6 @@ function createBrushFromBounds(bounds) {
     );
 }
 function buildBrushesFromBounds(bounds) {
-  const [horizontal, vertical, depth] = bounds.axes;
-  const min = { x: 0, y: 0, z: 0 },
-    max = { x: 0, y: 0, z: 0 };
-  min[horizontal] = Math.min(bounds.start[horizontal], bounds.end[horizontal]);
-  max[horizontal] = Math.max(bounds.start[horizontal], bounds.end[horizontal]);
-  min[vertical] = Math.min(bounds.start[vertical], bounds.end[vertical]);
-  max[vertical] = Math.max(bounds.start[vertical], bounds.end[vertical]);
   const selectedVertices = state.brushes
     .filter((brush) => state.brushSelection.has(brush.id))
     .flatMap((brush) => brush.vertices);
@@ -354,125 +386,8 @@ function buildBrushesFromBounds(bounds) {
   if (result.error) return setStatus(result.error, true);
   return result.brushes;
 }
-document.querySelector(".tool-rail")?.remove();
 document.querySelector(".brush-panel")?.remove();
-const toolRail = document.createElement("aside");
-toolRail.className = "tool-rail";
-const railSizeObserver = new ResizeObserver((entries) => {
-  const width = entries[0].contentRect.width;
-  toolRail.classList.toggle("compact", width < 56);
-});
-toolRail.innerHTML = `<button type="button" data-tool-mode="selection" title="Object selection tool"><svg viewBox="0 0 24 24"><path d="M5 3l12 10-6 1-3 7-3-18z"/></svg><span>Object</span></button><button type="button" data-tool-mode="brush" title="Brush tool"><svg viewBox="0 0 24 24"><path d="M4 18h16M6 14h12V5H6z"/></svg><span>Brush</span></button><button type="button" data-tool-mode="path" title="Path generator tool"><svg viewBox="0 0 24 24"><path d="M4 18l5-10 6 8 5-11"/><circle cx="4" cy="18" r="1.5"/><circle cx="9" cy="8" r="1.5"/><circle cx="15" cy="16" r="1.5"/><circle cx="20" cy="5" r="1.5"/></svg><span>Path</span></button><button type="button" data-tool-mode="face" title="Face selection and extrusion"><svg viewBox="0 0 24 24"><path d="M4 7l8-4 8 4-8 4zM4 7v9l8 5v-10M20 7v9l-8 5"/></svg><span>Face</span></button><button type="button" data-tool-mode="vertex" title="Vertex editing"><svg viewBox="0 0 24 24"><path d="M5 5l14 14M19 5L5 19M5 5h14v14H5z"/></svg><span>Vertex</span></button>`;
-document.querySelector("main").prepend(toolRail);
-railSizeObserver.observe(toolRail);
 let selectionShape = "box";
-toolRail.querySelectorAll("[data-tool-mode]").forEach(
-  (button) =>
-    (button.onclick = () => {
-      const mode = button.dataset.toolMode;
-      if (state.mode !== mode) view.cancelInteraction();
-      if (mode === "selection") {
-        state.mode = "selection";
-        state.tool = "box";
-        railDock.classList.remove("available");
-        setRailExpanded(false);
-        setStatus("Square selection active");
-      } else if (mode === "brush") {
-        state.mode = "brush";
-        state.tool = "brush";
-        setRailExpanded(true);
-        showBrushDock();
-        setStatus("Brush tool active");
-      } else if (mode === "face") {
-        state.mode = "face";
-        state.tool = "box";
-        setRailExpanded(true);
-        showFaceDock();
-        setStatus("Face selection active; press E to extrude selected faces");
-      } else if (mode === "path") {
-        state.mode = "path";
-        state.tool = "path";
-        setRailExpanded(true);
-        showPathDock();
-        const selectedHallway = state.brushes.find(
-          (brush) =>
-            state.brushSelection.has(brush.id) &&
-            brush.generator?.type === "hallway",
-        );
-        if (selectedHallway) {
-          state.pathSettings = {
-            ...state.pathSettings,
-            ...clone(selectedHallway.generator.settings || {}),
-            baseElevation:
-              selectedHallway.generator.path?.nodes?.[0]?.z ??
-              selectedHallway.generator.path?.[0]?.z ??
-              0,
-          };
-          const attachmentExists = (attachment) =>
-            attachment?.sourceBrushIds?.length &&
-            attachment.sourceBrushIds.every((id) =>
-              state.brushes.some((brush) => brush.id === id),
-            );
-          const sourceAttachment = attachmentExists(
-            selectedHallway.generator.sourceAttachment,
-          )
-            ? selectedHallway.generator.sourceAttachment
-            : null;
-          const endAttachment = attachmentExists(
-            selectedHallway.generator.endAttachment,
-          )
-            ? selectedHallway.generator.endAttachment
-            : null;
-          const persistedAttachment = sourceAttachment || endAttachment;
-          if (persistedAttachment) {
-            state.pathSettings.flare = Number(persistedAttachment.flare) || 0;
-            state.pathSettings.blendLength =
-              Number(persistedAttachment.blendLength) ||
-              state.pathSettings.blendLength;
-          }
-          view.setPath(
-            selectedHallway.generator.path,
-            selectedHallway.assemblyId || selectedHallway.generator.assemblyId,
-            {
-              sourceBrushIds:
-                sourceAttachment?.sourceBrushIds || [],
-              sourceAttachment,
-              endAttachment,
-            },
-          );
-          updatePathControls();
-          setStatus("Editing hallway path; Enter applies changes");
-        } else {
-          const sourceBrushIds = [...state.brushSelection].filter((id) =>
-            state.brushes.some(
-              (brush) => brush.id === id && brush.generator?.type !== "hallway",
-            ),
-          );
-          view.setPath([], `hallway-assembly-${crypto.randomUUID()}`, {
-            sourceBrushIds,
-          });
-          setStatus(
-            sourceBrushIds.length
-              ? "Move toward the exit side to preview the selected floor mouth; click to start"
-              : "Click points in Top view to draw a spline hallway centerline",
-            sourceBrushIds.length > 2,
-          );
-        }
-      } else {
-        state.mode = "vertex";
-        state.tool = "box";
-        railDock.classList.remove("available");
-        setRailExpanded(false);
-        setStatus("Vertex editing active");
-      }
-      updateSelectionScopeToggle();
-      toolRail
-        .querySelectorAll("[data-tool-mode]")
-        .forEach((item) => item.classList.toggle("active", item === button));
-      redraw();
-    }),
-);
-toolRail.querySelector('[data-tool-mode="selection"]').classList.add("active");
 const RELOAD_STATE_KEY = "hammer-prefab-tool-hmr-state";
 let allFiles = [];
 let visibleFiles = [];
@@ -494,7 +409,6 @@ state.grid ||= 16;
 state.vmfFilename =
   localStorage.getItem("hammer-vmf-filename") || state.vmfFilename;
 const brushPanel = createBrushPanel(state.grid);
-toolRail.append(brushPanel);
 const prefabOwnershipInput = brushPanel.querySelector(
   "[data-prefab-ownership]",
 );
@@ -512,198 +426,14 @@ for (const input of [prefabOwnershipInput, prefabBackingInput]) {
   };
 }
 brushPanelController = bindBrushPanel({ panel: brushPanel, state, view });
-const railButtons = [...toolRail.querySelectorAll("[data-tool-mode]")];
-const railTools = document.createElement("div");
-railTools.className = "rail-tools";
-railButtons.forEach((button) => railTools.append(button));
-const selectionScopeToggle = $("selection-scope-toggle");
-const selectionModeToggle = $("selection-mode-toggle");
-const selectionScopes = ["solid", "object", "group"];
-const selectionScopeLabels = {
-  solid: "Solids",
-  object: "Objects",
-  group: "Groups",
-};
-function updateSelectionScopeToggle() {
-  const faceMode = state.mode === "face";
-  selectionScopeToggle.hidden = !faceMode;
-  selectionModeToggle.hidden = faceMode;
-  selectionModeToggle.dataset.scope = state.selectionScope;
-  const currentIndex = selectionScopes.indexOf(state.selectionScope);
-  const nextScope = selectionScopes[(currentIndex + 1) % selectionScopes.length];
-  const title = `${selectionScopeLabels[state.selectionScope]} selection; click for ${selectionScopeLabels[nextScope]}`;
-  selectionModeToggle.title = title;
-  selectionModeToggle.setAttribute("aria-label", title);
-  selectionScopeToggle.dataset.scope = state.faceSelectionScope;
-  selectionScopeToggle.title = `${state.faceSelectionScope === "group" ? "Grouped semantic faces" : "Single face"} selection`;
-}
-selectionScopeToggle.onclick = () => {
-  const nextScope = state.faceSelectionScope === "group" ? "object" : "group";
-  state.faceSelectionScope = nextScope;
-  state.faceSelection.clear();
-  updateSelectionScopeToggle();
-  setStatus(
-    `${state.faceSelectionScope === "group" ? "Grouped inner, outer, top, or bottom faces" : "Single-face"} selection active`,
-  );
-  changed("session");
-};
-selectionModeToggle.onclick = () => {
-  const currentIndex = selectionScopes.indexOf(state.selectionScope);
-  state.selectionScope =
-    selectionScopes[(currentIndex + 1) % selectionScopes.length];
-  activateObjectMode();
-  redraw();
-  setStatus(`${selectionScopeLabels[state.selectionScope]} selection active`);
-};
-updateSelectionScopeToggle();
-const textureAxesToggle = $("texture-axes-toggle");
-function updateTextureAxesToggle() {
-  textureAxesToggle.classList.toggle("active", state.showTextureAxes);
-  textureAxesToggle.setAttribute("aria-pressed", String(state.showTextureAxes));
-  textureAxesToggle.title = `${state.showTextureAxes ? "Hide" : "Show"} texture alignment`;
-}
-textureAxesToggle.onclick = () => {
-  state.showTextureAxes = !state.showTextureAxes;
-  updateTextureAxesToggle();
-  redraw();
-  setStatus(`Texture alignment ${state.showTextureAxes ? "shown" : "hidden"}`);
-};
-updateTextureAxesToggle();
-const railDock = document.createElement("div");
-railDock.className = "rail-dock";
-const dockDivider = document.createElement("div");
-dockDivider.className = "dock-divider";
-dockDivider.title = "Drag to resize generator pane";
-const facePanel = document.createElement("aside");
-facePanel.className = "brush-panel";
-facePanel.hidden = true;
-facePanel.innerHTML = `<header><strong>FACE TOOLS</strong></header><label>Mode <select data-face-mode><option value="extrude">Extrude</option><option value="fill">Planar Fill</option></select></label><label>Side material <select data-face-side-material><option value="dev/dev_measuregeneric01">Orange</option><option value="dev/dev_measuregeneric01b">Gray</option></select></label><label>Top material <select data-face-top-material><option value="dev/dev_measuregeneric01b">Gray</option><option value="dev/dev_measuregeneric01">Orange</option></select></label><label title="Maximum angle between an external rail and the extrusion normal">Max rail angle <input type="number" data-face-rail-angle min="15" max="89" step="1" value="89"> deg</label><label title="Signed source-side angle; 135 degrees is a 45-degree undirected line deviation">Max source angle <input type="number" data-face-source-angle min="90" max="179" step="1" value="135"> deg</label><label class="check-row" title="Snap the grabbed extrusion distance to the active grid"><input type="checkbox" data-face-grid-snap> Grid snap</label><div class="extrusion-toggles"><button type="button" class="extrusion-toggle" data-extrude-mode="parallel" aria-pressed="false" title="Keep the dragged cap parallel to the selected face while following adjacent source sides">Parallel</button><button type="button" class="extrusion-toggle" data-extrude-mode="snap" aria-pressed="false">Snap</button></div>`;
-const faceModeSelect = facePanel.querySelector("[data-face-mode]");
-const sideMaterialSelect = facePanel.querySelector("[data-face-side-material]");
-const topMaterialSelect = facePanel.querySelector("[data-face-top-material]");
-const railAngleInput = facePanel.querySelector("[data-face-rail-angle]");
-const sourceAngleInput = facePanel.querySelector("[data-face-source-angle]");
-const faceGridSnapInput = facePanel.querySelector("[data-face-grid-snap]");
-const faceModeButtons = facePanel.querySelectorAll("[data-extrude-mode]");
-if (
-  !faceModeSelect ||
-  !sideMaterialSelect ||
-  !topMaterialSelect ||
-  !railAngleInput ||
-  !sourceAngleInput ||
-  !faceGridSnapInput ||
-  faceModeButtons.length !== 2
-)
-  throw new Error("Face panel markup is incomplete");
-bindExtrusionModeButtons(facePanel, state, (mode) => {
-  changed("document", false);
-  redraw();
-  setStatus(
-    mode === "parallel"
-      ? "Parallel extrusion: following adjacent source sides"
-      : mode === "straight"
-        ? "Straight extrusion: forward-cap snapping active"
-        : "Snap extrusion: forward cap and external side rails active",
-  );
+const facePanel = createFacePanel();
+facePanelController = bindFacePanel({
+  panel: facePanel,
+  state,
+  changed,
+  redraw,
+  setStatus,
 });
-railAngleInput.value = String(state.faceRailMaxAngle);
-railAngleInput.onchange = () => {
-  state.faceRailMaxAngle = Math.max(
-    15,
-    Math.min(89, Number(railAngleInput.value) || 89),
-  );
-  railAngleInput.value = String(state.faceRailMaxAngle);
-  try {
-    localStorage.setItem("faceRailMaxAngle", String(state.faceRailMaxAngle));
-  } catch {}
-  changed("document", false);
-  setStatus(`Maximum rail angle: ${state.faceRailMaxAngle} deg`);
-};
-sourceAngleInput.value = String(state.faceSourceMaxAngle);
-sourceAngleInput.onchange = () => {
-  state.faceSourceMaxAngle = Math.max(
-    90,
-    Math.min(179, Number(sourceAngleInput.value) || 135),
-  );
-  sourceAngleInput.value = String(state.faceSourceMaxAngle);
-  try {
-    localStorage.setItem(
-      "faceSourceMaxAngle",
-      String(state.faceSourceMaxAngle),
-    );
-  } catch {}
-  changed("document", false);
-  setStatus(`Maximum source-side angle: ${state.faceSourceMaxAngle} deg`);
-};
-faceGridSnapInput.checked = state.faceExtrusionGridSnap;
-faceGridSnapInput.onchange = () => {
-  state.faceExtrusionGridSnap = faceGridSnapInput.checked;
-  try {
-    localStorage.setItem(
-      "faceExtrusionGridSnap",
-      String(state.faceExtrusionGridSnap),
-    );
-  } catch {}
-  changed("document", false);
-  setStatus(
-    `Extrusion grid snap ${state.faceExtrusionGridSnap ? "enabled" : "disabled"}`,
-  );
-};
-function updateFaceToolMode() {
-  faceModeSelect.value = state.faceToolMode;
-}
-function setFaceToolMode(event) {
-  event?.stopPropagation();
-  const mode = event?.currentTarget?.value || faceModeSelect.value;
-  if (mode === state.faceToolMode) return;
-  state.faceToolMode = mode;
-  setStatus(
-    mode === "fill"
-      ? "Planar Fill: select a closed vertical boundary loop, then press E"
-      : "Extrude: drag selected faces outward",
-  );
-  changed("session");
-}
-faceModeSelect.addEventListener("input", setFaceToolMode);
-faceModeSelect.addEventListener("change", setFaceToolMode);
-faceModeSelect.addEventListener("pointerdown", (event) =>
-  event.stopPropagation(),
-);
-function applyFaceMaterials() {
-  if (!state.faceSelection.size)
-    return setStatus("Select one or more faces first", true);
-  const sideMaterial = sideMaterialSelect.value,
-    topMaterial = topMaterialSelect.value;
-  let applied = 0;
-  for (const id of state.faceSelection) {
-    const match = id.match(/^(.*):f:(\d+)$/),
-      brush = match && state.brushes.find((item) => item.id === match[1]),
-      faceIndex = Number(match?.[2]);
-    if (!brush || !brush.faces[faceIndex]) continue;
-    brush.faceMaterials ||= brush.faces.map(
-      () => brush.material || "tools/toolsnodraw",
-    );
-    const face = brush.faces[faceIndex],
-      a = brush.vertices[face[0]],
-      b = brush.vertices[face[1]],
-      c = brush.vertices[face[2]],
-      normal = {
-        x: (b.y - a.y) * (c.z - a.z) - (b.z - a.z) * (c.y - a.y),
-        y: (b.z - a.z) * (c.x - a.x) - (b.x - a.x) * (c.z - a.z),
-        z: (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x),
-      };
-    brush.faceMaterials[faceIndex] =
-      Math.abs(normal.z) > Math.max(Math.abs(normal.x), Math.abs(normal.y))
-        ? topMaterial
-        : sideMaterial;
-    applied++;
-  }
-  if (!applied) return setStatus("Selected faces no longer exist", true);
-  changed();
-  setStatus(`Applied materials to ${applied} faces`);
-}
-sideMaterialSelect.addEventListener("change", applyFaceMaterials);
-topMaterialSelect.addEventListener("change", applyFaceMaterials);
 function fillSelectedLoopAction() {
   const result = fillSelectedLoop(state.brushes, state.faceSelection);
   if (!result.brushes.length)
@@ -720,287 +450,125 @@ function fillSelectedLoopAction() {
     `Filled loop with ${result.brushes.length} convex brushes`,
   );
 }
-const pathPanel = document.createElement("aside");
-pathPanel.className = "brush-panel path-panel";
-pathPanel.hidden = true;
-pathPanel.innerHTML = `<header><strong>PATH TOOLS</strong></header><label>Type <select data-path-type><option value="hallway">Hallway</option></select></label><label>Next <select data-path-segment-mode><option value="spline">Spline</option><option value="straight">Straight</option></select></label><label>Node <select data-path-node-mode><option value="auto">Auto</option><option value="smooth">Smooth</option><option value="corner">Corner</option></select></label><div class="path-actions"><button type="button" data-path-close>Close Path</button><button type="button" data-path-detach>Detach Start</button></div><label>Inside width <input type="number" data-path-setting="interiorWidth" min="1" max="8192" step="${state.grid}"></label><label>Height <input type="number" data-path-setting="interiorHeight" min="1" max="8192" step="${state.grid}"></label><label>Wall <input type="number" data-path-setting="wallThickness" min="1" max="1024" step="${state.grid}"></label><label>Floor <input type="number" data-path-setting="floorThickness" min="1" max="1024" step="${state.grid}"></label><label>Ceiling <input type="number" data-path-setting="ceilingThickness" min="1" max="1024" step="${state.grid}"></label><label>Elevation <input type="number" data-path-setting="baseElevation" min="-32768" max="32768" step="${state.grid}"></label><label>Max angle <input type="number" data-path-setting="maxAngleDegrees" min="1" max="90" step="1"></label><label>Max length <input type="number" data-path-setting="maxSegmentLength" min="1" max="1024" step="${state.grid}"></label><label>Curve error <input type="number" data-path-setting="chordError" min="0.125" max="64" step="0.125"></label><label>Flare <input type="number" data-path-setting="flare" min="0" max="4096" step="${state.grid}"></label><label>Blend length <input type="number" data-path-setting="blendLength" min="1" max="8192" step="${state.grid}"></label><label class="check-row"><input type="checkbox" data-path-snap> Snap ends</label><section class="path-materials"><strong>MATERIALS</strong><label>Floor <input type="text" data-path-material="floor"></label><label>Walls <input type="text" data-path-material="wall"></label><label>Ceiling <input type="text" data-path-material="ceiling"></label></section><p class="panel-note">Select one or two floor solids before Path to match the starting mouth. Drag cyan handles to edit width, height, and tangents. Enter commits.</p>`;
-const pathInputs = new Map(
-  [...pathPanel.querySelectorAll("[data-path-setting]")].map((input) => [
-    input.dataset.pathSetting,
-    input,
-  ]),
-);
-const pathMaterialInputs = new Map(
-  [...pathPanel.querySelectorAll("[data-path-material]")].map((input) => [
-    input.dataset.pathMaterial,
-    input,
-  ]),
-);
-function updatePathControls() {
-  const selectedNode = view.pathPoints[view.selectedPathNode];
-  for (const [name, input] of pathInputs) {
-    let value = state.pathSettings[name];
-    if (selectedNode && name === "interiorWidth")
-      value = selectedNode.width - 2 * state.pathSettings.wallThickness;
-    if (selectedNode && name === "interiorHeight") value = selectedNode.height;
-    if (selectedNode && name === "baseElevation") value = selectedNode.z;
-    input.value = String(value);
-  }
-  for (const [name, input] of pathMaterialInputs)
-    input.value = state.pathSettings.materials[name];
-  pathPanel.querySelector("[data-path-segment-mode]").value =
-    Number.isInteger(view.selectedPathSegment)
-      ? view.pathModel.segmentModes[view.selectedPathSegment]
-      : state.pathSettings.segmentMode;
-  pathPanel.querySelector("[data-path-node-mode]").value =
-    selectedNode?.tangentMode || "auto";
-  pathPanel.querySelector("[data-path-close]").textContent = view.pathModel.closed
-    ? "Open Path"
-    : "Close Path";
-  pathPanel.querySelector("[data-path-detach]").disabled =
-    !view.pathSourceAttachment;
-  pathPanel.querySelector("[data-path-snap]").checked =
-    state.pathSettings.snapEnds !== false;
-}
-for (const [name, input] of pathInputs) {
-  input.onchange = () => {
-    const value = Number(input.value);
-    if (!Number.isFinite(value)) {
-      updatePathControls();
-      return;
-    }
-    const selectedNode = view.pathPoints[view.selectedPathNode];
-    if (selectedNode && name === "interiorWidth")
-      selectedNode.width =
-        value + 2 * Number(state.pathSettings.wallThickness);
-    else if (selectedNode && name === "interiorHeight")
-      selectedNode.height = value;
-    else if (selectedNode && name === "baseElevation") selectedNode.z = value;
-    else if (name === "baseElevation" && view.pathPoints.length) {
-      const delta = value - state.pathSettings.baseElevation;
-      view.pathPoints.forEach((point) => {
-        point.z = roundToGrid(point.z + delta, state.grid);
-      });
-    } else if (name === "interiorWidth" && view.pathPoints.length)
-      view.pathPoints.forEach((point) => {
-        point.width = value + 2 * Number(state.pathSettings.wallThickness);
-      });
-    else if (name === "interiorHeight" && view.pathPoints.length)
-      view.pathPoints.forEach((point) => {
-        point.height = value;
-      });
-    if (["maxAngleDegrees", "maxSegmentLength", "chordError"].includes(name))
-      view.pathModel.detail[name] = value;
-    if (name === "flare") {
-      if (view.pathSourceAttachment) view.pathSourceAttachment.flare = value;
-      if (view.pathEndAttachment) view.pathEndAttachment.flare = value;
-    }
-    if (name === "blendLength") {
-      if (view.pathSourceAttachment)
-        view.pathSourceAttachment.blendLength = value;
-      if (view.pathEndAttachment) view.pathEndAttachment.blendLength = value;
-    }
-    state.pathSettings[name] = value;
-    updatePathControls();
-    if (state.mode === "path") {
-      view.refreshPathPreview();
-      redraw();
-    }
-  };
-}
-pathPanel.querySelector("[data-path-segment-mode]").onchange = (event) => {
-  state.pathSettings.segmentMode = event.target.value;
-  view.setSelectedPathSegmentMode(event.target.value);
-  updatePathControls();
-  redraw();
-};
-pathPanel.querySelector("[data-path-node-mode]").onchange = (event) => {
-  view.setSelectedPathNodeMode(event.target.value);
-  updatePathControls();
-  redraw();
-};
-pathPanel.querySelector("[data-path-close]").onclick = () => {
-  if (!view.togglePathClosed())
-    return setStatus("Closing a path requires at least three nodes", true);
-  updatePathControls();
-  redraw();
-  setStatus(view.pathModel.closed ? "Hallway path closed" : "Hallway path opened");
-};
-pathPanel.querySelector("[data-path-detach]").onclick = () => {
-  view.pathSourceAttachment = null;
-  view.pathSourceBrushIds = [];
-  view.refreshPathPreview();
-  updatePathControls();
-  setStatus("Hallway start detached from source floor");
-};
-pathPanel.querySelector("[data-path-snap]").onchange = (event) => {
-  state.pathSettings.snapEnds = event.target.checked;
-  if (!event.target.checked) view.pathEndAttachment = null;
-  view.refreshPathPreview();
-};
-for (const [name, input] of pathMaterialInputs) {
-  input.onchange = () => {
-    state.pathSettings.materials[name] = input.value.trim();
-    if (state.mode === "path") {
-      view.refreshPathPreview();
-      redraw();
-    }
-  };
-}
-updatePathControls();
-railDock.append(dockDivider, brushPanel, facePanel, pathPanel);
-const railWidthGrip = document.createElement("div");
-railWidthGrip.className = "rail-width-grip";
-toolRail.append(railTools, railDock, railWidthGrip);
-let railWidth = 132;
-const editorMain = document.querySelector("main");
-const railExpandedMinimum = 220;
-const railToolsMinimumHeight = 172;
-function setRailExpanded(expanded) {
-  const width = expanded ? Math.max(railExpandedMinimum, railWidth) : 42;
-  toolRail.classList.toggle("tool-active", expanded);
-  editorMain.classList.toggle("rail-open", expanded);
-  toolRail.style.setProperty("--rail-width", `${width}px`);
-  editorMain.style.setProperty("--rail-overlay-width", `${width}px`);
-}
-let dockHideTimer = null;
-let dockFadeTimer = null;
-function showBrushDock() {
-  if (state.mode === "brush") {
-    clearTimeout(dockFadeTimer);
-    clearTimeout(dockHideTimer);
-    const availableHeight = toolRail.clientHeight - railToolsMinimumHeight;
-    if (availableHeight < dockMinimumHeight) {
-      railDock.classList.remove("available");
-      return;
-    }
-    railDock.classList.remove("closing", "collapsed");
-    brushPanel.hidden = false;
-    facePanel.hidden = true;
-    pathPanel.hidden = true;
-    railDock.classList.add("available");
-    toolRail.style.setProperty(
-      "--dock-height",
-      `${Math.min(dockHeight, availableHeight)}px`,
-    );
-  }
-}
-function showFaceDock() {
-  if (state.mode !== "face") return;
-  clearTimeout(dockFadeTimer);
-  clearTimeout(dockHideTimer);
-  const availableHeight = toolRail.clientHeight - railToolsMinimumHeight;
-  if (availableHeight < dockMinimumHeight) {
-    railDock.classList.remove("available");
-    return;
-  }
-  brushPanel.hidden = true;
-  facePanel.hidden = false;
-  pathPanel.hidden = true;
-  railDock.classList.remove("closing", "collapsed");
-  railDock.classList.add("available");
-  toolRail.style.setProperty(
-    "--dock-height",
-    `${Math.min(dockHeight, availableHeight)}px`,
-  );
-}
-function showPathDock() {
-  if (state.mode !== "path") return;
-  clearTimeout(dockFadeTimer);
-  clearTimeout(dockHideTimer);
-  const availableHeight = toolRail.clientHeight - railToolsMinimumHeight;
-  if (availableHeight < dockMinimumHeight) {
-    railDock.classList.remove("available");
-    return;
-  }
-  brushPanel.hidden = true;
-  facePanel.hidden = true;
-  pathPanel.hidden = false;
-  railDock.classList.remove("closing", "collapsed");
-  railDock.classList.add("available");
-  toolRail.style.setProperty(
-    "--dock-height",
-    `${Math.min(dockHeight, availableHeight)}px`,
-  );
-}
-function hideBrushDock() {
-  if (
-    (state.mode === "brush" ||
-      state.mode === "face" ||
-      state.mode === "path") &&
-    railDock.classList.contains("available")
-  ) {
-    clearTimeout(dockFadeTimer);
-    clearTimeout(dockHideTimer);
-    dockFadeTimer = setTimeout(() => {
-      if (!toolRail.matches(":hover")) railDock.classList.add("closing");
-    }, 180);
-    dockHideTimer = setTimeout(() => {
-      if (!toolRail.matches(":hover"))
-        railDock.classList.remove("available", "closing");
-    }, 530);
-  }
-}
-toolRail.addEventListener("mouseenter", () => {
-  setRailExpanded(true);
-  if (state.mode === "brush") showBrushDock();
-  if (state.mode === "face") showFaceDock();
-  if (state.mode === "path") showPathDock();
+const pathPanel = createPathPanel(state.grid);
+pathPanelController = bindPathPanel({
+  panel: pathPanel,
+  state,
+  view,
+  redraw,
+  setStatus,
 });
-toolRail.addEventListener("mouseleave", () => {
-  hideBrushDock();
-  setRailExpanded(false);
-});
-let resizingRail = null;
-const dockMinimumHeight = 140;
-let dockHeight = 560;
-dockDivider.addEventListener("pointerdown", (event) => {
-  event.preventDefault();
-  dockDivider.setPointerCapture(event.pointerId);
-  resizingRail = {
-    type: "dock",
-    start: event.clientY,
-    height: railDock.getBoundingClientRect().height,
-  };
-});
-railWidthGrip.addEventListener("pointerdown", (event) => {
-  event.preventDefault();
-  railWidthGrip.setPointerCapture(event.pointerId);
-  resizingRail = {
-    type: "rail",
-    start: event.clientX,
-    width: toolRail.getBoundingClientRect().width,
-  };
-});
-window.addEventListener("pointermove", (event) => {
-  if (!resizingRail) return;
-  if (resizingRail.type === "dock") {
-    const maxHeight = Math.max(
-      0,
-      toolRail.clientHeight - railToolsMinimumHeight,
-    );
-    const requested =
-      resizingRail.height - (event.clientY - resizingRail.start);
-    const height = Math.max(0, Math.min(maxHeight, requested));
-    if (height < dockMinimumHeight) {
-      railDock.classList.add("collapsed");
-    } else {
-      dockHeight = height;
-      railDock.classList.remove("collapsed");
-      toolRail.style.setProperty("--dock-height", `${dockHeight}px`);
-    }
+function activateToolMode(mode) {
+  if (state.mode !== mode) view.cancelInteraction();
+  state.mode = mode;
+  state.tool = mode === "brush" || mode === "path" ? mode : "box";
+  if (mode === "selection") setStatus("Square selection active");
+  else if (mode === "brush") setStatus("Brush tool active");
+  else if (mode === "face")
+    setStatus("Face selection active; press E to extrude selected faces");
+  else if (mode === "vertex") setStatus("Vertex editing active");
+  else activatePathMode();
+  toolRailController.syncMode();
+  if (["brush", "face", "path"].includes(mode)) {
+    toolRailController.setExpanded(true);
+    toolRailController.showDock();
   } else {
-    railWidth = Math.max(
-      railExpandedMinimum,
-      Math.min(320, resizingRail.width + event.clientX - resizingRail.start),
-    );
-    toolRail.style.setProperty("--rail-width", `${railWidth}px`);
-    editorMain.style.setProperty("--rail-overlay-width", `${railWidth}px`);
+    toolRailController.closeDock();
+    toolRailController.setExpanded(false);
   }
+  selectionControls.sync();
+  redraw();
+}
+function activatePathMode() {
+  const selectedHallway = state.brushes.find(
+    (brush) =>
+      state.brushSelection.has(brush.id) && brush.generator?.type === "hallway",
+  );
+  if (!selectedHallway) {
+    const sourceBrushIds = [...state.brushSelection].filter((id) =>
+      state.brushes.some(
+        (brush) => brush.id === id && brush.generator?.type !== "hallway",
+      ),
+    );
+    view.setPath([], `hallway-assembly-${crypto.randomUUID()}`, {
+      sourceBrushIds,
+    });
+    setStatus(
+      sourceBrushIds.length
+        ? "Move toward the exit side to preview the selected floor mouth; click to start"
+        : "Click points in Top view to draw a spline hallway centerline",
+      sourceBrushIds.length > 2,
+    );
+    return;
+  }
+  state.pathSettings = {
+    ...state.pathSettings,
+    ...clone(selectedHallway.generator.settings || {}),
+    baseElevation:
+      selectedHallway.generator.path?.nodes?.[0]?.z ??
+      selectedHallway.generator.path?.[0]?.z ??
+      0,
+  };
+  const attachmentExists = (attachment) =>
+    attachment?.sourceBrushIds?.length &&
+    attachment.sourceBrushIds.every((id) =>
+      state.brushes.some((brush) => brush.id === id),
+    );
+  const sourceAttachment = attachmentExists(
+    selectedHallway.generator.sourceAttachment,
+  )
+    ? selectedHallway.generator.sourceAttachment
+    : null;
+  const endAttachment = attachmentExists(
+    selectedHallway.generator.endAttachment,
+  )
+    ? selectedHallway.generator.endAttachment
+    : null;
+  const persistedAttachment = sourceAttachment || endAttachment;
+  if (persistedAttachment) {
+    state.pathSettings.flare = Number(persistedAttachment.flare) || 0;
+    state.pathSettings.blendLength =
+      Number(persistedAttachment.blendLength) || state.pathSettings.blendLength;
+  }
+  view.setPath(
+    selectedHallway.generator.path,
+    selectedHallway.assemblyId || selectedHallway.generator.assemblyId,
+    {
+      sourceBrushIds: sourceAttachment?.sourceBrushIds || [],
+      sourceAttachment,
+      endAttachment,
+    },
+  );
+  pathPanelController?.updateControls();
+  setStatus("Editing hallway path; Enter applies changes");
+}
+toolRailController = createToolRail({
+  state,
+  panels: { brush: brushPanel, face: facePanel, path: pathPanel },
+  onModeChange: activateToolMode,
 });
-window.addEventListener("pointerup", () => {
-  resizingRail = null;
+selectionControls = bindSelectionControls({
+  state,
+  changed,
+  redraw,
+  setStatus,
+  activateObjectMode,
 });
+gridControls = bindGridControls({ state, changed });
+viewControls = bindViewControls({
+  state,
+  getActiveView: () => activeView,
+  setActiveView: (value) => {
+    activeView = value;
+    state.view = value;
+  },
+  changed,
+  redraw,
+  setStatus,
+  captureScreenshot: captureGridScreenshot,
+});
+menuBar = bindMenuBar({ run });
+bindContextMenu({ editor: $("editor"), run });
 function entityMetadata(entity) {
   const metadata = { ...entity };
   delete metadata.brushes;
@@ -1118,7 +686,7 @@ function snapshot() {
 function redraw() {
   view.kind = activeView;
   view.draw();
-  $("view-selector").textContent = viewLabels[activeView];
+  viewControls?.sync();
   const selected =
     state.mode === "path"
       ? `${view.pathPoints.length} path nodes`
@@ -1281,21 +849,20 @@ function restore(data) {
   activeView = data.view || activeView;
   state.view = activeView;
   view.kind = activeView;
-  updateSelectionScopeToggle();
-  updateTextureAxesToggle();
-  updateViewFilters();
-  railButtons.forEach((item) =>
-    item.classList.toggle("active", item.dataset.toolMode === state.mode),
-  );
+  selectionControls.sync();
+  viewControls.sync();
+  toolRailController.syncMode();
   if (data.camera) {
     view.scale = data.camera.scale || 1;
     view.offset = data.camera.offset || { x: 0, y: 0 };
   }
-  $("grid").value = state.grid;
+  gridControls.sync();
   updateDirtyState();
   redraw();
 }
 function saveHmrState() {
+  // Vite's debug full reload must never be blocked by the dirty-state guard.
+  reloadAfterAutosave = true;
   try {
     sessionStorage.setItem(
       RELOAD_STATE_KEY,
@@ -1357,12 +924,10 @@ function options() {
 function activateObjectMode() {
   state.mode = "selection";
   state.tool = "box";
-  railDock.classList.remove("available");
-  setRailExpanded(false);
-  railButtons.forEach((item) =>
-    item.classList.toggle("active", item.dataset.toolMode === "selection"),
-  );
-  updateSelectionScopeToggle();
+  toolRailController.closeDock();
+  toolRailController.setExpanded(false);
+  toolRailController.syncMode();
+  selectionControls.sync();
 }
 function add(brushes, label, selectCreated = false) {
   const groupId = `group-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -1390,16 +955,7 @@ function add(brushes, label, selectCreated = false) {
   );
 }
 function setGrid(delta) {
-  const index = Math.max(
-    0,
-    Math.min(GRID_VALUES.length - 1, GRID_VALUES.indexOf(state.grid) + delta),
-  );
-  state.grid = GRID_VALUES[index];
-  $("grid").value = state.grid;
-  document.querySelector(".menu-note").textContent =
-    `Current grid: ${state.grid}. Use [ and ] to change.`;
-  $("footer-grid").textContent = `Grid: ${state.grid}`;
-  changed("document", false);
+  gridControls.setDelta(delta);
 }
 function clearVMF() {
   if (!state.brushes.length) return;
@@ -1446,10 +1002,8 @@ function applyProjectSettings(project) {
     ownership: "func_detail",
     backing: "none",
   };
-  $("grid").value = String(state.grid);
-  faceGridSnapInput.checked = state.faceExtrusionGridSnap;
-  railAngleInput.value = String(state.faceRailMaxAngle);
-  sourceAngleInput.value = String(state.faceSourceMaxAngle);
+  gridControls.sync();
+  facePanelController?.syncControls();
   prefabOwnershipInput.value = state.projectSettings.prefab.ownership;
   prefabBackingInput.value = state.projectSettings.prefab.backing;
 }
@@ -1587,8 +1141,8 @@ async function openLocalFile() {
   const opened = await openVmfFile(window);
   await importBrowserFiles([], {
     opened,
-    directSaveSupported: opened.directSaveSupported,
     handle: opened.handle,
+    directSaveSupported: opened.directSaveSupported,
   });
 }
 function syncFilenameControls() {
@@ -2229,29 +1783,6 @@ function runFileAction(action) {
   );
 }
 
-$("grid").onchange = (event) => {
-  state.grid = +event.target.value;
-  document.querySelector(".menu-note").textContent =
-    `Current grid: ${state.grid}. Use [ and ] to change.`;
-  $("footer-grid").textContent = `Grid: ${state.grid}`;
-  changed("document", false);
-};
-const showFuncDetailInput = $("show-func-detail");
-const showRegularBrushesInput = $("show-regular-brushes");
-function updateViewFilters() {
-  showFuncDetailInput.checked = state.showFuncDetailBrushes !== false;
-  showRegularBrushesInput.checked = state.showRegularBrushes !== false;
-}
-for (const input of [showFuncDetailInput, showRegularBrushesInput])
-  input.onchange = () => {
-    state.showFuncDetailBrushes = showFuncDetailInput.checked;
-    state.showRegularBrushes = showRegularBrushesInput.checked;
-    changed("session");
-    setStatus(
-      `${input === showFuncDetailInput ? "func_detail" : "Regular"} brushes ${input.checked ? "shown" : "hidden"}`,
-    );
-  };
-updateViewFilters();
 const handleVmfInput = (event) => {
   const files = Array.from(event.target.files || []);
   event.target.value = "";
@@ -2262,28 +1793,6 @@ const handleVmfInput = (event) => {
 };
 $("vmf-file-input").oninput = handleVmfInput;
 $("vmf-file-input").onchange = handleVmfInput;
-$("view-selector").onclick = () => {
-  activeView =
-    viewNames[(viewNames.indexOf(activeView) + 1) % viewNames.length];
-  state.view = activeView;
-  redraw();
-  setStatus(`View: ${viewLabels[activeView]}`);
-};
-$("grid-screenshot").onclick = () => {
-  captureGridScreenshot().catch((error) =>
-    setStatus(`Screenshot failed: ${error.message}`, true),
-  );
-};
-$("key-toggle").onclick = () => {
-  const key = $("editor-key");
-  const open = !key.classList.contains("open");
-  key.classList.toggle("open", open);
-  key.setAttribute("aria-hidden", String(!open));
-  $("key-toggle").setAttribute("aria-expanded", String(open));
-  $("key-toggle").title = open
-    ? "Hide controls and key"
-    : "Show controls and key";
-};
 let dragDepth = 0;
 function supportedDrag(event) {
   const items = Array.from(event.dataTransfer?.items || []);
@@ -2326,97 +1835,12 @@ search.onkeydown = (event) => {
     loadSelected();
   }
 };
-document.querySelectorAll("[data-command]").forEach(
-  (button) =>
-    (button.onclick = () => {
-      run(button.dataset.command);
-      if (button.closest(".drop-menu")) closeMenus();
-    }),
-);
-const contextMenu = $("context-menu");
-$("editor").addEventListener("contextmenu", (event) => {
-  event.preventDefault();
-  contextMenu.style.left = `${event.clientX}px`;
-  contextMenu.style.top = `${event.clientY}px`;
-  contextMenu.classList.add("open");
-});
-document.addEventListener("pointerdown", (event) => {
-  if (!contextMenu.contains(event.target)) contextMenu.classList.remove("open");
-});
-contextMenu.querySelectorAll("[data-command]").forEach(
-  (button) =>
-    (button.onclick = () => {
-      run(button.dataset.command);
-      contextMenu.classList.remove("open");
-    }),
-);
-const menus = [...document.querySelectorAll(".drop-menu")];
-function closeMenus() {
-  menus.forEach((item) => item.classList.remove("open"));
-  document.querySelectorAll("[data-menu]").forEach((item) => {
-    item.classList.remove("active");
-    item.setAttribute("aria-expanded", "false");
-  });
-}
-document.querySelectorAll("[data-menu]").forEach((button) =>
-  button.addEventListener("mouseenter", () => {
-    if (!menus.some((menu) => menu.classList.contains("open"))) return;
-    const menu = $(button.dataset.menu);
-    closeMenus();
-    menu.classList.add("open");
-    button.classList.add("active");
-    button.setAttribute("aria-expanded", "true");
-    menu.style.left = `${button.getBoundingClientRect().left}px`;
-  }),
-);
-document.querySelectorAll("[data-menu]").forEach(
-  (button) =>
-    (button.onclick = (event) => {
-      event.stopPropagation();
-      const menu = $(button.dataset.menu);
-      const opening = !menu.classList.contains("open");
-      closeMenus();
-      if (opening) {
-        menu.classList.add("open");
-        button.classList.add("active");
-        button.setAttribute("aria-expanded", "true");
-        menu.style.left = `${button.getBoundingClientRect().left}px`;
-        menu
-          .querySelector("button:not([hidden]):not(:disabled), input, select")
-          ?.focus();
-      }
-    }),
-);
-document.addEventListener("pointermove", (event) => {
-  if (
-    menus.some((menu) => menu.classList.contains("open")) &&
-    !event.target.closest(".menu-bar") &&
-    !event.target.closest(".drop-menu")
-  )
-    closeMenus();
-});
-document.addEventListener("pointerdown", (event) => {
-  if (
-    !event.target.closest(".menu-bar") &&
-    !event.target.closest(".drop-menu")
-  ) {
-    closeMenus();
-  }
-});
 window.addEventListener("keydown", (event) => {
   if (browser.open && event.key === "Escape") {
     browser.close();
     return;
   }
-  if (
-    event.key === "Escape" &&
-    menus.some((menu) => menu.classList.contains("open"))
-  ) {
-    const trigger = document.querySelector("[data-menu].active");
-    closeMenus();
-    trigger?.focus();
-    return;
-  }
+  if (event.key === "Escape" && menuBar.closeForEscape()) return;
   if (event.key === "Escape" && view.cancelInteraction()) {
     setStatus("Interaction cancelled");
     return;
@@ -2426,10 +1850,7 @@ window.addEventListener("keydown", (event) => {
     void reloadWithAutosave();
     return;
   }
-  if (
-    (event.ctrlKey || event.metaKey) &&
-    event.key.toLowerCase() === "s"
-  ) {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
     event.preventDefault();
     run(event.shiftKey ? "save-vmf-as" : "save-vmf");
     return;
