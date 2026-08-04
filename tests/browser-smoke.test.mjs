@@ -284,6 +284,123 @@ try {
     assert.deepEqual(pathErrors, []);
     await pathPage.close();
 
+    const sourceRoutePage = await browser.newPage();
+    const sourceRouteErrors = [];
+    sourceRoutePage.on("pageerror", (error) => sourceRouteErrors.push(error));
+    await sourceRoutePage.goto(`http://127.0.0.1:${port}${prefix}`, {
+      waitUntil: "networkidle",
+    });
+    const sourceMouth = [
+      box({ x: 1027, y: 0, z: -64 }, { x: 1523, y: 200, z: 0 }),
+      box({ x: 1027, y: -200, z: -64 }, { x: 1523, y: 0, z: 0 }),
+    ];
+    const nearbyWall = generateRing({
+      radius: 349,
+      width: 70,
+      height: 128,
+      segments: 32,
+      grid: 1,
+    });
+    nearbyWall.forEach((brush) =>
+      brush.vertices.forEach((vertex) => {
+        vertex.x += 2432;
+      }),
+    );
+    const sourceRouteBrushes = [
+      ...sourceMouth,
+      ...nearbyWall,
+      box({ x: 3984, y: -16, z: -64 }, { x: 4016, y: 16, z: 0 }),
+    ];
+    await sourceRoutePage.locator("#vmf-file-input").setInputFiles({
+      name: "failtest4-source-mouth.vmf",
+      mimeType: "text/plain",
+      buffer: Buffer.from(writeVMF(sourceRouteBrushes)),
+    });
+    await sourceRoutePage
+      .locator("#status")
+      .filter({ hasText: "Opened failtest4-source-mouth.vmf" })
+      .waitFor();
+    const sourceRouteBounds = await sourceRoutePage
+      .locator("#editor")
+      .boundingBox();
+    assert.ok(sourceRouteBounds);
+    const sourceGeometry = sourceRouteBrushes.flatMap((brush) => brush.vertices);
+    const sourceMinX = Math.min(...sourceGeometry.map((vertex) => vertex.x));
+    const sourceMaxX = Math.max(...sourceGeometry.map((vertex) => vertex.x));
+    const sourceMinY = Math.min(...sourceGeometry.map((vertex) => vertex.y));
+    const sourceMaxY = Math.max(...sourceGeometry.map((vertex) => vertex.y));
+    const sourceScale = Math.min(
+      16,
+      (sourceRouteBounds.width - 72) / Math.max(1, sourceMaxX - sourceMinX),
+      (sourceRouteBounds.height - 72) / Math.max(1, sourceMaxY - sourceMinY),
+    );
+    const sourceOffsetX = (-(sourceMinX + sourceMaxX) * sourceScale) / 2;
+    const sourceOffsetY = ((sourceMinY + sourceMaxY) * sourceScale) / 2;
+    const sourceScreen = (x, y) => ({
+      x:
+        sourceRouteBounds.x +
+        sourceRouteBounds.width / 2 +
+        x * sourceScale +
+        sourceOffsetX,
+      y:
+        sourceRouteBounds.y +
+        sourceRouteBounds.height / 2 -
+        y * sourceScale +
+        sourceOffsetY,
+    });
+    const upperSource = sourceScreen(1275, 100);
+    const lowerSource = sourceScreen(1275, -100);
+    await sourceRoutePage.mouse.click(upperSource.x, upperSource.y);
+    await sourceRoutePage.keyboard.down("Control");
+    await sourceRoutePage.mouse.click(lowerSource.x, lowerSource.y);
+    await sourceRoutePage.keyboard.up("Control");
+    await sourceRoutePage
+      .locator("#stats")
+      .filter({ hasText: "2 selected objects" })
+      .waitFor();
+    await sourceRoutePage.locator('[data-tool-mode="path"]').click();
+    await sourceRoutePage.locator("[data-path-snap]").uncheck();
+    await sourceRoutePage
+      .locator('[data-path-setting="maxSegmentLength"]')
+      .fill("256");
+    const expandedSourceBounds = await sourceRoutePage
+      .locator("#editor")
+      .boundingBox();
+    assert.ok(expandedSourceBounds);
+    const activeSourceScreen = (x, y) => ({
+      x:
+        expandedSourceBounds.x +
+        expandedSourceBounds.width / 2 +
+        x * sourceScale +
+        sourceOffsetX,
+      y:
+        expandedSourceBounds.y +
+        expandedSourceBounds.height / 2 -
+        y * sourceScale +
+        sourceOffsetY,
+    });
+    const blockedStart = activeSourceScreen(1800, 0);
+    await sourceRoutePage.mouse.click(blockedStart.x, blockedStart.y);
+    await sourceRoutePage
+      .locator("#stats")
+      .filter({ hasText: "1 path nodes" })
+      .waitFor();
+    const routedEnd = activeSourceScreen(4000, 0);
+    await sourceRoutePage.mouse.click(routedEnd.x, routedEnd.y);
+    await sourceRoutePage.waitForFunction(() => {
+      const match = document
+        .querySelector("#stats")
+        .textContent.match(/(\d+) path nodes/);
+      return Number(match?.[1]) > 4;
+    });
+    await sourceRoutePage.keyboard.press("Enter");
+    await sourceRoutePage
+      .locator("#status")
+      .filter({ hasText: /Created hallway: \d+ convex brushes/ })
+      .waitFor({ timeout: 15000 });
+    assert.deepEqual(sourceRouteErrors, []);
+    await sourceRoutePage.close();
+
     const routePage = await browser.newPage();
     const routeErrors = [];
     routePage.on("pageerror", (error) => routeErrors.push(error));

@@ -402,7 +402,12 @@ export class Viewport {
       excludeBrushIds,
     });
   }
-  appendRoutedPathNodes(startNode, endNode, excludeBrushIds = []) {
+  appendRoutedPathNodes(
+    startNode,
+    endNode,
+    excludeBrushIds = [],
+    reportError = true,
+  ) {
     const currentBrushIds = this.state.brushes
       .filter((brush) => brush.assemblyId === this.pathAssemblyId)
       .map((brush) => brush.id);
@@ -414,9 +419,10 @@ export class Viewport {
       [...new Set([...excludeBrushIds, ...currentBrushIds])],
     );
     if (routed.errors?.length || routed.points.length < 2) {
-      this.onChange(
-        `path-route-invalid:${routed.errors?.[0] || "No clear route exists"}`,
-      );
+      if (reportError)
+        this.onChange(
+          `path-route-invalid:${routed.errors?.[0] || "No clear route exists"}`,
+        );
       return false;
     }
     const lengths = [0];
@@ -3485,10 +3491,12 @@ export class Viewport {
               startNode,
               endNode,
               source.sourceBrushIds,
+              false,
             )
           ) {
-            this.pathPoints.pop();
-            this.pathSourceAttachment = null;
+            this.pathModel.nodes = this.pathPoints;
+            this.selectedPathNode = 0;
+            this.onChange("path-source-acquired");
             return;
           }
           this.selectedPathNode = this.pathPoints.length - 1;
