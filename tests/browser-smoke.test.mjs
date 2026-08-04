@@ -180,6 +180,38 @@ try {
       .filter({ hasText: "Saved" })
       .waitFor();
 
+    await page.locator('[data-tool-mode="path"]').click();
+    const editorBounds = await page.locator("#editor").boundingBox();
+    assert.ok(editorBounds, "editor canvas has measurable bounds");
+    const pathY = editorBounds.y + editorBounds.height / 2;
+    await page.mouse.click(editorBounds.x + editorBounds.width / 2 - 64, pathY);
+    await page.mouse.click(editorBounds.x + editorBounds.width / 2 + 64, pathY);
+    await page.keyboard.press("Enter");
+    await page
+      .locator("#status")
+      .filter({ hasText: "Created hallway: 4 convex brushes" })
+      .waitFor();
+    await page.locator("#stats").filter({ hasText: "6 brushes" }).waitFor();
+    await page.locator('[data-tool-mode="selection"]').click();
+    await page.locator('[data-tool-mode="path"]').click();
+    await page.locator("#stats").filter({ hasText: "2 path nodes" }).waitFor();
+    await page.evaluate(() => document.querySelector("#view-selector").click());
+    await page.evaluate(() => document.querySelector("#view-selector").click());
+    await page.mouse.move(editorBounds.x + editorBounds.width / 2 + 64, pathY);
+    await page.mouse.down();
+    await page.mouse.move(
+      editorBounds.x + editorBounds.width / 2 + 64,
+      pathY - 32,
+    );
+    await page.mouse.up();
+    await page.keyboard.press("Enter");
+    await page
+      .locator("#status")
+      .filter({ hasText: "Updated hallway: 4 convex brushes" })
+      .waitFor();
+    await page.locator("#stats").filter({ hasText: "6 brushes" }).waitFor();
+    assert.deepEqual(pageErrors, []);
+
     assert.ok(requests.some((request) => /\/assets\/.*\.js/.test(request)));
     assert.ok(requests.some((request) => /\/assets\/.*\.css/.test(request)));
     assert.equal(

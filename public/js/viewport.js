@@ -93,6 +93,8 @@ export class Viewport {
     onCreateBox = () => {},
     onExtrudeFaces = () => {},
     onBrushPreview = () => {},
+    onPathPreview = () => ({ brushes: [], errors: [] }),
+    onPathCommit = () => {},
   ) {
     this.canvas = canvas;
     this.canvas.tabIndex = 0;
@@ -102,6 +104,8 @@ export class Viewport {
     this.onCreateBox = onCreateBox;
     this.onExtrudeFaces = onExtrudeFaces;
     this.onBrushPreview = onBrushPreview;
+    this.onPathPreview = onPathPreview;
+    this.onPathCommit = onPathCommit;
     this.ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
     this.rect = canvas.getBoundingClientRect();
     this.scale = 1;
@@ -109,6 +113,10 @@ export class Viewport {
     this.drag = null;
     this.creationBox = null;
     this.creationPreviewBrushes = [];
+    this.pathPoints = [];
+    this.pathAssemblyId = null;
+    this.pathPreviewBrushes = [];
+    this.pathPreviewErrors = [];
     this.previewBrushes = [];
     this.previewErrors = [];
     this.extrusionCandidate = null;
@@ -152,7 +160,8 @@ export class Viewport {
     });
   }
   cancelInteraction() {
-    if (!this.drag && !this.creationBox) return false;
+    if (!this.drag && !this.creationBox && !this.pathPoints.length)
+      return false;
     if (this.drag?.type === "move" || this.drag?.type === "object-transform")
       for (const brush of this.state.brushes)
         brush.vertices.forEach((vertex, index) => {
@@ -163,10 +172,16 @@ export class Viewport {
       this.state.selection = this.drag.originalSelection;
     if (this.drag?.type === "face-extrude")
       this.state.faceSelection = this.drag.originalSelection;
+    if (this.drag?.type === "path-node")
+      this.pathPoints = this.drag.originalPath;
     this.drag = null;
     this.creationBox = null;
     this.previewBrushes = [];
     this.creationPreviewBrushes = [];
+    this.pathPoints = [];
+    this.pathAssemblyId = null;
+    this.pathPreviewBrushes = [];
+    this.pathPreviewErrors = [];
     this.previewErrors = [];
     this.extrusionCandidate = null;
     this.extrusionMatchDebug = [];
@@ -183,6 +198,55 @@ export class Viewport {
     }
     this.requestDraw();
     return true;
+  }
+  setPath(path, assemblyId) {
+    this.pathPoints = (path || []).map((point) => ({ ...point }));
+    this.pathAssemblyId = assemblyId || null;
+    this.refreshPathPreview();
+    this.requestDraw();
+  }
+  refreshPathPreview() {
+    if (this.pathPoints.length < 2) {
+      this.pathPreviewBrushes = [];
+      this.pathPreviewErrors = [];
+      this.requestDraw();
+      return { brushes: [], errors: [] };
+    }
+    const result = this.onPathPreview(this.pathPoints, this.pathAssemblyId) || {
+      brushes: [],
+      errors: ["Path preview failed"],
+    };
+    this.pathPreviewBrushes = result.brushes || [];
+    this.pathPreviewErrors = result.errors || [];
+    this.requestDraw();
+    return result;
+  }
+  commitPath() {
+    if (this.pathPoints.length < 2) return false;
+    const result = this.refreshPathPreview();
+    if (result.errors.length || !result.brushes.length) return false;
+    this.onPathCommit({
+      path: this.pathPoints.map((point) => ({ ...point })),
+      assemblyId: this.pathAssemblyId,
+      brushes: result.brushes,
+    });
+    return true;
+  }
+  removeLastPathPoint() {
+    if (!this.pathPoints.length) return false;
+    this.pathPoints.pop();
+    this.refreshPathPreview();
+    return true;
+  }
+  pathNodeAt(x, y) {
+    let best = null;
+    for (const [index, point] of this.pathPoints.entries()) {
+      const screen = this.screen(point);
+      const distance = Math.hypot(x - screen.x, y - screen.y);
+      if (distance <= 9 && (!best || distance < best.distance))
+        best = { index, distance };
+    }
+    return best;
   }
   commitCreation() {
     if (!this.creationBox) return false;
@@ -262,6 +326,11 @@ export class Viewport {
     const brushes = this.state.brushes.filter(
       (brush) =>
         !this.state.hiddenBrushes?.has(brush.id) &&
+        !(
+          this.state.mode === "path" &&
+          this.pathPreviewBrushes.length &&
+          brush.assemblyId === this.pathAssemblyId
+        ) &&
         (isFuncDetailBrush(brush)
           ? this.state.showFuncDetailBrushes !== false
           : this.state.showRegularBrushes !== false),
@@ -842,8 +911,7 @@ export class Viewport {
     const axis = this.axes()
       .slice(0, 2)
       .sort(
-        (a, b) =>
-          Math.abs(anchor.direction[b]) - Math.abs(anchor.direction[a]),
+        (a, b) => Math.abs(anchor.direction[b]) - Math.abs(anchor.direction[a]),
       )[0];
     const movement = anchor.direction[axis];
     if (Math.abs(movement) < 0.000001)
@@ -886,8 +954,7 @@ export class Viewport {
       screenLength = 1;
     }
     const pixels =
-      ((current.x - start.x) * dx + (current.y - start.y) * dy) /
-      screenLength;
+      ((current.x - start.x) * dx + (current.y - start.y) * dy) / screenLength;
     const pointerDistance = Math.max(0, pixels / this.scale);
     const rawDistance = this.snapExtrusionDistance(pointerDistance);
     if (this.drag) {
@@ -905,8 +972,7 @@ export class Viewport {
           rawDistance < distance - endpointReleaseDistance,
       );
     if (this.drag) this.drag.endpointPairRetreat = endpointPairRetreat;
-    if (this.drag && endpointPairRetreat)
-      this.drag.sideRailEndpointLocks = {};
+    if (this.drag && endpointPairRetreat) this.drag.sideRailEndpointLocks = {};
     const sourceBrushIds = new Set(
       [...(this.drag?.selection || [])].map(
         (faceId) => faceId.match(/^(.*):f:\d+$/)?.[1],
@@ -990,13 +1056,9 @@ export class Viewport {
       const dx = b.x - a.x,
         dy = b.y - a.y,
         len2 = dx * dx + dy * dy;
-      if (len2 < 1e-8)
-        return { point: { x: a.x, y: a.y }, t: 0, rawT: 0 };
+      if (len2 < 1e-8) return { point: { x: a.x, y: a.y }, t: 0, rawT: 0 };
       const rawT = ((point.x - a.x) * dx + (point.y - a.y) * dy) / len2;
-      const t = Math.max(
-        0,
-        Math.min(1, rawT),
-      );
+      const t = Math.max(0, Math.min(1, rawT));
       return { point: { x: a.x + dx * t, y: a.y + dy * t }, t, rawT };
     };
 
@@ -1102,7 +1164,7 @@ export class Viewport {
       const origin = lineOrigin || freeCap2D;
       const dx = freeCap2D.x - origin.x;
       const dy = freeCap2D.y - origin.y;
-      const det = railDir.x * (-capDir.y) - railDir.y * (-capDir.x);
+      const det = railDir.x * -capDir.y - railDir.y * -capDir.x;
       if (Math.abs(det) < 0.000001) return 0;
       const t = (dy * capDir.x - dx * capDir.y) / det;
       return (
@@ -1126,21 +1188,25 @@ export class Viewport {
         scale,
       );
       candidate.railInfluencePx = influence;
-      if (influence >= INFLUENCE_ACQUIRE_PX)
-        return { weak: false, influence };
+      if (influence >= INFLUENCE_ACQUIRE_PX) return { weak: false, influence };
       const nearestEndpointPx = candidate.nearestEndpointDistancePx;
       if (
         Number.isFinite(nearestEndpointPx) &&
         nearestEndpointPx <= RELEASE_RADIUS
       )
         return { weak: false, influence };
-      return { weak: true, influence, releaseReason: "near-parallel-pointer-away" };
+      return {
+        weak: true,
+        influence,
+        releaseReason: "near-parallel-pointer-away",
+      };
     };
     const adjacentSourceDirection = (group) => {
       const adjacent = brush.faces.find(
         (candidate, index) =>
           index !== faceIndex &&
-          group.filter((vertexIndex) => candidate.includes(vertexIndex)).length >= 2,
+          group.filter((vertexIndex) => candidate.includes(vertexIndex))
+            .length >= 2,
       );
       const adjacentNormal = adjacent && faceDirection(brush, adjacent);
       if (!adjacentNormal) return sourceNormalDir;
@@ -1168,7 +1234,8 @@ export class Viewport {
       const adjacent = brush.faces.find(
         (candidate, index) =>
           index !== faceIndex &&
-          group.filter((vertexIndex) => candidate.includes(vertexIndex)).length >= 2,
+          group.filter((vertexIndex) => candidate.includes(vertexIndex))
+            .length >= 2,
       );
       if (!adjacent) return null;
       const other = adjacent
@@ -1176,7 +1243,9 @@ export class Viewport {
           x: brush.vertices[vertexIndex][axisX],
           y: brush.vertices[vertexIndex][axisY],
         }))
-        .find((point) => Math.hypot(point.x - base.x, point.y - base.y) > 0.0001);
+        .find(
+          (point) => Math.hypot(point.x - base.x, point.y - base.y) > 0.0001,
+        );
       return other ? { base, other } : null;
     };
     const sourceSideSegments = {
@@ -1192,8 +1261,7 @@ export class Viewport {
     const RELEASE_RADIUS = 18;
     // Stable key: identifies the target edge (brush, face, and
     // vertex index) so endpoint magnet state persists across frames.
-    const edgeKey = (targetBrushId, fi, vi) =>
-      `${targetBrushId}:f:${fi}:${vi}`;
+    const edgeKey = (targetBrushId, fi, vi) => `${targetBrushId}:f:${fi}:${vi}`;
     const findCapSnap = (corner2D, cornerScr, baseCorner) => {
       const tryEndpointSnap = (targetBrushId, fi, ei, sWorld, eWorld) => {
         const key = edgeKey(targetBrushId, fi, ei);
@@ -1247,8 +1315,7 @@ export class Viewport {
           if (tfnLen <= 0.0001) continue;
           const tfnDX = tfnX / tfnLen;
           const tfnDY = tfnY / tfnLen;
-          const faceDot =
-            tfnDX * sourceNormalDir.x + tfnDY * sourceNormalDir.y;
+          const faceDot = tfnDX * sourceNormalDir.x + tfnDY * sourceNormalDir.y;
           if (faceDot > -0.3) continue;
           for (let ei = 0; ei < tf.length; ei++) {
             const vi = tf[ei];
@@ -1274,9 +1341,10 @@ export class Viewport {
             const dAbs = Math.abs(det);
             let snapX, snapY;
             if (dAbs < 0.0001) {
-              const tClamp = dx !== 0
-                ? (corner2D.x - sW[axisX]) / dx
-                : (corner2D.y - sW[axisY]) / dy;
+              const tClamp =
+                dx !== 0
+                  ? (corner2D.x - sW[axisX]) / dx
+                  : (corner2D.y - sW[axisY]) / dy;
               if (tClamp < 0 || tClamp > 1) {
                 if (!tryEndpointSnap(targetBrush.id, fi, ei, sW, eW)) continue;
                 snapX = sW[axisX] + dx * tClamp;
@@ -1386,21 +1454,14 @@ export class Viewport {
       const groups = new Map();
       const addProjectedEdge = (brush, faceIndex, face, edgeStart, edgeEnd) => {
         if (sourceBrushIds.has(brush.id)) return;
-        const projectedKey = projectedRailKey(
-          edgeStart,
-          edgeEnd,
-          axisX,
-          axisY,
-        );
+        const projectedKey = projectedRailKey(edgeStart, edgeEnd, axisX, axisY);
         const startKey = `${edgeStart[axisX].toFixed(5)},${edgeStart[axisY].toFixed(5)}`;
         const endKey = `${edgeEnd[axisX].toFixed(5)},${edgeEnd[axisY].toFixed(5)}`;
         const start = startKey <= endKey ? edgeStart : edgeEnd;
         const end = startKey <= endKey ? edgeEnd : edgeStart;
         if (
-          Math.hypot(
-            end[axisX] - start[axisX],
-            end[axisY] - start[axisY],
-          ) < 0.0001
+          Math.hypot(end[axisX] - start[axisX], end[axisY] - start[axisY]) <
+          0.0001
         )
           return;
         const key = `${brush.id}:${projectedKey}`;
@@ -1423,7 +1484,11 @@ export class Viewport {
       if (source === "attached") {
         for (const targetBrush of this.visibleBrushes()) {
           if (sourceBrushIds.has(targetBrush.id)) continue;
-          for (let faceIndex = 0; faceIndex < targetBrush.faces.length; faceIndex++) {
+          for (
+            let faceIndex = 0;
+            faceIndex < targetBrush.faces.length;
+            faceIndex++
+          ) {
             const face = targetBrush.faces[faceIndex];
             for (let edgeIndex = 0; edgeIndex < face.length; edgeIndex++)
               addProjectedEdge(
@@ -1440,7 +1505,9 @@ export class Viewport {
           const records = [...edge.faceIds]
             .map((id) => {
               const match = id.match(/^(.*):f:(\d+)$/);
-              const brush = match && this.state.brushes.find((item) => item.id === match[1]);
+              const brush =
+                match &&
+                this.state.brushes.find((item) => item.id === match[1]);
               const faceIndex = Number(match?.[2]);
               return brush?.faces[faceIndex]
                 ? { brush, faceIndex, face: brush.faces[faceIndex] }
@@ -1449,7 +1516,14 @@ export class Viewport {
             .filter(Boolean);
           if (records.length !== 2) continue;
           if (sourceBrushIds.has(records[0].brush.id)) continue;
-          if (records.every((record) => isNoDrawMaterial(record.brush.faceMaterials?.[record.faceIndex] || record.brush.material)))
+          if (
+            records.every((record) =>
+              isNoDrawMaterial(
+                record.brush.faceMaterials?.[record.faceIndex] ||
+                  record.brush.material,
+              ),
+            )
+          )
             continue;
           for (const record of records)
             addProjectedEdge(
@@ -1467,11 +1541,21 @@ export class Viewport {
         const end = { x: group.end[axisX], y: group.end[axisY] };
         const railDirection = canonicalLineDirection(start, end);
         if (!railDirection) continue;
-        const reference = movingEdge === "sideA"
-          ? { x: (baseB.x + freeCapWorld2D.x) / 2, y: (baseB.y + freeCapWorld2D.y) / 2 }
-          : { x: (baseA.x + freeCapWorld2D.x) / 2, y: (baseA.y + freeCapWorld2D.y) / 2 };
+        const reference =
+          movingEdge === "sideA"
+            ? {
+                x: (baseB.x + freeCapWorld2D.x) / 2,
+                y: (baseB.y + freeCapWorld2D.y) / 2,
+              }
+            : {
+                x: (baseA.x + freeCapWorld2D.x) / 2,
+                y: (baseA.y + freeCapWorld2D.y) / 2,
+              };
         const boundaryFace = chooseProjectedBoundaryFace(
-          [...group.records.values()].map((record) => ({ ...record, edgePoint: start })),
+          [...group.records.values()].map((record) => ({
+            ...record,
+            edgePoint: start,
+          })),
           railDirection,
           reference,
           axisX,
@@ -1502,11 +1586,7 @@ export class Viewport {
           start,
           end,
         );
-        const closestWorld = closestPointOnSegment(
-          freeCapWorld2D,
-          start,
-          end,
-        );
+        const closestWorld = closestPointOnSegment(freeCapWorld2D, start, end);
         const segmentDistanceWorld = Math.hypot(
           freeCapWorld2D.x - closestWorld.point.x,
           freeCapWorld2D.y - closestWorld.point.y,
@@ -1545,7 +1625,8 @@ export class Viewport {
           endpointLocked &&
           Number.isFinite(endpointLockDistance) &&
           rawDistance <
-            endpointLockDistance - RELEASE_RADIUS / Math.max(this.scale, 0.0001);
+            endpointLockDistance -
+              RELEASE_RADIUS / Math.max(this.scale, 0.0001);
         const endpointReleased =
           lockedKey === group.key &&
           endpointLocked &&
@@ -1562,11 +1643,7 @@ export class Viewport {
           source === "magnetic" &&
           !railAngleAllowed &&
           endpointDistance <= RELEASE_RADIUS;
-        if (
-          !railAngleAllowed &&
-          source === "magnetic" &&
-          !endpointAngleBypass
-        )
+        if (!railAngleAllowed && source === "magnetic" && !endpointAngleBypass)
           continue;
         const finiteAttachDistance = Math.hypot(
           baseCornerWorld.x - attach.point.x,
@@ -1592,7 +1669,8 @@ export class Viewport {
               x: sourceSegment.other.x - sourceSegment.base.x,
               y: sourceSegment.other.y - sourceSegment.base.y,
             };
-            const sourceLength = sourceDirection &&
+            const sourceLength =
+              sourceDirection &&
               Math.hypot(sourceDirection.x, sourceDirection.y);
             const sourceAlignment = sourceLength
               ? Math.abs(
@@ -1601,7 +1679,8 @@ export class Viewport {
                     sourceLength,
                 )
               : 0;
-            const sourceEndpoint = sourceSegment &&
+            const sourceEndpoint =
+              sourceSegment &&
               closestPointOnSegment(sourceSegment.other, start, end);
             if (
               !sourceSegment ||
@@ -1692,16 +1771,26 @@ export class Viewport {
           group.endpointSnapReleased = endpointReleased;
           distancePx = lineDistanceWorld;
         } else {
-          if (Math.max(forwardStart, forwardEnd) <= 0.05)
-            continue;
-          const capLineDistancePx = distancePointToLine(freeCapScreen, group.startScreen, group.endScreen);
-          const closest = closestPointOnSegment(freeCapScreen, group.startScreen, group.endScreen);
+          if (Math.max(forwardStart, forwardEnd) <= 0.05) continue;
+          const capLineDistancePx = distancePointToLine(
+            freeCapScreen,
+            group.startScreen,
+            group.endScreen,
+          );
+          const closest = closestPointOnSegment(
+            freeCapScreen,
+            group.startScreen,
+            group.endScreen,
+          );
           const closestWorld = closestPointOnSegment(
             freeCapWorld2D,
             start,
             end,
           );
-          const segmentDistancePx = Math.hypot(freeCapScreen.x - closest.point.x, freeCapScreen.y - closest.point.y);
+          const segmentDistancePx = Math.hypot(
+            freeCapScreen.x - closest.point.x,
+            freeCapScreen.y - closest.point.y,
+          );
           const candidateDistance = Math.min(
             capLineDistancePx,
             segmentDistancePx,
@@ -1728,8 +1817,7 @@ export class Viewport {
           candidateAttachmentPoint = closestWorld.point;
           candidateRawSegmentT = closestWorld.rawT;
           candidateAvailableForwardLength = magneticUsableForwardLength;
-          const retained =
-            lockedKey === group.key && candidateDistance <= 18;
+          const retained = lockedKey === group.key && candidateDistance <= 18;
           if (
             (pastFiniteEnd && !endpointReleased) ||
             (magneticUsableForwardLength <= 0.01 && !endpointReleased) ||
@@ -1773,7 +1861,8 @@ export class Viewport {
               x: endpoint[axisX],
               y: endpoint[axisY],
             };
-            capProjectedT = startEndpointDistance <= endEndpointDistance ? 0 : 1;
+            capProjectedT =
+              startEndpointDistance <= endEndpointDistance ? 0 : 1;
           } else {
             group.cornerSnap = closestWorld.point;
           }
@@ -1786,13 +1875,20 @@ export class Viewport {
           movingEdge,
           targetBrushId: group.brush.id,
           targetFaceIndex: boundaryFace.faceIndex,
-          adjacentFaceIndices: [...group.records.values()].map((record) => record.faceIndex),
+          adjacentFaceIndices: [...group.records.values()].map(
+            (record) => record.faceIndex,
+          ),
           railDirection,
           lineOrigin: start,
           targetStartWorld: { ...group.start },
           targetEndWorld: { ...group.end },
           targetFaceNormal: boundaryFace.normal,
-          projectedRailKey: projectedRailKey(group.start, group.end, axisX, axisY),
+          projectedRailKey: projectedRailKey(
+            group.start,
+            group.end,
+            axisX,
+            axisY,
+          ),
           canonicalKey: group.key,
           source,
           attachmentKind,
@@ -1832,7 +1928,11 @@ export class Viewport {
           lineDistancePx: distancePx,
         });
       }
-      return candidates.sort((a, b) => a.distancePx - b.distancePx || a.canonicalKey.localeCompare(b.canonicalKey));
+      return candidates.sort(
+        (a, b) =>
+          a.distancePx - b.distancePx ||
+          a.canonicalKey.localeCompare(b.canonicalKey),
+      );
     };
     const findSideSnap = (
       movingEdge,
@@ -1868,29 +1968,21 @@ export class Viewport {
       railSnappingEnabled && extrusionPolicy.sideSnap;
     // Discover cap and side candidates from both cap corners only for a
     // single active face. Grouped multi-face extrusion remains unconstrained.
-    const capSnapsA = railSnappingEnabled ? findCapSnap(
-      freeCapA2D,
-      freeCapScrA,
-      { x: baseA.x, y: baseA.y },
-    ) : [];
-    const capSnapsB = railSnappingEnabled ? findCapSnap(
-      freeCapB2D,
-      freeCapScrB,
-      { x: baseB.x, y: baseB.y },
-    ) : [];
+    const capSnapsA = railSnappingEnabled
+      ? findCapSnap(freeCapA2D, freeCapScrA, { x: baseA.x, y: baseA.y })
+      : [];
+    const capSnapsB = railSnappingEnabled
+      ? findCapSnap(freeCapB2D, freeCapScrB, { x: baseB.x, y: baseB.y })
+      : [];
     const capSnaps = [...capSnapsA, ...capSnapsB].sort(
       (a, b) => a.distance - b.distance,
     );
-    const attachedACandidates = sideRailSnappingEnabled ? findAttachedEdges(
-      "sideA",
-      { x: baseA.x, y: baseA.y },
-      freeCapA2D,
-    ) : [];
-    const attachedBCandidates = sideRailSnappingEnabled ? findAttachedEdges(
-      "sideB",
-      { x: baseB.x, y: baseB.y },
-      freeCapB2D,
-    ) : [];
+    const attachedACandidates = sideRailSnappingEnabled
+      ? findAttachedEdges("sideA", { x: baseA.x, y: baseA.y }, freeCapA2D)
+      : [];
+    const attachedBCandidates = sideRailSnappingEnabled
+      ? findAttachedEdges("sideB", { x: baseB.x, y: baseB.y }, freeCapB2D)
+      : [];
     const hardAPool = dedupeFirst(attachedACandidates).slice(0, 6);
     const hardBPool = dedupeFirst(attachedBCandidates).slice(0, 6);
     // Attached and magnetic support-line candidates are both evaluated;
@@ -1940,16 +2032,12 @@ export class Viewport {
       ? rawDistance < (this.drag.maxRawDistance || 0) - 1 / this.scale
       : false;
     const releasedRail = this.drag?.weakRailRelease;
-    if (
-      releasedRail &&
-      rawDistance > releasedRail.rawDistance + 1 / this.scale
-    )
+    if (releasedRail && rawDistance > releasedRail.rawDistance + 1 / this.scale)
       this.drag.weakRailRelease = null;
     const weakRailReleaseActive = Boolean(
       this.drag?.weakRailRelease &&
-        pointerRetreating &&
-        rawDistance <=
-          this.drag.weakRailRelease.rawDistance + 1 / this.scale,
+      pointerRetreating &&
+      rawDistance <= this.drag.weakRailRelease.rawDistance + 1 / this.scale,
     );
     const suppressWeakPoolEntries = (pool, freeCap2D) => {
       for (const candidate of pool) {
@@ -1963,7 +2051,8 @@ export class Viewport {
         );
         if (check.weak && pointerRetreating) {
           candidate.weakRailSuppressed = true;
-          candidate.releaseReason = check.releaseReason || "near-parallel-pointer-away";
+          candidate.releaseReason =
+            check.releaseReason || "near-parallel-pointer-away";
         }
       }
       return pool.filter((c) => !c.weakRailSuppressed);
@@ -2002,9 +2091,7 @@ export class Viewport {
     const bestCap = capSnaps[0] || null;
     const allActiveAxes = this.axes();
     const freeSideAngleDegrees =
-      this.state.faceExtrusionMode === "snap"
-        ? 0
-        : undefined;
+      this.state.faceExtrusionMode === "snap" ? 0 : undefined;
     const makeCapConstraint = (snap) => ({
       movingEdge: "cap",
       direction: snap.direction,
@@ -2052,11 +2139,7 @@ export class Viewport {
         if (constraint.movingEdge === "cap") return true;
         if (constraint.endpointSnapReleased) return true;
         const edge = solved.solvedEdges?.[constraint.movingEdge];
-        if (
-          !edge ||
-          !constraint.targetStartWorld ||
-          !constraint.targetEndWorld
-        )
+        if (!edge || !constraint.targetStartWorld || !constraint.targetEndWorld)
           return false;
         const targetStart = {
           x: constraint.targetStartWorld[axisX],
@@ -2072,21 +2155,19 @@ export class Viewport {
                 constraint.movingEdge === "sideA" ? edge[1] : edge[0],
                 constraint.movingEdge === "sideA" ? edge[1] : edge[0],
               ]
-              : edge;
-        if (!solvedEdgeMatchesRail(
-          constrainedEdge,
-          targetStart,
-          targetEnd,
-          SIDE_BASE_TOLERANCE + 0.01,
-        ))
-          return false;
+            : edge;
         if (
-          constraint.source !== "attached" ||
-          constraint.endpointSnapReleased
+          !solvedEdgeMatchesRail(
+            constrainedEdge,
+            targetStart,
+            targetEnd,
+            SIDE_BASE_TOLERANCE + 0.01,
+          )
         )
+          return false;
+        if (constraint.source !== "attached" || constraint.endpointSnapReleased)
           return true;
-        const capPoint =
-          constraint.movingEdge === "sideA" ? edge[1] : edge[0];
+        const capPoint = constraint.movingEdge === "sideA" ? edge[1] : edge[0];
         const capProjection = projectPointToSegment(
           capPoint,
           targetStart,
@@ -2129,11 +2210,13 @@ export class Viewport {
           let bestSingle = null;
           let bestSingleScore = Infinity;
           const evalSet = [
-            ...hardAPool.filter(singleRailAllowed).flatMap((sA) =>
-              hardBPool
-                .filter(singleRailAllowed)
-                .map((sB) => ({ sideA: sA, sideB: sB })),
-            ),
+            ...hardAPool
+              .filter(singleRailAllowed)
+              .flatMap((sA) =>
+                hardBPool
+                  .filter(singleRailAllowed)
+                  .map((sB) => ({ sideA: sA, sideB: sB })),
+              ),
             ...hardAPool
               .filter(singleRailAllowed)
               .map((sideA) => ({ sideA, sideB: null })),
@@ -2146,8 +2229,11 @@ export class Viewport {
             if (pair.sideA) cands.push(makeSideConstraint(pair.sideA));
             if (pair.sideB) cands.push(makeSideConstraint(pair.sideB));
             const sol = solveSingleFaceExtrusion({
-              brush, faceIndex, distance: probeDistance,
-              activeAxes: allActiveAxes, constraints: cands,
+              brush,
+              faceIndex,
+              distance: probeDistance,
+              activeAxes: allActiveAxes,
+              constraints: cands,
               followAdjacentSides: this.state.faceExtrusionMode === "snap",
               mirrorSingleSide:
                 this.state.faceExtrusionMode === "snap" && cands.length > 1,
@@ -2233,19 +2319,20 @@ export class Viewport {
             rejectedRailCandidates.push({
               movingEdge: "sideA+sideB",
               source: "attached",
-              rejectionReason: hardAPool.length && hardBPool.length
-                ? "invalid-pair"
-                : "no-valid-hard-rail",
+              rejectionReason:
+                hardAPool.length && hardBPool.length
+                  ? "invalid-pair"
+                  : "no-valid-hard-rail",
               candidateKeys: [
                 ...hardAPool.map((candidate) => candidate.canonicalKey),
                 ...hardBPool.map((candidate) => candidate.canonicalKey),
               ],
             });
           }
-        // Stay pending when no usable hard rail exists. The lock state only
-        // advances; it never needs a terminal "none" state.
+          // Stay pending when no usable hard rail exists. The lock state only
+          // advances; it never needs a terminal "none" state.
+        }
       }
-    }
     }
     const hardPair = this.drag?.startRailPair || null;
     const refreshLockedRail = (rail, pool, movingEdge) => {
@@ -2270,8 +2357,7 @@ export class Viewport {
           influence < INFLUENCE_RELEASE_PX &&
           (rail.nearestEndpointDistancePx == null ||
             rail.nearestEndpointDistancePx > RELEASE_RADIUS) &&
-          rawDistance <
-            (this.drag.maxRawDistance || 0) - 1 / this.scale
+          rawDistance < (this.drag.maxRawDistance || 0) - 1 / this.scale
         ) {
           rail.weakRailSuppressed = true;
           rail.releaseReason = "near-parallel-pointer-away";
@@ -2362,9 +2448,9 @@ export class Viewport {
     recordDuplicateProjectedRails(attachedBCandidates);
     this.extrusionAcquisitionDebug.rawDistance = rawDistance;
     this.extrusionAcquisitionDebug.probeDistance = probeDistance;
-    this.extrusionAcquisitionDebug.pointerTangentOffset =
-      pointerTangentOffset;
-    this.extrusionAcquisitionDebug.lockState = this.drag?.startRailState || "pending";
+    this.extrusionAcquisitionDebug.pointerTangentOffset = pointerTangentOffset;
+    this.extrusionAcquisitionDebug.lockState =
+      this.drag?.startRailState || "pending";
 
     // Try constraint combinations in priority order (most→least constrained).
     const tryConstraints = (candidates) => {
@@ -2377,7 +2463,9 @@ export class Viewport {
       )
         return null;
       let sol = solveSingleFaceExtrusion({
-        brush, faceIndex, distance: rawDistance,
+        brush,
+        faceIndex,
+        distance: rawDistance,
         activeAxes: allActiveAxes,
         constraints: candidates,
         followAdjacentSides: this.state.faceExtrusionMode === "snap",
@@ -2397,8 +2485,7 @@ export class Viewport {
             continue;
           const edge = sol.solvedEdges?.[candidate.movingEdge];
           if (!edge) continue;
-          const capPoint =
-            candidate.movingEdge === "sideA" ? edge[1] : edge[0];
+          const capPoint = candidate.movingEdge === "sideA" ? edge[1] : edge[0];
           const targetStart = {
             x: candidate.targetStartWorld[axisX],
             y: candidate.targetStartWorld[axisY],
@@ -2448,7 +2535,11 @@ export class Viewport {
       if (!sol?.cap || !solvedEdgesMatchTargets(sol, candidates)) return null;
       for (const candidate of candidates) {
         const solvedEdge = sol.solvedEdges[candidate.movingEdge];
-        if (!solvedEdge || !candidate.targetStartWorld || !candidate.targetEndWorld)
+        if (
+          !solvedEdge ||
+          !candidate.targetStartWorld ||
+          !candidate.targetEndWorld
+        )
           continue;
         const targetStart = {
           x: candidate.targetStartWorld[axisX],
@@ -2499,8 +2590,7 @@ export class Viewport {
           sol.capB.x - sol.capA.x,
           sol.capB.y - sol.capA.y,
         );
-        widthInfluencePx =
-          Math.abs(parallelWidth - solvedWidth) * this.scale;
+        widthInfluencePx = Math.abs(parallelWidth - solvedWidth) * this.scale;
       }
       let attractionScore = 0;
       for (const candidate of candidates) {
@@ -2526,9 +2616,13 @@ export class Viewport {
         safeDistance: resolved.finalDistance,
         attractionScore,
         widthInfluencePx,
-        candidateKey: candidates
-          .map((candidate) => candidate.canonicalKey || candidate.targetBrushId || "")
-          .join("|") || "",
+        candidateKey:
+          candidates
+            .map(
+              (candidate) =>
+                candidate.canonicalKey || candidate.targetBrushId || "",
+            )
+            .join("|") || "",
         snapTarget,
         resolved,
         blocked: resolved.blocked,
@@ -2615,8 +2709,8 @@ export class Viewport {
       // Both hard rails exist: must include both.
       const cA = makeSideConstraint(hardSideA);
       const cB = makeSideConstraint(hardSideB);
-       if (capCon.length) consider(tryConstraints([...capCon, cA, cB]));
-       consider(tryConstraints([cA, cB]));
+      if (capCon.length) consider(tryConstraints([...capCon, cA, cB]));
+      consider(tryConstraints([cA, cB]));
     } else if (hardSideA) {
       // Hard sideA exists: must include it. Try with each soft sideB.
       const cA = makeSideConstraint(hardSideA);
@@ -2625,8 +2719,9 @@ export class Viewport {
         if (capCon.length) consider(tryConstraints([...capCon, cA, cB]));
         consider(tryConstraints([cA, cB]));
       }
-       if (!sideBPool.length && capCon.length) consider(tryConstraints([...capCon, cA]));
-       consider(tryConstraints([cA]));
+      if (!sideBPool.length && capCon.length)
+        consider(tryConstraints([...capCon, cA]));
+      consider(tryConstraints([cA]));
     } else if (hardSideB) {
       // Hard sideB exists: must include it. Try with each soft sideA.
       const cB = makeSideConstraint(hardSideB);
@@ -2635,8 +2730,9 @@ export class Viewport {
         if (capCon.length) consider(tryConstraints([...capCon, cA, cB]));
         consider(tryConstraints([cA, cB]));
       }
-       if (!sideAPool.length && capCon.length) consider(tryConstraints([...capCon, cB]));
-       consider(tryConstraints([cB]));
+      if (!sideAPool.length && capCon.length)
+        consider(tryConstraints([...capCon, cB]));
+      consider(tryConstraints([cB]));
     } else {
       // No hard rails: free cross-product fallback.
       if (sideAPool.length && sideBPool.length) {
@@ -2735,7 +2831,9 @@ export class Viewport {
           constraint.endpointSnapActive &&
           !constraint.endpointSnapReleased
         ) {
-          if (endpointLocks[constraint.movingEdge] !== constraint.canonicalKey) {
+          if (
+            endpointLocks[constraint.movingEdge] !== constraint.canonicalKey
+          ) {
             endpointLocks[constraint.movingEdge] = constraint.canonicalKey;
             endpointDistances[constraint.movingEdge] = rawDistance;
           }
@@ -2899,6 +2997,34 @@ export class Viewport {
         return;
       }
       if (event.button !== 0) return;
+      if (this.state.mode === "path") {
+        const node = this.pathNodeAt(event.offsetX, event.offsetY);
+        if (node) {
+          this.canvas.setPointerCapture(event.pointerId);
+          this.drag = {
+            type: "path-node",
+            index: node.index,
+            originalPath: this.pathPoints.map((point) => ({ ...point })),
+          };
+          return;
+        }
+        if (this.kind !== "top") {
+          this.onChange("path-top-view-required");
+          return;
+        }
+        const world = this.world({ x: event.offsetX, y: event.offsetY });
+        this.pathPoints.push({
+          x: roundToGrid(world.x, this.state.grid),
+          y: roundToGrid(world.y, this.state.grid),
+          z: roundToGrid(
+            Number(this.state.pathSettings?.baseElevation) || 0,
+            this.state.grid,
+          ),
+        });
+        this.refreshPathPreview();
+        this.onChange("path-preview");
+        return;
+      }
       if (this.state.mode === "brush" && this.creationBox) {
         const handle = this.creationHandleAt(event.offsetX, event.offsetY);
         if (handle) {
@@ -3085,6 +3211,15 @@ export class Viewport {
         this.requestDraw();
         return;
       }
+      if (this.drag.type === "path-node") {
+        const current = this.world({ x: event.offsetX, y: event.offsetY });
+        const [horizontal, vertical] = this.axes();
+        const point = this.pathPoints[this.drag.index];
+        point[horizontal] = roundToGrid(current[horizontal], this.state.grid);
+        point[vertical] = roundToGrid(current[vertical], this.state.grid);
+        this.refreshPathPreview();
+        return;
+      }
       if (this.drag.type === "face-paint") {
         const hit = this.faceAt(event.offsetX, event.offsetY, "toggle");
         if (
@@ -3114,21 +3249,18 @@ export class Viewport {
           this.drag.extrusionCandidate?.resolved ||
           (this.drag.geometryBlocked
             ? null
-            :
-            resolveExtrusion({
-              sourceBrushes: this.state.brushes,
-              selection: this.drag.selection,
-              rawDistance,
-              grid: this.state.grid,
-              guideSelection: this.drag.guideSelection,
-              mode: this.state.faceExtrusionMode,
-              snapTarget: null,
-              maxSourceAngleDegrees: this.state.faceSourceMaxAngle,
-              maxFreeSideAngleDegrees:
-                this.state.faceExtrusionMode === "snap"
-                  ? 0
-                  : undefined,
-            }));
+            : resolveExtrusion({
+                sourceBrushes: this.state.brushes,
+                selection: this.drag.selection,
+                rawDistance,
+                grid: this.state.grid,
+                guideSelection: this.drag.guideSelection,
+                mode: this.state.faceExtrusionMode,
+                snapTarget: null,
+                maxSourceAngleDegrees: this.state.faceSourceMaxAngle,
+                maxFreeSideAngleDegrees:
+                  this.state.faceExtrusionMode === "snap" ? 0 : undefined,
+              }));
         this.drag.resolvedExtrusion = resolved;
         this.drag.distance = resolved?.finalDistance || 0;
         this.previewBrushes = resolved?.previewBrushes || [];
@@ -3307,14 +3439,18 @@ export class Viewport {
       this.drag.dragged = true;
       if (this.drag.type === "face-extrude")
         this.canvas.style.cursor = "grabbing";
-      else if (this.drag.type === "pan")
-        this.canvas.style.cursor = "move";
-      else
-        this.canvas.style.cursor = "crosshair";
+      else if (this.drag.type === "pan") this.canvas.style.cursor = "move";
+      else this.canvas.style.cursor = "crosshair";
       this.requestDraw();
     });
     this.canvas.addEventListener("pointerup", () => {
       if (!this.drag) return;
+      if (this.drag.type === "path-node") {
+        this.drag = null;
+        this.onChange("path-preview");
+        this.requestDraw();
+        return;
+      }
       if (this.drag.type === "face-paint") {
         this.drag = null;
         this.onChange("selection-commit");
@@ -3719,11 +3855,13 @@ export class Viewport {
     const previewIds = new Set([
       ...this.previewBrushes.map((brush) => brush.id),
       ...this.creationPreviewBrushes.map((brush) => brush.id),
+      ...this.pathPreviewBrushes.map((brush) => brush.id),
     ]);
     for (const brush of [
       ...this.visibleBrushes(),
       ...this.previewBrushes,
       ...this.creationPreviewBrushes,
+      ...this.pathPreviewBrushes,
     ])
       for (const [faceIndex, face] of brush.faces.entries()) {
         const id = `${brush.id}:f:${faceIndex}`,
@@ -3737,9 +3875,10 @@ export class Viewport {
         });
         context.closePath();
         if (previewIds.has(brush.id)) {
-          context.fillStyle = this.previewErrors.length
-            ? "#ff405544"
-            : "#ffc92822";
+          context.fillStyle =
+            this.previewErrors.length || this.pathPreviewErrors.length
+              ? "#ff405544"
+              : "#ffc92822";
           context.fill();
         }
         if (selectedFace) {
@@ -3747,7 +3886,8 @@ export class Viewport {
           context.fill();
         }
         context.strokeStyle =
-          previewIds.has(brush.id) && this.previewErrors.length
+          previewIds.has(brush.id) &&
+          (this.previewErrors.length || this.pathPreviewErrors.length)
             ? COLORS.invalid
             : this.state.brushSelection?.has(brush.id) || selectedFace
               ? COLORS.selected
@@ -3755,6 +3895,25 @@ export class Viewport {
         context.lineWidth = 1;
         context.stroke();
       }
+    if (this.state.mode === "path" && this.pathPoints.length) {
+      context.strokeStyle = this.pathPreviewErrors.length
+        ? COLORS.invalid
+        : COLORS.active;
+      context.lineWidth = 2;
+      context.beginPath();
+      this.pathPoints.forEach((point, index) => {
+        const screen = this.screen(point);
+        if (index) context.lineTo(screen.x, screen.y);
+        else context.moveTo(screen.x, screen.y);
+      });
+      context.stroke();
+      for (const [index, point] of this.pathPoints.entries()) {
+        const screen = this.screen(point);
+        context.fillStyle = index === 0 ? COLORS.faceHover : COLORS.selected;
+        context.fillRect(screen.x - 4, screen.y - 4, 8, 8);
+      }
+      context.lineWidth = 1;
+    }
     if (
       this.state.mode === "face" &&
       (this.drag?.type === "face-extrude" ||
@@ -3878,11 +4037,19 @@ export class Viewport {
         const s0 = this.screen(aPt);
         const s1 = this.screen(bPt);
         context.strokeStyle = "#000000";
-        context.lineWidth = 12; context.lineCap = "round"; context.setLineDash([]);
-        context.beginPath(); context.moveTo(s0.x, s0.y); context.lineTo(s1.x, s1.y); context.stroke();
+        context.lineWidth = 12;
+        context.lineCap = "round";
+        context.setLineDash([]);
+        context.beginPath();
+        context.moveTo(s0.x, s0.y);
+        context.lineTo(s1.x, s1.y);
+        context.stroke();
         context.strokeStyle = color;
         context.lineWidth = 8;
-        context.beginPath(); context.moveTo(s0.x, s0.y); context.lineTo(s1.x, s1.y); context.stroke();
+        context.beginPath();
+        context.moveTo(s0.x, s0.y);
+        context.lineTo(s1.x, s1.y);
+        context.stroke();
       }
 
       // 4) Legend
@@ -4047,7 +4214,8 @@ export class Viewport {
       context.strokeRect(x, y, boxWidth, boxHeight);
       context.setLineDash([]);
       // Dimension labels (like Hammer) — world-space width / height
-      let dimW = 0, dimH = 0;
+      let dimW = 0,
+        dimH = 0;
       if (this.creationBox) {
         const { start: cs, end: ce, axes: cAxes } = this.creationBox;
         const [axX, axY] = cAxes || this.axes();
@@ -4070,7 +4238,11 @@ export class Viewport {
         context.textBaseline = "bottom";
         context.fillText(`${dimW.toFixed(dec)}`, x + boxWidth / 2, y - 6);
         context.textBaseline = "top";
-        context.fillText(`${dimH.toFixed(dec)}`, x + boxWidth + 6, y + boxHeight / 2);
+        context.fillText(
+          `${dimH.toFixed(dec)}`,
+          x + boxWidth + 6,
+          y + boxHeight / 2,
+        );
       }
       context.fillStyle = COLORS.selected;
       for (const [handleX, handleY] of [

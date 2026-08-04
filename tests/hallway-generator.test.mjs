@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { validateBrush } from "../public/js/brush-validation.js";
 import { generateHallway } from "../public/js/hallway-generator.js";
+import {
+  createProject,
+  normalizeProject,
+} from "../public/js/project-format.js";
 
 const settings = {
   interiorWidth: 64,
@@ -17,8 +21,7 @@ const verticesAtXY = (brushes, x, y) =>
   brushes.flatMap((brush) =>
     brush.vertices.filter(
       (vertex) =>
-        Math.abs(vertex.x - x) < 0.000001 &&
-        Math.abs(vertex.y - y) < 0.000001,
+        Math.abs(vertex.x - x) < 0.000001 && Math.abs(vertex.y - y) < 0.000001,
     ),
   );
 
@@ -36,7 +39,9 @@ const verticesAtXY = (brushes, x, y) =>
   assert.ok(result.brushes.every((brush) => brush.vertices.length === 8));
   assert.ok(result.brushes.every((brush) => brush.faces.length === 6));
   assert.ok(result.brushes.every((brush) => validateBrush(brush).length === 0));
-  assert.ok(result.brushes.every((brush) => brush.assemblyId === "hallway-test"));
+  assert.ok(
+    result.brushes.every((brush) => brush.assemblyId === "hallway-test"),
+  );
   assert.ok(result.brushes.every((brush) => brush.groupId === "hallway-test"));
   assert.deepEqual(
     new Set(result.brushes.map((brush) => brush.generator.role)),
@@ -70,6 +75,19 @@ const verticesAtXY = (brushes, x, y) =>
       }),
     ),
     "the center of the hallway must remain outside every solid brush",
+  );
+  const restored = normalizeProject(
+    JSON.parse(JSON.stringify(createProject({ brushes: result.brushes }))),
+  );
+  assert.deepEqual(
+    restored.brushes[0].generator.path,
+    result.brushes[0].generator.path,
+    "portable projects preserve the editable hallway centerline",
+  );
+  assert.deepEqual(
+    restored.brushes[0].generator.settings,
+    result.brushes[0].generator.settings,
+    "portable projects preserve hallway generator settings",
   );
 }
 
@@ -125,15 +143,19 @@ const verticesAtXY = (brushes, x, y) =>
     (brush) => brush.generator.role === "left-wall",
   );
   assert.deepEqual(
-    [...new Set(floor.vertices.filter((vertex) => vertex.x === 0).map((v) => v.z))].sort(
-      (a, b) => a - b,
-    ),
+    [
+      ...new Set(
+        floor.vertices.filter((vertex) => vertex.x === 0).map((v) => v.z),
+      ),
+    ].sort((a, b) => a - b),
     [8, 16],
   );
   assert.deepEqual(
-    [...new Set(floor.vertices.filter((vertex) => vertex.x === 128).map((v) => v.z))].sort(
-      (a, b) => a - b,
-    ),
+    [
+      ...new Set(
+        floor.vertices.filter((vertex) => vertex.x === 128).map((v) => v.z),
+      ),
+    ].sort((a, b) => a - b),
     [72, 80],
   );
   const wallStart = leftWall.vertices.filter((vertex) => vertex.x === 0);

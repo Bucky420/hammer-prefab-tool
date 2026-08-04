@@ -13,6 +13,7 @@ import {
   generateSphere,
   generateTorus,
 } from "./primitive-generator.js";
+import { generateHallway } from "./hallway-generator.js";
 import { validateAll } from "./brush-validation.js";
 import { History } from "./history.js";
 import { Viewport } from "./viewport.js";
@@ -73,6 +74,28 @@ state.hiddenBrushes ||= new Set();
 state.squareBox ??= localStorage.getItem("squareBox") === "1";
 state.faceSelectionScope ||= "group";
 state.faceToolMode ||= "extrude";
+state.pathSettings ||= {};
+state.pathSettings = {
+  type: "hallway",
+  interiorWidth: 128,
+  interiorHeight: 128,
+  wallThickness: 16,
+  floorThickness: 16,
+  ceilingThickness: 16,
+  baseElevation: 0,
+  materials: {
+    floor: "dev/dev_measuregeneric01b",
+    wall: "dev/dev_measurewall01a",
+    ceiling: "dev/dev_measuregeneric01b",
+  },
+  ...state.pathSettings,
+  materials: {
+    floor: "dev/dev_measuregeneric01b",
+    wall: "dev/dev_measurewall01a",
+    ceiling: "dev/dev_measuregeneric01b",
+    ...state.pathSettings.materials,
+  },
+};
 state.entities ||= [];
 state.groups ||= [];
 state.ringMaterialRoles ||= {};
@@ -189,6 +212,18 @@ const view = new Viewport(
       );
     } else if (changeType === "brush-created") {
       redraw();
+    } else if (changeType === "path-preview") {
+      redraw();
+      setStatus(
+        view.pathPreviewErrors[0] ||
+          `${view.pathPoints.length} path point${view.pathPoints.length === 1 ? "" : "s"}; Enter commits, Backspace removes the last point`,
+        Boolean(view.pathPreviewErrors.length),
+      );
+    } else if (changeType === "path-top-view-required") {
+      setStatus(
+        "Add hallway points in Top view; use Front or Side to edit elevations",
+        true,
+      );
     } else if (changeType === "face-incompatible") {
       redraw();
       setStatus(
@@ -224,6 +259,14 @@ const view = new Viewport(
     view.creationPreviewBrushes = buildBrushesFromBounds(bounds) || [];
     view.requestDraw();
   },
+  (path, assemblyId) =>
+    generateHallway({
+      path,
+      assemblyId,
+      ...state.pathSettings,
+      grid: state.grid,
+    }),
+  ({ assemblyId, brushes }) => commitHallway(assemblyId, brushes),
 );
 /*
   Brush creation is intentionally staged: Hammer lets the user resize the
@@ -311,7 +354,7 @@ const railSizeObserver = new ResizeObserver((entries) => {
   const width = entries[0].contentRect.width;
   toolRail.classList.toggle("compact", width < 56);
 });
-toolRail.innerHTML = `<button type="button" data-tool-mode="selection" title="Object selection tool"><svg viewBox="0 0 24 24"><path d="M5 3l12 10-6 1-3 7-3-18z"/></svg><span>Object</span></button><button type="button" data-tool-mode="brush" title="Brush tool"><svg viewBox="0 0 24 24"><path d="M4 18h16M6 14h12V5H6z"/></svg><span>Brush</span></button><button type="button" data-tool-mode="face" title="Face selection and extrusion"><svg viewBox="0 0 24 24"><path d="M4 7l8-4 8 4-8 4zM4 7v9l8 5v-10M20 7v9l-8 5"/></svg><span>Face</span></button><button type="button" data-tool-mode="vertex" title="Vertex editing"><svg viewBox="0 0 24 24"><path d="M5 5l14 14M19 5L5 19M5 5h14v14H5z"/></svg><span>Vertex</span></button>`;
+toolRail.innerHTML = `<button type="button" data-tool-mode="selection" title="Object selection tool"><svg viewBox="0 0 24 24"><path d="M5 3l12 10-6 1-3 7-3-18z"/></svg><span>Object</span></button><button type="button" data-tool-mode="brush" title="Brush tool"><svg viewBox="0 0 24 24"><path d="M4 18h16M6 14h12V5H6z"/></svg><span>Brush</span></button><button type="button" data-tool-mode="path" title="Path generator tool"><svg viewBox="0 0 24 24"><path d="M4 18l5-10 6 8 5-11"/><circle cx="4" cy="18" r="1.5"/><circle cx="9" cy="8" r="1.5"/><circle cx="15" cy="16" r="1.5"/><circle cx="20" cy="5" r="1.5"/></svg><span>Path</span></button><button type="button" data-tool-mode="face" title="Face selection and extrusion"><svg viewBox="0 0 24 24"><path d="M4 7l8-4 8 4-8 4zM4 7v9l8 5v-10M20 7v9l-8 5"/></svg><span>Face</span></button><button type="button" data-tool-mode="vertex" title="Vertex editing"><svg viewBox="0 0 24 24"><path d="M5 5l14 14M19 5L5 19M5 5h14v14H5z"/></svg><span>Vertex</span></button>`;
 document.querySelector("main").prepend(toolRail);
 railSizeObserver.observe(toolRail);
 let selectionShape = "box";
@@ -338,6 +381,32 @@ toolRail.querySelectorAll("[data-tool-mode]").forEach(
         setRailExpanded(true);
         showFaceDock();
         setStatus("Face selection active; press E to extrude selected faces");
+      } else if (mode === "path") {
+        state.mode = "path";
+        state.tool = "path";
+        setRailExpanded(true);
+        showPathDock();
+        const selectedHallway = state.brushes.find(
+          (brush) =>
+            state.brushSelection.has(brush.id) &&
+            brush.generator?.type === "hallway",
+        );
+        if (selectedHallway) {
+          state.pathSettings = {
+            ...state.pathSettings,
+            ...clone(selectedHallway.generator.settings || {}),
+            baseElevation: selectedHallway.generator.path?.[0]?.z || 0,
+          };
+          updatePathControls();
+          view.setPath(
+            selectedHallway.generator.path,
+            selectedHallway.assemblyId || selectedHallway.generator.assemblyId,
+          );
+          setStatus("Editing hallway path; Enter applies changes");
+        } else {
+          view.setPath([], `hallway-assembly-${crypto.randomUUID()}`);
+          setStatus("Click points in Top view to draw a hallway centerline");
+        }
       } else {
         state.mode = "vertex";
         state.tool = "box";
@@ -617,14 +686,67 @@ function fillSelectedLoopAction() {
     `Filled loop with ${result.brushes.length} convex brushes`,
   );
 }
-railDock.append(dockDivider, brushPanel, facePanel);
+const pathPanel = document.createElement("aside");
+pathPanel.className = "brush-panel path-panel";
+pathPanel.hidden = true;
+pathPanel.innerHTML = `<header><strong>PATH TOOLS</strong></header><label>Type <select data-path-type><option value="hallway">Hallway</option></select></label><label>Width <input type="number" data-path-setting="interiorWidth" min="1" max="8192" step="${state.grid}"></label><label>Height <input type="number" data-path-setting="interiorHeight" min="1" max="8192" step="${state.grid}"></label><label>Wall <input type="number" data-path-setting="wallThickness" min="1" max="1024" step="${state.grid}"></label><label>Floor <input type="number" data-path-setting="floorThickness" min="1" max="1024" step="${state.grid}"></label><label>Ceiling <input type="number" data-path-setting="ceilingThickness" min="1" max="1024" step="${state.grid}"></label><label>Elevation <input type="number" data-path-setting="baseElevation" min="-32768" max="32768" step="${state.grid}"></label><section class="path-materials"><strong>MATERIALS</strong><label>Floor <input type="text" data-path-material="floor"></label><label>Walls <input type="text" data-path-material="wall"></label><label>Ceiling <input type="text" data-path-material="ceiling"></label></section><p class="panel-note">Open ends. Add points in Top; edit slopes in Front or Side. Enter commits.</p>`;
+const pathInputs = new Map(
+  [...pathPanel.querySelectorAll("[data-path-setting]")].map((input) => [
+    input.dataset.pathSetting,
+    input,
+  ]),
+);
+const pathMaterialInputs = new Map(
+  [...pathPanel.querySelectorAll("[data-path-material]")].map((input) => [
+    input.dataset.pathMaterial,
+    input,
+  ]),
+);
+function updatePathControls() {
+  for (const [name, input] of pathInputs)
+    input.value = String(state.pathSettings[name]);
+  for (const [name, input] of pathMaterialInputs)
+    input.value = state.pathSettings.materials[name];
+}
+for (const [name, input] of pathInputs) {
+  input.onchange = () => {
+    const value = Number(input.value);
+    if (!Number.isFinite(value)) {
+      updatePathControls();
+      return;
+    }
+    if (name === "baseElevation" && view.pathPoints.length) {
+      const delta = value - state.pathSettings.baseElevation;
+      view.pathPoints.forEach((point) => {
+        point.z = roundToGrid(point.z + delta, state.grid);
+      });
+    }
+    state.pathSettings[name] = value;
+    updatePathControls();
+    if (state.mode === "path") {
+      view.refreshPathPreview();
+      redraw();
+    }
+  };
+}
+for (const [name, input] of pathMaterialInputs) {
+  input.onchange = () => {
+    state.pathSettings.materials[name] = input.value.trim();
+    if (state.mode === "path") {
+      view.refreshPathPreview();
+      redraw();
+    }
+  };
+}
+updatePathControls();
+railDock.append(dockDivider, brushPanel, facePanel, pathPanel);
 const railWidthGrip = document.createElement("div");
 railWidthGrip.className = "rail-width-grip";
 toolRail.append(railTools, railDock, railWidthGrip);
 let railWidth = 132;
 const editorMain = document.querySelector("main");
 const railExpandedMinimum = 220;
-const railToolsMinimumHeight = 108;
+const railToolsMinimumHeight = 172;
 function setRailExpanded(expanded) {
   const width = expanded ? Math.max(railExpandedMinimum, railWidth) : 42;
   toolRail.classList.toggle("tool-active", expanded);
@@ -646,6 +768,7 @@ function showBrushDock() {
     railDock.classList.remove("closing", "collapsed");
     brushPanel.hidden = false;
     facePanel.hidden = true;
+    pathPanel.hidden = true;
     railDock.classList.add("available");
     toolRail.style.setProperty(
       "--dock-height",
@@ -664,6 +787,26 @@ function showFaceDock() {
   }
   brushPanel.hidden = true;
   facePanel.hidden = false;
+  pathPanel.hidden = true;
+  railDock.classList.remove("closing", "collapsed");
+  railDock.classList.add("available");
+  toolRail.style.setProperty(
+    "--dock-height",
+    `${Math.min(dockHeight, availableHeight)}px`,
+  );
+}
+function showPathDock() {
+  if (state.mode !== "path") return;
+  clearTimeout(dockFadeTimer);
+  clearTimeout(dockHideTimer);
+  const availableHeight = toolRail.clientHeight - railToolsMinimumHeight;
+  if (availableHeight < dockMinimumHeight) {
+    railDock.classList.remove("available");
+    return;
+  }
+  brushPanel.hidden = true;
+  facePanel.hidden = true;
+  pathPanel.hidden = false;
   railDock.classList.remove("closing", "collapsed");
   railDock.classList.add("available");
   toolRail.style.setProperty(
@@ -673,7 +816,9 @@ function showFaceDock() {
 }
 function hideBrushDock() {
   if (
-    (state.mode === "brush" || state.mode === "face") &&
+    (state.mode === "brush" ||
+      state.mode === "face" ||
+      state.mode === "path") &&
     railDock.classList.contains("available")
   ) {
     clearTimeout(dockFadeTimer);
@@ -691,6 +836,7 @@ toolRail.addEventListener("mouseenter", () => {
   setRailExpanded(true);
   if (state.mode === "brush") showBrushDock();
   if (state.mode === "face") showFaceDock();
+  if (state.mode === "path") showPathDock();
 });
 toolRail.addEventListener("mouseleave", () => {
   hideBrushDock();
@@ -1043,11 +1189,13 @@ function redraw() {
   view.draw();
   $("view-selector").textContent = viewLabels[activeView];
   const selected =
-    state.mode === "face"
-      ? `${state.faceSelection.size} selected faces`
-      : state.mode === "selection"
-        ? `${state.brushSelection.size} selected objects`
-        : `${state.selection.size} selected vertices`;
+    state.mode === "path"
+      ? `${view.pathPoints.length} path nodes`
+      : state.mode === "face"
+        ? `${state.faceSelection.size} selected faces`
+        : state.mode === "selection"
+          ? `${state.brushSelection.size} selected objects`
+          : `${state.selection.size} selected vertices`;
   $("stats").textContent =
     `${state.brushes.length} brush${state.brushes.length === 1 ? "" : "es"} · ${selected}`;
 }
@@ -1924,6 +2072,31 @@ function commitFaceExtrusion(resolved = null) {
     `Extruded ${resolved.brushes.length} face${resolved.brushes.length === 1 ? "" : "s"} by ${resolved.finalDistance} units`,
   );
 }
+function commitHallway(assemblyId, brushes) {
+  if (!assemblyId || !brushes.length)
+    return setStatus("Hallway requires at least two valid path points", true);
+  const previousIds = new Set(
+    state.brushes
+      .filter((brush) => brush.assemblyId === assemblyId)
+      .map((brush) => brush.id),
+  );
+  state.brushes = state.brushes.filter(
+    (brush) => brush.assemblyId !== assemblyId,
+  );
+  applyNodrawToHiddenFaces(
+    [...state.brushes, ...brushes],
+    new Set(brushes.map((brush) => brush.id)),
+  );
+  state.brushes.push(...brushes);
+  state.selection.clear();
+  state.faceSelection.clear();
+  state.brushSelection = new Set(brushes.map((brush) => brush.id));
+  for (const id of previousIds) state.hiddenBrushes.delete(id);
+  changed();
+  setStatus(
+    `${previousIds.size ? "Updated" : "Created"} hallway: ${brushes.length} convex brushes`,
+  );
+}
 function run(command) {
   if (command === "select-none") {
     state.selection.clear();
@@ -2337,8 +2510,25 @@ window.addEventListener("keydown", (event) => {
     return;
   }
   if (event.key === "Enter") {
+    if (state.mode === "path") {
+      if (!view.commitPath())
+        setStatus(
+          view.pathPreviewErrors[0] ||
+            "Hallway requires at least two path points",
+          true,
+        );
+      return;
+    }
     if (view.commitCreation()) return;
     setStatus(`${state.selection.size} vertices selected`);
+    return;
+  }
+  if (event.key === "Backspace" && state.mode === "path") {
+    event.preventDefault();
+    if (view.removeLastPathPoint()) {
+      redraw();
+      setStatus("Removed last hallway path point");
+    }
     return;
   }
   if (key === "e" && state.mode === "face") {
