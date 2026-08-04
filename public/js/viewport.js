@@ -152,6 +152,7 @@ export class Viewport {
     this.hoverFaceIds = new Set();
     this.hoverFillPolygon = null;
     this.drawFrame = 0;
+    this.pathPreviewFrame = 0;
     this.fpsFrames = 0;
     this.fpsSampleAt = performance.now();
     this.trackFps = (now) => {
@@ -184,6 +185,38 @@ export class Viewport {
       this.drawFrame = 0;
       if (this.canvas.isConnected) this.draw();
     });
+  }
+  requestPathPreview() {
+    if (this.pathPreviewFrame) return;
+    this.pathPreviewFrame = requestAnimationFrame(() => {
+      this.pathPreviewFrame = 0;
+      if (this.canvas.isConnected) this.refreshPathPreview();
+    });
+  }
+  interpolateGeneratedPathValue(name) {
+    if (this.pathModel.closed) return;
+    const anchors = this.pathPoints
+      .map((point, index) => (point.routeGenerated ? null : index))
+      .filter((index) => index !== null);
+    for (let anchor = 0; anchor < anchors.length - 1; anchor++) {
+      const start = anchors[anchor];
+      const end = anchors[anchor + 1];
+      const distances = [0];
+      for (let index = start + 1; index <= end; index++) {
+        const previous = this.pathPoints[index - 1];
+        const point = this.pathPoints[index];
+        distances.push(
+          distances.at(-1) + Math.hypot(point.x - previous.x, point.y - previous.y),
+        );
+      }
+      const total = distances.at(-1) || 1;
+      for (let index = start + 1; index < end; index++) {
+        const alpha = distances[index - start] / total;
+        this.pathPoints[index][name] =
+          this.pathPoints[start][name] * (1 - alpha) +
+          this.pathPoints[end][name] * alpha;
+      }
+    }
   }
   cancelInteraction() {
     if (!this.drag && !this.creationBox && !this.pathPoints.length)
@@ -3895,7 +3928,9 @@ export class Viewport {
             this.state.grid,
           width,
         );
-        this.refreshPathPreview();
+        delete node.routeGenerated;
+        this.interpolateGeneratedPathValue("width");
+        this.requestPathPreview();
         return;
       }
       if (this.drag.type === "path-height") {
@@ -3905,7 +3940,9 @@ export class Viewport {
           this.state.grid,
           roundToGrid(current.z - node.z, this.state.grid),
         );
-        this.refreshPathPreview();
+        delete node.routeGenerated;
+        this.interpolateGeneratedPathValue("height");
+        this.requestPathPreview();
         return;
       }
       if (this.drag.type === "path-tangent") {
@@ -4220,14 +4257,23 @@ export class Viewport {
       if (this.drag.type.startsWith("path-")) {
         const pathDrag = this.drag;
         this.drag = null;
-        if (
-          ["path-node", "path-move"].includes(pathDrag.type) &&
+        if (this.pathPreviewFrame) {
+          cancelAnimationFrame(this.pathPreviewFrame);
+          this.pathPreviewFrame = 0;
+        }
+        const shouldReroute =
+          ["path-node", "path-move", "path-width", "path-height"].includes(
+            pathDrag.type,
+          ) &&
           this.state.pathSettings?.avoidShapes !== false &&
-          !this.pathModel.closed &&
-          !this.reroutePathAroundShapes()
-        ) {
-          this.pathPoints = pathDrag.originalPath;
-          this.pathModel.nodes = this.pathPoints;
+          !this.pathModel.closed;
+        if (shouldReroute) {
+          if (!this.reroutePathAroundShapes()) {
+            this.pathPoints = pathDrag.originalPath;
+            this.pathModel.nodes = this.pathPoints;
+            this.refreshPathPreview();
+          }
+        } else if (["path-width", "path-height"].includes(pathDrag.type)) {
           this.refreshPathPreview();
         }
         this.onChange("path-preview");

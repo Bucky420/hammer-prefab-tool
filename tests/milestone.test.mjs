@@ -1592,4 +1592,19 @@ assert.equal(
   assert.equal(pathViewport.pathEndAttachment.sourceBrushIds[0], "target");
 }
 
+// Generated route nodes follow edited anchor dimensions during preview.
+{
+  const pathViewport = Object.create(Viewport.prototype);
+  pathViewport.pathModel = { closed: false };
+  pathViewport.pathPoints = [
+    { x: 0, y: 0, width: 400, height: 128 },
+    { x: 50, y: 0, width: 400, height: 128, routeGenerated: true },
+    { x: 100, y: 0, width: 100, height: 256 },
+  ];
+  pathViewport.interpolateGeneratedPathValue("width");
+  pathViewport.interpolateGeneratedPathValue("height");
+  assert.equal(pathViewport.pathPoints[1].width, 250);
+  assert.equal(pathViewport.pathPoints[1].height, 192);
+}
+
 console.log("milestone tests passed");
