@@ -463,6 +463,85 @@ export class Viewport {
     this.pathModel.nodes = this.pathPoints;
     return true;
   }
+  reroutePathAroundShapes() {
+    if (this.pathModel.closed) return false;
+    const anchors = this.pathPoints
+      .filter((point) => !point.routeGenerated)
+      .map((point) => structuredClone(point));
+    if (anchors.length < 2) return true;
+    const originalPoints = this.pathPoints;
+    const originalModes = this.pathModel.segmentModes.slice();
+    this.pathPoints = [anchors[0]];
+    this.pathModel.nodes = this.pathPoints;
+    this.pathModel.segmentModes = [];
+    const excluded = [
+      ...this.pathSourceBrushIds,
+      ...(this.pathEndAttachment?.sourceBrushIds || []),
+    ];
+    for (let index = 1; index < anchors.length; index++) {
+      if (
+        !this.appendRoutedPathNodes(
+          this.pathPoints.at(-1),
+          anchors[index],
+          excluded,
+        )
+      ) {
+        this.pathPoints = originalPoints;
+        this.pathModel.nodes = originalPoints;
+        this.pathModel.segmentModes = originalModes;
+        this.refreshPathPreview();
+        return false;
+      }
+    }
+    this.selectedPathNode = this.pathPoints.length - 1;
+    this.selectedPathSegment = null;
+    this.refreshPathPreview();
+    return true;
+  }
+  snapMovedPathEnd(index, pointer) {
+    if (
+      this.kind !== "top" ||
+      index !== this.pathPoints.length - 1 ||
+      this.state.pathSettings?.snapEnds === false
+    )
+      return false;
+    const target = this.onPathEndSnap(
+      pointer,
+      this.pathSourceBrushIds,
+      this.pathAssemblyId,
+    );
+    if (!target || target.errors?.length) return false;
+    const point = this.pathPoints[index];
+    const previous = this.pathPoints[index - 1];
+    const distance = Math.max(
+      this.state.grid * 2,
+      Math.hypot(target.center.x - previous.x, target.center.y - previous.y),
+    );
+    const direction = { x: -target.direction.x, y: -target.direction.y };
+    const slope = target.floorPlane?.normal?.z
+      ? -(
+          target.floorPlane.normal.x * direction.x +
+          target.floorPlane.normal.y * direction.y
+        ) / target.floorPlane.normal.z
+      : 0;
+    point.x = target.center.x;
+    point.y = target.center.y;
+    point.z = roundToGrid(target.elevation ?? point.z, this.state.grid);
+    point.width = target.outsideWidth || point.width;
+    point.tangentMode = "smooth";
+    point.tangentIn = {
+      x: -target.direction.x * distance,
+      y: -target.direction.y * distance,
+      z: slope * distance,
+    };
+    this.pathEndAttachment = {
+      ...structuredClone(target),
+      flare: Number(this.state.pathSettings?.flare) || 0,
+      blendLength: Number(this.state.pathSettings?.blendLength) || 128,
+    };
+    this.pathEndCandidate = target;
+    return true;
+  }
   pathNodeAt(x, y) {
     let best = null;
     const entries = [...this.pathPoints.entries()].sort(([first], [second]) =>
@@ -3880,6 +3959,15 @@ export class Viewport {
         const [horizontal, vertical] = this.axes();
         const point = this.pathPoints[this.drag.index];
         if (this.drag.index === 0 && this.pathSourceAttachment) return;
+        if (
+          this.snapMovedPathEnd(this.drag.index, {
+            x: current[horizontal],
+            y: current[vertical],
+          })
+        ) {
+          this.refreshPathPreview();
+          return;
+        }
         point[horizontal] = roundToGrid(current[horizontal], this.state.grid);
         point[vertical] = roundToGrid(current[vertical], this.state.grid);
         if (this.drag.index === this.pathPoints.length - 1)

@@ -399,14 +399,21 @@ try {
       .locator("#stats")
       .filter({ hasText: "1 path nodes" })
       .waitFor();
+    await sourceRoutePage.locator("[data-path-avoid]").uncheck();
     const routedEnd = activeSourceScreen(4000, 0);
     await sourceRoutePage.mouse.click(routedEnd.x, routedEnd.y);
+    await sourceRoutePage
+      .locator("#stats")
+      .filter({ hasText: "2 path nodes" })
+      .waitFor();
+    await sourceRoutePage.locator("[data-path-avoid]").check();
     await sourceRoutePage.waitForFunction(() => {
       const match = document
         .querySelector("#stats")
         .textContent.match(/(\d+) path nodes/);
       return Number(match?.[1]) > 4;
     });
+    await sourceRoutePage.locator("#editor").focus();
     await sourceRoutePage.keyboard.press("Enter");
     await sourceRoutePage
       .locator("#status")

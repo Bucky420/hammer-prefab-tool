@@ -143,6 +143,16 @@ export function bindPathPanel({ panel, state, view, redraw, setStatus }) {
   };
   avoidInput.onchange = (event) => {
     state.pathSettings.avoidShapes = event.target.checked;
+    if (event.target.checked && view.pathPoints.length > 1) {
+      if (!view.reroutePathAroundShapes()) return;
+      updateControls();
+      redraw();
+      setStatus("Hallway path rerouted around visible shapes");
+    } else {
+      setStatus(
+        `Hallway shape avoidance ${event.target.checked ? "enabled" : "disabled"}`,
+      );
+    }
   };
   for (const [name, input] of materialInputs) {
     input.onchange = () => {

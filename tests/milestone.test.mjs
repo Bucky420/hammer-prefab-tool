@@ -1550,4 +1550,46 @@ assert.equal(
   );
 }
 
+// Path endpoint movement reacquires a nearby floor mouth.
+{
+  const pathViewport = Object.create(Viewport.prototype);
+  pathViewport.kind = "top";
+  pathViewport.state = {
+    grid: 16,
+    pathSettings: { snapEnds: true, flare: 24, blendLength: 96 },
+  };
+  pathViewport.pathPoints = [
+    { x: 0, y: 0, z: 0, width: 64, height: 128 },
+    { x: 64, y: 0, z: 0, width: 64, height: 128 },
+  ];
+  pathViewport.pathSourceBrushIds = ["source"];
+  pathViewport.pathAssemblyId = "hallway";
+  pathViewport.onPathEndSnap = () => ({
+    center: { x: 128, y: 32 },
+    elevation: 16,
+    outsideWidth: 96,
+    direction: { x: -1, y: 0 },
+    floorPlane: { normal: { x: 0, y: 0, z: 1 } },
+    sourceBrushIds: ["target"],
+    errors: [],
+  });
+  assert.equal(pathViewport.snapMovedPathEnd(1, { x: 127, y: 31 }), true);
+  const snappedEnd = pathViewport.pathPoints[1];
+  assert.deepEqual(
+    {
+      x: snappedEnd.x,
+      y: snappedEnd.y,
+      z: snappedEnd.z,
+      width: snappedEnd.width,
+      height: snappedEnd.height,
+      tangentMode: snappedEnd.tangentMode,
+    },
+    { x: 128, y: 32, z: 16, width: 96, height: 128, tangentMode: "smooth" },
+  );
+  assert.ok(Math.abs(snappedEnd.tangentIn.x - Math.hypot(128, 32)) < 1e-6);
+  assert.ok(Math.abs(snappedEnd.tangentIn.y) < 1e-6);
+  assert.ok(Math.abs(snappedEnd.tangentIn.z) < 1e-6);
+  assert.equal(pathViewport.pathEndAttachment.sourceBrushIds[0], "target");
+}
+
 console.log("milestone tests passed");
