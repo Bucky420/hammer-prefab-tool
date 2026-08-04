@@ -1,6 +1,6 @@
 import { generateArch } from "./arch-generator.js";
 import { box } from "./geometry-model.js";
-import { hammerRound, roundToGrid } from "./grid.js";
+import { roundToGrid } from "./grid.js";
 import {
   generateCylinder,
   generateSphere,
@@ -69,21 +69,13 @@ export function buildStagedBrushes({
       placed[AXIS_NAMES.indexOf(depth)] = vector[2];
       return placed;
     },
-    placeLocalBrushes = (
-      brushes,
-      centerDepth = min[depth],
-      roundPlanarCoordinates = false,
-    ) => {
+    placeLocalBrushes = (brushes, centerDepth = min[depth]) => {
       brushes.forEach((brush) => {
         brush.vertices.forEach((vertex) => {
           const local = { x: vertex.x, y: vertex.y, z: vertex.z };
           vertex[horizontal] = local.x + center[horizontal];
           vertex[vertical] = local.y + center[vertical];
           vertex[depth] = local.z + centerDepth;
-          if (roundPlanarCoordinates) {
-            vertex[horizontal] = hammerRound(vertex[horizontal]);
-            vertex[vertical] = hammerRound(vertex[vertical]);
-          }
         });
         if (reversesWinding)
           brush.faces = brush.faces.map((face) => [...face].reverse());
@@ -113,7 +105,6 @@ export function buildStagedBrushes({
         roundCoordinates: false,
       }),
       min[depth],
-      true,
     );
     brushes.forEach((brush) => {
       brush.generator.extrusionCenter = { ...center, [depth]: min[depth] };
@@ -138,7 +129,6 @@ export function buildStagedBrushes({
           roundCoordinates: false,
         }),
         min[depth],
-        true,
       ),
     };
   if (shape === "sphere")

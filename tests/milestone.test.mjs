@@ -177,6 +177,39 @@ for (const shape of ["block", "arch", "cylinder", "sphere", "torus"]) {
     `${shape} staged Side-view geometry is valid`,
   );
 }
+const narrowArch = buildStagedBrushes({
+    bounds: {
+      start: { x: -160, y: -160 },
+      end: { x: 160, y: 160 },
+      axes: ["x", "y", "z"],
+    },
+    shape: "arch",
+    settings: {
+      ...stagedSettings,
+      width: 136,
+      sides: 32,
+      arc: 180,
+    },
+    grid: 16,
+  }).brushes,
+  narrowInnerPoints = narrowArch.flatMap((brush) =>
+    brush.vertexRoles.inner
+      .slice(0, 2)
+      .map((index) => brush.vertices[index]),
+  ),
+  narrowInnerRadii = narrowInnerPoints.map((point) =>
+    Math.hypot(point.x, point.y),
+  );
+assert.ok(
+  Math.max(...narrowInnerRadii) - Math.min(...narrowInnerRadii) < 0.000001,
+  "staged Arch keeps a constant full-precision inner radius",
+);
+assert.ok(
+  narrowInnerPoints.some(
+    (point) => !Number.isInteger(point.x) || !Number.isInteger(point.y),
+  ),
+  "staged Arch curve vertices are not quantized to integer or grid coordinates",
+);
 const archHandles = stagedBrushHandles(stagedBounds, stagedSettings, 16);
 assert.deepEqual(
   archHandles.map((handle) => handle.type),
