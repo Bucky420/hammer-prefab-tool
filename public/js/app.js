@@ -7,12 +7,8 @@ import {
   countOffGridCoordinates,
 } from "./geometry-model.js";
 import { generateRing } from "./ring-generator.js";
-import { generateArch } from "./arch-generator.js";
-import {
-  generateCylinder,
-  generateSphere,
-  generateTorus,
-} from "./primitive-generator.js";
+import { buildStagedBrushes } from "./brush-tool.js";
+import { bindBrushPanel, createBrushPanel } from "./brush-panel.js";
 import { generateHallway } from "./hallway-generator.js";
 import {
   acquireNearestPathSource,
@@ -210,6 +206,7 @@ let activeView = state.view || "top";
 const view = new Viewport(
   $("editor"),
   activeView,
+let brushPanelController = null;
   state,
   (changeType) => {
     if (changeType === "selection-commit") changed("session");
@@ -219,7 +216,8 @@ const view = new Viewport(
     } else if (changeType === "brush-preview") {
       redraw();
       setStatus(
-        "Block bounds ready; press Enter to create or Escape to cancel",
+        `${state.generator.shape[0].toUpperCase()}${state.generator.shape.slice(1)} preview ready; drag grid handles to adjust, Enter to create, or Escape to cancel`,
+      brushPanelController?.syncStagedSettings();
       );
     } else if (changeType === "brush-created") {
       redraw();
@@ -330,7 +328,7 @@ function createBrushFromBounds(bounds) {
   if (created?.length)
     add(
       created,
-      state.generator.shape === "arch" ? "Arch created" : "Block created",
+      `${state.generator.shape[0].toUpperCase()}${state.generator.shape.slice(1)} created`,
       true,
     );
 }
@@ -345,59 +343,16 @@ function buildBrushesFromBounds(bounds) {
   const selectedVertices = state.brushes
     .filter((brush) => state.brushSelection.has(brush.id))
     .flatMap((brush) => brush.vertices);
-  if (selectedVertices.length) {
-    min[depth] = Math.min(...selectedVertices.map((vertex) => vertex[depth]));
-    max[depth] = Math.max(...selectedVertices.map((vertex) => vertex[depth]));
-  } else {
-    const depthSize =
-      depth === "x"
-        ? state.generator.width
-        : depth === "y"
-          ? brushDepth
-          : state.generator.height;
-    min[depth] = depth === "z" ? state.generator.addHeight : -depthSize / 2;
-    max[depth] =
-      depth === "z" ? state.generator.addHeight + depthSize : depthSize / 2;
-  }
-  for (const axis of ["x", "y", "z"]) {
-    min[axis] = roundToGrid(min[axis], state.grid);
-    max[axis] = roundToGrid(max[axis], state.grid);
-  }
-  if (["x", "y", "z"].some((axis) => min[axis] === max[axis]))
-    return setStatus("Brush creation collapsed on the current grid", true);
-  if (state.generator.shape === "arch") {
-    const width = max[horizontal] - min[horizontal],
-      height = max[vertical] - min[vertical],
-      wall = state.generator.width,
-      arch = generateArch({
-        width,
-        height,
-        depth: max[depth] - min[depth],
-        wallWidth: wall,
-        sides: state.generator.segments,
-        startAngle: state.generator.startAngle,
-        arc: state.generator.arc,
-        addHeight: state.generator.addHeight,
-        grid: state.grid,
-      });
-    const center = {
-      [horizontal]: (min[horizontal] + max[horizontal]) / 2,
-      [vertical]: (min[vertical] + max[vertical]) / 2,
-      [depth]: min[depth],
-    };
-    arch.forEach((brush) => {
-      brush.vertices.forEach((vertex) => {
-        const local = { x: vertex.x, y: vertex.y, z: vertex.z };
-        vertex[horizontal] = local.x + center[horizontal];
-        vertex[vertical] = local.y + center[vertical];
-        vertex[depth] = local.z + center[depth];
-      });
-      brush.generator.extrusionCenter = { ...center };
-      brush.generator.extrusionAxes = [horizontal, vertical];
-    });
-    return arch;
-  }
-  return [box(min, max)];
+  const result = buildStagedBrushes({
+    bounds,
+    shape: state.generator.shape,
+    settings: state.generator,
+    grid: state.grid,
+    selectedVertices,
+    brushDepth: brushPanelController?.brushDepth || 64,
+  });
+  if (result.error) return setStatus(result.error, true);
+  return result.brushes;
 }
 document.querySelector(".tool-rail")?.remove();
 document.querySelector(".brush-panel")?.remove();
@@ -538,10 +493,7 @@ state.generator ||= {
 state.grid ||= 16;
 state.vmfFilename =
   localStorage.getItem("hammer-vmf-filename") || state.vmfFilename;
-const brushPanel = document.createElement("aside");
-brushPanel.className = "brush-panel generator-panel";
-brushPanel.hidden = false;
-brushPanel.innerHTML = `<header><strong>BRUSH TOOLS</strong></header><label>Shape <select data-shape><option value="block">Block</option><option value="arch">Arch</option><option value="cylinder">Cylinder</option><option value="sphere">Sphere</option><option value="torus">Torus</option></select></label><label>Width <input type="number" data-setting="width" min="1" max="4096" step="${state.grid}" value="64"><output data-output="width">64</output></label><label>Depth <input type="number" data-setting="depth" min="1" max="4096" step="${state.grid}" value="64"><output data-output="depth">64</output></label><label>Height <input type="number" data-setting="height" min="1" max="4096" step="${state.grid}" value="128"><output data-output="height">128</output></label><label>Radius <input type="number" data-setting="radius" min="8" max="4096" step="${state.grid}" value="256"><output data-output="radius">256</output></label><label>Sides <input type="number" data-setting="segments" min="3" max="128" step="1" value="32"><output data-output="segments">32</output></label><label>Rings <input type="number" data-setting="rings" min="2" max="64" step="1" value="12"><output data-output="rings">12</output></label><label>Arc <input type="number" data-setting="arc" min="1" max="360" step="1" value="180"><output data-output="arc">180</output></label><label data-arch-setting>Bevel <input type="number" data-setting="bevel" min="0" max="128" step="${state.grid}" value="0"><output data-output="bevel">0</output></label><label class="check-row"><input type="checkbox" data-setting="powerOfTwo"> Power of 2</label><label class="check-row"><input type="checkbox" data-square> Square</label><label class="advanced-setting">Elevation <input type="number" data-setting="addHeight" min="-4096" max="4096" step="${state.grid}" value="0"><output data-output="addHeight">0</output></label><button class="generate-brush" data-generate>Generate Brush</button><section class="prefab-settings"><strong>PREFAB</strong><label>Ownership <select data-prefab-ownership><option value="func_detail">func_detail per group</option><option value="group">Hammer groups</option><option value="world">World brushes</option></select></label><label>Structural backing <select data-prefab-backing><option value="none">None</option><option value="floor">Floor</option><option value="ceiling">Ceiling</option><option value="both">Floor and ceiling</option></select></label></section>`;
+const brushPanel = createBrushPanel(state.grid);
 toolRail.append(brushPanel);
 const prefabOwnershipInput = brushPanel.querySelector(
   "[data-prefab-ownership]",
@@ -559,21 +511,7 @@ for (const input of [prefabOwnershipInput, prefabBackingInput]) {
     setStatus("Prefab save settings updated");
   };
 }
-// Square toggle — persists across reloads via localStorage
-const squareChk = brushPanel.querySelector("[data-square]");
-if (squareChk) {
-  squareChk.checked = localStorage.getItem("squareBox") === "1";
-  state.squareBox = squareChk.checked;
-  squareChk.onchange = () => {
-    state.squareBox = squareChk.checked;
-    localStorage.setItem("squareBox", squareChk.checked ? "1" : "0");
-  };
-}
-brushPanel
-  .querySelector('[data-setting="powerOfTwo"]')
-  ?.closest("label")
-  .remove();
-brushPanel.querySelector('[data-setting="bevel"]')?.closest("label").remove();
+brushPanelController = bindBrushPanel({ panel: brushPanel, state, view });
 const railButtons = [...toolRail.querySelectorAll("[data-tool-mode]")];
 const railTools = document.createElement("div");
 railTools.className = "rail-tools";
@@ -1063,187 +1001,6 @@ window.addEventListener("pointermove", (event) => {
 window.addEventListener("pointerup", () => {
   resizingRail = null;
 });
-let brushShape = "block";
-let brushDepth = 64;
-let powerOfTwo = false;
-const shapeSelect = brushPanel.querySelector("[data-shape]");
-const startAngleLabel = document.createElement("label");
-startAngleLabel.innerHTML =
-  'Start Angle <input type="number" data-setting="startAngle" min="0" max="360" step="1" value="0"><output data-output="startAngle">0</output>';
-shapeSelect.closest("label").after(startAngleLabel);
-const archActions = document.createElement("div");
-archActions.className = "arch-actions";
-archActions.innerHTML = '<button type="button" data-circle>Circle</button>';
-const arcLabel = brushPanel
-  .querySelector('[data-setting="arc"]')
-  .closest("label");
-archActions.querySelector("[data-circle]").onclick = () => {
-  const arcInput = brushPanel.querySelector('[data-setting="arc"]');
-  arcInput.value = 360;
-  arcInput.dispatchEvent(new Event("change", { bubbles: true }));
-};
-shapeSelect.onchange = () => {
-  brushShape = shapeSelect.value;
-  state.generator.shape = brushShape;
-  const visibleSettings = {
-    block: ["width", "depth", "height"],
-    arch: ["width", "segments", "startAngle", "arc", "addHeight"],
-    cylinder: ["height", "radius", "segments", "addHeight"],
-    sphere: ["radius", "segments", "rings"],
-    torus: ["width", "height", "radius", "segments"],
-  }[brushShape];
-  brushPanel.querySelectorAll("[data-setting]").forEach((input) => {
-    input.closest("label").hidden = !visibleSettings.includes(
-      input.dataset.setting,
-    );
-  });
-  const archSetting = brushPanel.querySelector("[data-arch-setting]");
-  if (archSetting) archSetting.hidden = !["arch", "torus"].includes(brushShape);
-  const widthInput = brushPanel.querySelector('[data-setting="width"]');
-  if (widthInput) {
-    widthInput.closest("label").firstChild.textContent =
-      brushShape === "arch" ? "Wall width " : "Width ";
-    widthInput.min = brushShape === "arch" ? 2 : 1;
-  }
-  const sidesInput = brushPanel.querySelector('[data-setting="segments"]');
-  if (sidesInput) {
-    sidesInput.closest("label").firstChild.textContent = "Sides ";
-    sidesInput.max = brushShape === "arch" ? 2048 : 128;
-  }
-  startAngleLabel.hidden = brushShape !== "arch";
-  archActions.hidden = brushShape !== "arch";
-  squareChk.closest("label").hidden = brushShape !== "block";
-  const elevationInput = brushPanel.querySelector('[data-setting="addHeight"]');
-  if (elevationInput) {
-    const elevationLabel = elevationInput.closest("label");
-    elevationLabel.classList.toggle(
-      "enabled",
-      ["arch", "cylinder"].includes(brushShape),
-    );
-    elevationLabel.firstChild.textContent =
-      brushShape === "arch" ? "Add height " : "Elevation ";
-  }
-  if (brushShape === "arch") {
-    archActions.append(arcLabel);
-    const addHeightLabel = elevationInput.closest("label");
-    [
-      widthInput.closest("label"),
-      sidesInput.closest("label"),
-      archActions,
-      startAngleLabel,
-      addHeightLabel,
-    ].forEach((control) =>
-      brushPanel.insertBefore(
-        control,
-        brushPanel.querySelector("[data-generate]"),
-      ),
-    );
-  } else {
-    brushPanel.insertBefore(
-      arcLabel,
-      brushPanel.querySelector("[data-generate]"),
-    );
-  }
-  brushPanel.querySelector("[data-generate]").hidden = brushShape === "arch";
-  if (view.creationBox) view.onBrushPreview(view.creationBox);
-};
-shapeSelect.onchange();
-brushPanel.querySelectorAll("[data-setting]").forEach(
-  (input) =>
-    (input.oninput = () => {
-      let value =
-        input.type === "checkbox" ? input.checked : Number(input.value);
-      if (input.dataset.setting === "powerOfTwo") powerOfTwo = value;
-      if (
-        powerOfTwo &&
-        ["width", "depth", "height", "radius"].includes(input.dataset.setting)
-      )
-        value = 2 ** Math.round(Math.log2(Math.max(1, value)));
-      if (input.dataset.setting === "depth") brushDepth = value;
-      if (input.dataset.setting in state.generator)
-        state.generator[input.dataset.setting] = value;
-      input.value = value;
-      const output = brushPanel.querySelector(
-        `[data-output="${input.dataset.setting}"]`,
-      );
-      if (output) output.value = value;
-      if (view.creationBox) view.onBrushPreview(view.creationBox);
-      brushPanel
-        .querySelector(".advanced-setting")
-        .classList.toggle(
-          "enabled",
-          Boolean(brushPanel.querySelector('[data-setting="sloped"]')?.checked),
-        );
-    }),
-);
-brushPanel.querySelectorAll("[data-setting]").forEach((input) => {
-  input.onchange = input.oninput;
-});
-brushPanel.querySelector("[data-generate]").onclick = () => {
-  if (brushShape === "block")
-    add(
-      [
-        box(
-          { x: -state.generator.width / 2, y: -brushDepth / 2, z: 0 },
-          {
-            x: state.generator.width / 2,
-            y: brushDepth / 2,
-            z: state.generator.height,
-          },
-        ),
-      ],
-      "Block created",
-      true,
-    );
-  else {
-    const settings = options();
-    const generated =
-      brushShape === "arch"
-        ? generateArch({
-            width: settings.radius * 2,
-            height: settings.radius * 2,
-            depth: settings.height,
-            wallWidth: settings.width,
-            sides: settings.segments,
-            startAngle: settings.startAngle,
-            arc: settings.arc,
-            addHeight: settings.addHeight,
-            grid: state.grid,
-          })
-        : brushShape === "cylinder"
-          ? generateCylinder({
-              radius: settings.radius,
-              height: settings.height,
-              segments: settings.segments,
-              addHeight: settings.addHeight,
-              grid: state.grid,
-            })
-          : brushShape === "sphere"
-            ? generateSphere({
-                radius: settings.radius,
-                segments: settings.segments,
-                rings: settings.rings,
-                grid: state.grid,
-              })
-            : brushShape === "torus"
-              ? generateTorus({
-                  radius: settings.radius,
-                  width: settings.width,
-                  height: settings.height,
-                  segments: settings.segments,
-                  grid: state.grid,
-                })
-              : generateRing({
-                  ...settings,
-                  endAngle: settings.startAngle + 360,
-                });
-    add(
-      generated,
-      `${brushShape[0].toUpperCase()}${brushShape.slice(1)} created`,
-      true,
-    );
-  }
-};
 function entityMetadata(entity) {
   const metadata = { ...entity };
   delete metadata.brushes;

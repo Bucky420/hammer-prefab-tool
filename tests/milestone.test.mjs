@@ -40,6 +40,11 @@ import {
   generateTorus,
 } from "../public/js/primitive-generator.js";
 import { Viewport } from "../public/js/viewport.js";
+import {
+  applyStagedBrushHandle,
+  buildStagedBrushes,
+  stagedBrushHandles,
+} from "../public/js/brush-tool.js";
 
 const ring = generateRing({
   radius: 256,
@@ -72,6 +77,57 @@ for (const [name, brushes] of [
     `${name} generator must create valid convex brushes`,
   );
 }
+const stagedBounds = {
+    start: { x: -128, z: -128 },
+    end: { x: 128, z: 128 },
+    axes: ["x", "z", "y"],
+  },
+  stagedSettings = {
+    shape: "arch",
+    width: 64,
+    height: 128,
+    segments: 16,
+    rings: 8,
+    startAngle: 0,
+    arc: 180,
+    addHeight: 0,
+  };
+for (const shape of ["block", "arch", "cylinder", "sphere", "torus"]) {
+  const staged = buildStagedBrushes({
+    bounds: stagedBounds,
+    shape,
+    settings: { ...stagedSettings, shape },
+    grid: 16,
+  });
+  assert.equal(staged.error, undefined, `${shape} stages in Side view`);
+  assert.equal(
+    validateAll(staged.brushes).length,
+    0,
+    `${shape} staged Side-view geometry is valid`,
+  );
+}
+const archHandles = stagedBrushHandles(stagedBounds, stagedSettings, 16);
+assert.deepEqual(
+  archHandles.map((handle) => handle.type),
+  ["move", "shape-size", "shape-thickness", "shape-arc"],
+  "Arch exposes move, size, thickness, and arc handles",
+);
+const thickerArch = applyStagedBrushHandle({
+  bounds: stagedBounds,
+  settings: stagedSettings,
+  handle: archHandles.find((handle) => handle.type === "shape-thickness"),
+  current: { x: 32, z: 0 },
+  grid: 16,
+});
+assert.equal(thickerArch.settings.width, 96, "thickness handle updates wall width");
+const quarterArch = applyStagedBrushHandle({
+  bounds: stagedBounds,
+  settings: stagedSettings,
+  handle: archHandles.find((handle) => handle.type === "shape-arc"),
+  current: { x: 0, z: 128 },
+  grid: 16,
+});
+assert.equal(quarterArch.settings.arc, 90, "arc handle updates Arch fullness");
 assert.equal(
   validateAll(ring).length,
   0,

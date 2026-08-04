@@ -34,6 +34,10 @@ import {
 } from "./rail-acquisition.js";
 import { assertBrushesGeometry } from "./geometry-runtime.js";
 import { normalizePath, PATH_VERSION } from "./path-spline.js";
+import {
+  applyStagedBrushHandle,
+  stagedBrushHandles,
+} from "./brush-tool.js";
 
 /**
  * @typedef {import("./face-extrusion.js").ResolvedExtrusion} ResolvedExtrusion
@@ -604,8 +608,19 @@ export class Viewport {
     const brushes = this.state.brushes.filter(
       (brush) =>
         !this.state.hiddenBrushes?.has(brush.id) &&
+  creationShapeHandles() {
+    return stagedBrushHandles(
+      this.creationBox,
+      this.state.generator,
+      this.state.grid,
+    ).map((handle) => ({ ...handle, point: this.screen(handle.point) }));
+  }
         !(
           this.state.mode === "path" &&
+    const shapeHandle = this.creationShapeHandles().find(
+      (handle) => Math.hypot(x - handle.point.x, y - handle.point.y) <= 11,
+    );
+    if (shapeHandle) return shapeHandle;
           this.pathPreviewBrushes.length &&
           brush.assemblyId === this.pathAssemblyId
         ) &&
@@ -3479,7 +3494,9 @@ export class Viewport {
         if (handle) {
           this.canvas.setPointerCapture(event.pointerId);
           this.drag = {
-            type: "creation-transform",
+            type: handle.type.startsWith("shape-")
+              ? "creation-shape-transform"
+              : "creation-transform",
             handle: handle.type,
             original: handle,
             start: { x: event.offsetX, y: event.offsetY },
@@ -3986,6 +4003,20 @@ export class Viewport {
       if (
         !this.drag.dragged &&
         Math.hypot(
+      if (this.drag.type === "creation-shape-transform") {
+        const result = applyStagedBrushHandle({
+          bounds: this.creationBox,
+          settings: this.state.generator,
+          handle: this.drag.original,
+          current: this.world({ x: event.offsetX, y: event.offsetY }),
+          grid: this.state.grid,
+        });
+        this.creationBox = result.bounds;
+        Object.assign(this.state.generator, result.settings);
+        this.onBrushPreview(this.creationBox);
+        this.requestDraw();
+        return;
+      }
           this.drag.currentX - this.drag.x,
           this.drag.currentY - this.drag.y,
         ) < 3
@@ -4043,7 +4074,10 @@ export class Viewport {
         else this.requestDraw();
         return;
       }
-      if (this.drag.type === "creation-transform") {
+      if (
+        this.drag.type === "creation-transform" ||
+        this.drag.type === "creation-shape-transform"
+      ) {
         this.drag = null;
         this.onChange("brush-preview");
         return;
@@ -4957,6 +4991,30 @@ export class Viewport {
         context.lineTo(x + 16, y + 12);
         context.closePath();
         context.fill();
+      if (this.creationBox) {
+        context.font = "10px Tahoma";
+        context.textBaseline = "middle";
+        for (const handle of this.creationShapeHandles()) {
+          const { x: handleX, y: handleY } = handle.point;
+          context.fillStyle =
+            handle.type === "move"
+              ? COLORS.active
+              : handle.type === "shape-thickness"
+                ? "#ff66cc"
+                : handle.type === "shape-arc"
+                  ? "#ff9f43"
+                  : COLORS.selected;
+          context.strokeStyle = "#111824";
+          context.lineWidth = 2;
+          context.beginPath();
+          context.arc(handleX, handleY, 6, 0, Math.PI * 2);
+          context.fill();
+          context.stroke();
+          context.fillStyle = "#dce9f7";
+          context.fillText(handle.label, handleX + 9, handleY);
+        }
+        context.lineWidth = 1;
+      }
         context.stroke();
       }
       context.lineWidth = 1;

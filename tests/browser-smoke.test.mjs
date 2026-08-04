@@ -322,6 +322,76 @@ try {
     assert.deepEqual(brushErrors, []);
     await brushPage.close();
 
+    const primitivePage = await browser.newPage();
+    const primitiveErrors = [];
+    primitivePage.on("pageerror", (error) => primitiveErrors.push(error));
+    await primitivePage.goto(`http://127.0.0.1:${port}${prefix}`, {
+      waitUntil: "networkidle",
+    });
+    await primitivePage.locator('[data-tool-mode="brush"]').click();
+    await primitivePage.locator("[data-shape]").selectOption("cylinder");
+    assert.equal(
+      await primitivePage.locator("[data-generate]").count(),
+      0,
+      "primitive creation stays on the grid instead of using a panel action",
+    );
+    await primitivePage.evaluate(() =>
+      document.querySelector("#view-selector").click(),
+    );
+    await primitivePage.evaluate(() =>
+      document.querySelector("#view-selector").click(),
+    );
+    const primitiveBounds = await primitivePage.locator("#editor").boundingBox();
+    assert.ok(primitiveBounds);
+    const primitiveCenter = {
+      x: primitiveBounds.x + primitiveBounds.width / 2,
+      y: primitiveBounds.y + primitiveBounds.height / 2,
+    };
+    await primitivePage.mouse.move(
+      primitiveCenter.x - 96,
+      primitiveCenter.y - 96,
+    );
+    await primitivePage.mouse.down();
+    await primitivePage.mouse.move(
+      primitiveCenter.x + 96,
+      primitiveCenter.y + 96,
+    );
+    await primitivePage.mouse.up();
+    assert.equal(
+      await primitivePage.locator('[data-setting="radius"]').inputValue(),
+      "96",
+      "dragged primitive footprint updates its editable radius",
+    );
+    await primitivePage.mouse.move(
+      primitiveCenter.x,
+      primitiveCenter.y - 96,
+    );
+    await primitivePage.mouse.down();
+    await primitivePage.mouse.move(
+      primitiveCenter.x,
+      primitiveCenter.y - 128,
+    );
+    await primitivePage.mouse.up();
+    assert.equal(
+      await primitivePage.locator('[data-setting="radius"]').inputValue(),
+      "128",
+      "the on-grid size handle resizes the staged primitive",
+    );
+    await primitivePage.keyboard.press("Enter");
+    await primitivePage
+      .locator("#status")
+      .filter({ hasText: "Cylinder created: 32 snapped brush segments" })
+      .waitFor();
+    await primitivePage.evaluate(() =>
+      document.querySelector('[data-command="validate"]').click(),
+    );
+    await primitivePage
+      .locator("#status")
+      .filter({ hasText: "Validated 32 brush solids" })
+      .waitFor();
+    assert.deepEqual(primitiveErrors, []);
+    await primitivePage.close();
+
     const closedPathPage = await browser.newPage();
     const closedPathErrors = [];
     closedPathPage.on("pageerror", (error) => closedPathErrors.push(error));
@@ -417,9 +487,24 @@ try {
     await handlePage.goto(`http://127.0.0.1:${port}${prefix}`, {
       waitUntil: "networkidle",
     });
-    await handlePage.evaluate(() =>
-      document.querySelector("[data-generate]").click(),
+    await handlePage.locator('[data-tool-mode="brush"]').click();
+    const handleEditorBounds = await handlePage.locator("#editor").boundingBox();
+    assert.ok(handleEditorBounds);
+    const handleEditorCenter = {
+      x: handleEditorBounds.x + handleEditorBounds.width / 2,
+      y: handleEditorBounds.y + handleEditorBounds.height / 2,
+    };
+    await handlePage.mouse.move(
+      handleEditorCenter.x - 64,
+      handleEditorCenter.y - 64,
     );
+    await handlePage.mouse.down();
+    await handlePage.mouse.move(
+      handleEditorCenter.x + 64,
+      handleEditorCenter.y + 64,
+    );
+    await handlePage.mouse.up();
+    await handlePage.keyboard.press("Enter");
     await handlePage.evaluate(() => {
       const ownership = document.querySelector("[data-prefab-ownership]");
       ownership.value = "group";
