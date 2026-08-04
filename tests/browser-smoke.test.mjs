@@ -385,6 +385,20 @@ try {
       .locator("#stats")
       .filter({ hasText: "1 path nodes" })
       .waitFor();
+    const formerTangentHandle = activeSourceScreen(1431, 0);
+    await sourceRoutePage.mouse.click(
+      formerTangentHandle.x,
+      formerTangentHandle.y,
+    );
+    await sourceRoutePage
+      .locator("#stats")
+      .filter({ hasText: "2 path nodes" })
+      .waitFor();
+    await sourceRoutePage.keyboard.press("Backspace");
+    await sourceRoutePage
+      .locator("#stats")
+      .filter({ hasText: "1 path nodes" })
+      .waitFor();
     const routedEnd = activeSourceScreen(4000, 0);
     await sourceRoutePage.mouse.click(routedEnd.x, routedEnd.y);
     await sourceRoutePage.waitForFunction(() => {

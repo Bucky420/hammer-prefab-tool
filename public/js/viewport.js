@@ -519,7 +519,11 @@ export class Viewport {
     };
   }
   pathControlHandles() {
-    if (!Number.isInteger(this.selectedPathNode)) return [];
+    if (
+      this.pathPoints.length < 2 ||
+      !Number.isInteger(this.selectedPathNode)
+    )
+      return [];
     const index = this.selectedPathNode;
     const node = this.pathPoints[index];
     if (!node) return [];
