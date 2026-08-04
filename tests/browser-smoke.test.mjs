@@ -318,13 +318,6 @@ try {
       .locator("#status")
       .filter({ hasText: "Opened failtest4-routing.vmf" })
       .waitFor();
-    await routePage.locator('[data-tool-mode="path"]').click();
-    await routePage.locator("[data-path-snap]").uncheck();
-    await routePage.locator('[data-path-setting="interiorWidth"]').fill("128");
-    await routePage.locator('[data-path-setting="routeMargin"]').fill("32");
-    await routePage
-      .locator('[data-path-setting="maxSegmentLength"]')
-      .fill("256");
     const routeBounds = await routePage.locator("#editor").boundingBox();
     assert.ok(routeBounds);
     const geometryBounds = routeBrushes.flatMap((brush) => brush.vertices);
@@ -343,6 +336,26 @@ try {
       x: routeBounds.x + routeBounds.width / 2 + x * routeScale + routeOffsetX,
       y: routeBounds.y + routeBounds.height / 2 - y * routeScale + routeOffsetY,
     });
+    await routePage.mouse.click(...Object.values(routeScreen(314, 0)));
+    await routePage.keyboard.down("Control");
+    await routePage.mouse.click(...Object.values(routeScreen(0, 314)));
+    await routePage.mouse.click(...Object.values(routeScreen(-314, 0)));
+    await routePage.keyboard.up("Control");
+    await routePage
+      .locator("#stats")
+      .filter({ hasText: "3 selected objects" })
+      .waitFor();
+    await routePage.locator('[data-tool-mode="path"]').click();
+    await routePage
+      .locator("#status")
+      .filter({ hasText: "cannot define one hallway mouth; starting a free path" })
+      .waitFor();
+    await routePage.locator("[data-path-snap]").uncheck();
+    await routePage.locator('[data-path-setting="interiorWidth"]').fill("128");
+    await routePage.locator('[data-path-setting="routeMargin"]').fill("32");
+    await routePage
+      .locator('[data-path-setting="maxSegmentLength"]')
+      .fill("256");
     const routeStart = routeScreen(1536, 0);
     const routeEnd = routeScreen(3200, 0);
     await routePage.mouse.click(routeStart.x, routeStart.y);

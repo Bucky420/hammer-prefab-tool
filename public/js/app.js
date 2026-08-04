@@ -455,19 +455,22 @@ function activatePathMode() {
       state.brushSelection.has(brush.id) && brush.generator?.type === "hallway",
   );
   if (!selectedHallway) {
-    const sourceBrushIds = [...state.brushSelection].filter((id) =>
+    const selectedSourceBrushIds = [...state.brushSelection].filter((id) =>
       state.brushes.some(
         (brush) => brush.id === id && brush.generator?.type !== "hallway",
       ),
     );
+    const sourceBrushIds =
+      selectedSourceBrushIds.length <= 2 ? selectedSourceBrushIds : [];
     view.setPath([], `hallway-assembly-${crypto.randomUUID()}`, {
       sourceBrushIds,
     });
     setStatus(
       sourceBrushIds.length
         ? "Move toward the exit side to preview the selected floor mouth; click to start"
+        : selectedSourceBrushIds.length > 2
+          ? `Selected ${selectedSourceBrushIds.length} brushes cannot define one hallway mouth; starting a free path`
         : "Click points in Top view to draw a spline hallway centerline",
-      sourceBrushIds.length > 2,
     );
     return;
   }
