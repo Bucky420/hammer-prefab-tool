@@ -217,7 +217,7 @@ header {
   bottom: auto;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
+  justify-content: flex-start;
   width: 100%;
   height: 100%;
   min-width: 0;
@@ -227,6 +227,18 @@ header {
   border: 0;
   box-shadow: none;
   transition: none;
+}
+.generator-panel label {
+  grid-template-columns: 62px minmax(0, 1fr);
+  margin: 4px 0;
+}
+.generator-panel label > input:not([type="checkbox"]),
+.generator-panel label > select {
+  width: 100%;
+  min-width: 0;
+}
+.generator-panel output {
+  display: none;
 }
 .brush-panel > * {
   flex: 0 0 auto;

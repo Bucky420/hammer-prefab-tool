@@ -443,7 +443,7 @@ state.grid ||= 16;
 state.vmfFilename =
   localStorage.getItem("hammer-vmf-filename") || state.vmfFilename;
 const brushPanel = document.createElement("aside");
-brushPanel.className = "brush-panel";
+brushPanel.className = "brush-panel generator-panel";
 brushPanel.hidden = false;
 brushPanel.innerHTML = `<header><strong>BRUSH TOOLS</strong></header><label>Shape <select data-shape><option value="block">Block</option><option value="arch">Arch</option><option value="cylinder">Cylinder</option><option value="sphere">Sphere</option><option value="torus">Torus</option></select></label><label>Width <input type="number" data-setting="width" min="1" max="4096" step="${state.grid}" value="64"><output data-output="width">64</output></label><label>Depth <input type="number" data-setting="depth" min="1" max="4096" step="${state.grid}" value="64"><output data-output="depth">64</output></label><label>Height <input type="number" data-setting="height" min="1" max="4096" step="${state.grid}" value="128"><output data-output="height">128</output></label><label>Radius <input type="number" data-setting="radius" min="8" max="4096" step="${state.grid}" value="256"><output data-output="radius">256</output></label><label>Sides <input type="number" data-setting="segments" min="3" max="128" step="1" value="32"><output data-output="segments">32</output></label><label>Rings <input type="number" data-setting="rings" min="2" max="64" step="1" value="12"><output data-output="rings">12</output></label><label>Arc <input type="number" data-setting="arc" min="1" max="360" step="1" value="180"><output data-output="arc">180</output></label><label data-arch-setting>Bevel <input type="number" data-setting="bevel" min="0" max="128" step="${state.grid}" value="0"><output data-output="bevel">0</output></label><label class="check-row"><input type="checkbox" data-setting="powerOfTwo"> Power of 2</label><label class="check-row"><input type="checkbox" data-square> Square</label><label class="advanced-setting">Elevation <input type="number" data-setting="addHeight" min="-4096" max="4096" step="${state.grid}" value="0"><output data-output="addHeight">0</output></label><button class="generate-brush" data-generate>Generate Brush</button><section class="prefab-settings"><strong>PREFAB</strong><label>Ownership <select data-prefab-ownership><option value="func_detail">func_detail per group</option><option value="group">Hammer groups</option><option value="world">World brushes</option></select></label><label>Structural backing <select data-prefab-backing><option value="none">None</option><option value="floor">Floor</option><option value="ceiling">Ceiling</option><option value="both">Floor and ceiling</option></select></label></section>`;
 toolRail.append(brushPanel);
@@ -914,6 +914,18 @@ archActions.querySelector("[data-circle]").onclick = () => {
 shapeSelect.onchange = () => {
   brushShape = shapeSelect.value;
   state.generator.shape = brushShape;
+  const visibleSettings = {
+    block: ["width", "depth", "height"],
+    arch: ["width", "segments", "startAngle", "arc", "addHeight"],
+    cylinder: ["height", "radius", "segments", "addHeight"],
+    sphere: ["radius", "segments", "rings"],
+    torus: ["width", "height", "radius", "segments"],
+  }[brushShape];
+  brushPanel.querySelectorAll("[data-setting]").forEach((input) => {
+    input.closest("label").hidden = !visibleSettings.includes(
+      input.dataset.setting,
+    );
+  });
   const archSetting = brushPanel.querySelector("[data-arch-setting]");
   if (archSetting) archSetting.hidden = !["arch", "torus"].includes(brushShape);
   const widthInput = brushPanel.querySelector('[data-setting="width"]');
@@ -924,28 +936,19 @@ shapeSelect.onchange = () => {
   }
   const sidesInput = brushPanel.querySelector('[data-setting="segments"]');
   if (sidesInput) {
-    sidesInput.closest("label").firstChild.textContent =
-      brushShape === "arch" ? "Number of Sides " : "Sides ";
+    sidesInput.closest("label").firstChild.textContent = "Sides ";
     sidesInput.max = brushShape === "arch" ? 2048 : 128;
-  }
-  for (const setting of ["radius", "rings"]) {
-    const input = brushPanel.querySelector(`[data-setting="${setting}"]`);
-    if (input)
-      input.closest("label").style.display =
-        brushShape === "arch" ? "none" : "";
-  }
-  for (const setting of ["depth", "height"]) {
-    const input = brushPanel.querySelector(`[data-setting="${setting}"]`);
-    if (input)
-      input.closest("label").style.display =
-        brushShape === "arch" ? "none" : "";
   }
   startAngleLabel.hidden = brushShape !== "arch";
   archActions.hidden = brushShape !== "arch";
+  squareChk.closest("label").hidden = brushShape !== "block";
   const elevationInput = brushPanel.querySelector('[data-setting="addHeight"]');
   if (elevationInput) {
     const elevationLabel = elevationInput.closest("label");
-    elevationLabel.classList.toggle("enabled", brushShape === "arch");
+    elevationLabel.classList.toggle(
+      "enabled",
+      ["arch", "cylinder"].includes(brushShape),
+    );
     elevationLabel.firstChild.textContent =
       brushShape === "arch" ? "Add height " : "Elevation ";
   }
