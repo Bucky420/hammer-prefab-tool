@@ -282,6 +282,46 @@ try {
     assert.deepEqual(pathErrors, []);
     await pathPage.close();
 
+    const brushPage = await browser.newPage();
+    const brushErrors = [];
+    brushPage.on("pageerror", (error) => brushErrors.push(error));
+    await brushPage.goto(`http://127.0.0.1:${port}${prefix}`, {
+      waitUntil: "networkidle",
+    });
+    await brushPage.locator('[data-tool-mode="brush"]').click();
+    const brushBounds = await brushPage.locator("#editor").boundingBox();
+    assert.ok(brushBounds);
+    const brushCenter = {
+      x: brushBounds.x + brushBounds.width / 2,
+      y: brushBounds.y + brushBounds.height / 2,
+    };
+    await brushPage.mouse.move(brushCenter.x - 64, brushCenter.y - 64);
+    await brushPage.mouse.down();
+    await brushPage.mouse.move(brushCenter.x + 64, brushCenter.y + 64);
+    await brushPage.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(resolve)),
+    );
+    const previewPixel = await brushPage.locator("#editor").evaluate((canvas) => {
+      const context = canvas.getContext("2d");
+      return Array.from(
+        context.getImageData(
+          canvas.width / 2 + 13,
+          canvas.height / 2 + 13,
+          1,
+          1,
+        ).data,
+      );
+    });
+    assert.ok(
+      previewPixel[0] > previewPixel[2] + 10,
+      `brush geometry is visibly previewed before pointer release: ${previewPixel}`,
+    );
+    await brushPage.mouse.up();
+    await brushPage.keyboard.press("Enter");
+    await brushPage.locator("#stats").filter({ hasText: "1 brush" }).waitFor();
+    assert.deepEqual(brushErrors, []);
+    await brushPage.close();
+
     const closedPathPage = await browser.newPage();
     const closedPathErrors = [];
     closedPathPage.on("pageerror", (error) => closedPathErrors.push(error));

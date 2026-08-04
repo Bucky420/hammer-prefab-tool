@@ -524,6 +524,17 @@ export class Viewport {
     this.requestDraw();
     return true;
   }
+  creationBoundsFromDrag() {
+    if (this.drag?.type !== "box") return null;
+    const start = this.world({ x: this.drag.x, y: this.drag.y }),
+      end = this.world({ x: this.drag.currentX, y: this.drag.currentY }),
+      axes = this.axes();
+    for (const axis of axes.slice(0, 2)) {
+      start[axis] = roundToGrid(start[axis], this.state.grid);
+      end[axis] = roundToGrid(end[axis], this.state.grid);
+    }
+    return { start, end, axes };
+  }
   creationHandleAt(x, y) {
     if (!this.creationBox) return null;
     const { axes, start, end } = this.creationBox,
@@ -3985,6 +3996,8 @@ export class Viewport {
         this.canvas.style.cursor = "grabbing";
       else if (this.drag.type === "pan") this.canvas.style.cursor = "move";
       else this.canvas.style.cursor = "crosshair";
+      if (this.state.mode === "brush" && this.drag.type === "box")
+        this.onBrushPreview(this.creationBoundsFromDrag());
       this.requestDraw();
     });
     this.canvas.addEventListener("pointerup", () => {
@@ -4037,14 +4050,7 @@ export class Viewport {
       }
       if (this.drag.type === "box") {
         if (this.state.mode === "brush" && this.drag.dragged) {
-          const start = this.world({ x: this.drag.x, y: this.drag.y }),
-            end = this.world({ x: this.drag.currentX, y: this.drag.currentY }),
-            axes = this.axes();
-          for (const axis of axes.slice(0, 2)) {
-            start[axis] = roundToGrid(start[axis], this.state.grid);
-            end[axis] = roundToGrid(end[axis], this.state.grid);
-          }
-          this.creationBox = { start, end, axes };
+          this.creationBox = this.creationBoundsFromDrag();
           this.onBrushPreview(this.creationBox);
           this.onChange("brush-preview");
         } else if (
@@ -4795,14 +4801,18 @@ export class Viewport {
       }
     if ((this.drag?.type === "box" && this.drag.dragged) || this.creationBox) {
       let start, end;
-      if (this.creationBox) {
-        start = this.screen({ x: 0, y: 0, z: 0, ...this.creationBox.start });
-        end = this.screen({ x: 0, y: 0, z: 0, ...this.creationBox.end });
-      } else {
+      if (this.drag?.type === "box" && this.drag.dragged) {
         start = { x: this.drag.x, y: this.drag.y };
         end = { x: this.drag.currentX, y: this.drag.currentY };
+      } else {
+        start = this.screen({ x: 0, y: 0, z: 0, ...this.creationBox.start });
+        end = this.screen({ x: 0, y: 0, z: 0, ...this.creationBox.end });
       }
-      if (this.state.mode === "brush" && !this.creationBox) {
+      if (
+        this.state.mode === "brush" &&
+        this.drag?.type === "box" &&
+        this.drag.dragged
+      ) {
         const axes = this.axes(),
           startWorld = this.world(start),
           endWorld = this.world(end);
