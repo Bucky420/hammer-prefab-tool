@@ -4,6 +4,7 @@ import http from "node:http";
 import path from "node:path";
 import { chromium } from "playwright";
 import { box } from "../public/js/geometry-model.js";
+import { generateRing } from "../public/js/ring-generator.js";
 import { writeRingPrefabVMF } from "../public/js/ring-export.js";
 import { parseVMFDocument } from "../public/js/vmf-parser.js";
 import { writeVMF } from "../public/js/vmf-writer.js";
@@ -282,6 +283,83 @@ try {
       .waitFor();
     assert.deepEqual(pathErrors, []);
     await pathPage.close();
+
+    const routePage = await browser.newPage();
+    const routeErrors = [];
+    routePage.on("pageerror", (error) => routeErrors.push(error));
+    await routePage.goto(`http://127.0.0.1:${port}${prefix}`, {
+      waitUntil: "networkidle",
+    });
+    const routeBrushes = [0, 2432].flatMap((centerX) => {
+      const ring = generateRing({
+        radius: 349,
+        width: 70,
+        height: 128,
+        segments: 32,
+        grid: 1,
+      });
+      ring.forEach((brush) =>
+        brush.vertices.forEach((vertex) => {
+          vertex.x += centerX;
+        }),
+      );
+      return ring;
+    });
+    routeBrushes.push(
+      box({ x: 1520, y: -16, z: -64 }, { x: 1552, y: 16, z: 0 }),
+      box({ x: 3184, y: -16, z: -64 }, { x: 3216, y: 16, z: 0 }),
+    );
+    await routePage.locator("#vmf-file-input").setInputFiles({
+      name: "failtest4-routing.vmf",
+      mimeType: "text/plain",
+      buffer: Buffer.from(writeVMF(routeBrushes)),
+    });
+    await routePage
+      .locator("#status")
+      .filter({ hasText: "Opened failtest4-routing.vmf" })
+      .waitFor();
+    await routePage.locator('[data-tool-mode="path"]').click();
+    await routePage.locator("[data-path-snap]").uncheck();
+    await routePage.locator('[data-path-setting="interiorWidth"]').fill("128");
+    await routePage.locator('[data-path-setting="routeMargin"]').fill("32");
+    await routePage
+      .locator('[data-path-setting="maxSegmentLength"]')
+      .fill("256");
+    const routeBounds = await routePage.locator("#editor").boundingBox();
+    assert.ok(routeBounds);
+    const geometryBounds = routeBrushes.flatMap((brush) => brush.vertices);
+    const minX = Math.min(...geometryBounds.map((vertex) => vertex.x));
+    const maxX = Math.max(...geometryBounds.map((vertex) => vertex.x));
+    const minY = Math.min(...geometryBounds.map((vertex) => vertex.y));
+    const maxY = Math.max(...geometryBounds.map((vertex) => vertex.y));
+    const routeScale = Math.min(
+      16,
+      (routeBounds.width - 72) / Math.max(1, maxX - minX),
+      (routeBounds.height - 72) / Math.max(1, maxY - minY),
+    );
+    const routeOffsetX = (-(minX + maxX) * routeScale) / 2;
+    const routeOffsetY = ((minY + maxY) * routeScale) / 2;
+    const routeScreen = (x, y) => ({
+      x: routeBounds.x + routeBounds.width / 2 + x * routeScale + routeOffsetX,
+      y: routeBounds.y + routeBounds.height / 2 - y * routeScale + routeOffsetY,
+    });
+    const routeStart = routeScreen(1536, 0);
+    const routeEnd = routeScreen(3200, 0);
+    await routePage.mouse.click(routeStart.x, routeStart.y);
+    await routePage.mouse.click(routeEnd.x, routeEnd.y);
+    await routePage.waitForFunction(() => {
+      const match = document
+        .querySelector("#stats")
+        .textContent.match(/(\d+) path nodes/);
+      return Number(match?.[1]) > 4;
+    });
+    await routePage.keyboard.press("Enter");
+    await routePage
+      .locator("#status")
+      .filter({ hasText: /Created hallway: \d+ convex brushes/ })
+      .waitFor({ timeout: 15000 });
+    assert.deepEqual(routeErrors, []);
+    await routePage.close();
 
     const brushPage = await browser.newPage();
     const brushErrors = [];

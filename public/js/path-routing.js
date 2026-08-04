@@ -177,6 +177,15 @@ function obstaclePoints(obstacle) {
   return Array.isArray(obstacle) ? obstacle : obstacle?.points;
 }
 
+function polygonBounds(points) {
+  return {
+    minX: Math.min(...points.map((point) => point.x)),
+    maxX: Math.max(...points.map((point) => point.x)),
+    minY: Math.min(...points.map((point) => point.y)),
+    maxY: Math.max(...points.map((point) => point.y)),
+  };
+}
+
 /**
  * Tests a routed polyline against inflated convex obstacles. Boundary contact
  * is permitted, but no segment may enter an obstacle interior.
@@ -207,9 +216,24 @@ export function pathClearsObstacles(points, obstacles, tolerance = EPSILON) {
 
 function visible(a, b, obstacles) {
   if (samePoint(a, b)) return false;
-  return obstacles.every(({ points }) =>
-    segmentClearsPolygon(a, b, points, EPSILON),
-  );
+  const bounds = {
+    minX: Math.min(a.x, b.x),
+    maxX: Math.max(a.x, b.x),
+    minY: Math.min(a.y, b.y),
+    maxY: Math.max(a.y, b.y),
+  };
+  return obstacles.every((obstacle) => {
+    const obstacleBounds = obstacle.bounds;
+    if (
+      obstacleBounds &&
+      (bounds.maxX < obstacleBounds.minX - EPSILON ||
+        bounds.minX > obstacleBounds.maxX + EPSILON ||
+        bounds.maxY < obstacleBounds.minY - EPSILON ||
+        bounds.minY > obstacleBounds.maxY + EPSILON)
+    )
+      return true;
+    return segmentClearsPolygon(a, b, obstacle.points, EPSILON);
+  });
 }
 
 function shortestPath(nodes, obstacles) {
@@ -363,7 +387,9 @@ export function routePathAroundBrushes(input) {
       errors.push(`brush ${brush.id ?? brushIndex} has an invalid or excessive offset`);
       continue;
     }
-    obstacles.push({ brushId: String(brush.id ?? brushIndex), points });
+    const obstacle = { brushId: String(brush.id ?? brushIndex), points };
+    Object.defineProperty(obstacle, "bounds", { value: polygonBounds(points) });
+    obstacles.push(obstacle);
     if (obstacles.length > MAX_OBSTACLES) {
       return {
         points: [],
