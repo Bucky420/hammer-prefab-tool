@@ -1,8 +1,10 @@
+import { hammerRound } from "./grid.js";
+
 let nextId = 20000;
 
 // Hammer snaps the creation box to the active grid, but MakeArc rounds the
 // generated curve vertices to integer world coordinates, not grid units.
-const roundPoint = (value) => Math.round(value);
+const roundPoint = (value) => hammerRound(value);
 const polar = (center, radius, degrees) => {
   const angle = (degrees * Math.PI) / 180;
   return {
@@ -57,6 +59,7 @@ export function generateArch({
   arc = 360,
   addHeight = 0,
   grid = 16,
+  roundCoordinates = true,
 } = {}) {
   const count = Math.max(3, Math.floor(sides));
   const span = Math.max(1, Math.min(360, Number(arc)));
@@ -76,12 +79,12 @@ export function generateArch({
     const outerPoint = polar(center, outer, angle);
     const innerPoint = solidInner ? center : polar(center, inner, angle);
     outerPoints.push({
-      x: roundPoint(outerPoint.x),
-      y: roundPoint(outerPoint.y),
+      x: roundCoordinates ? roundPoint(outerPoint.x) : outerPoint.x,
+      y: roundCoordinates ? roundPoint(outerPoint.y) : outerPoint.y,
     });
     innerPoints.push({
-      x: roundPoint(innerPoint.x),
-      y: roundPoint(innerPoint.y),
+      x: roundCoordinates ? roundPoint(innerPoint.x) : innerPoint.x,
+      y: roundCoordinates ? roundPoint(innerPoint.y) : innerPoint.y,
     });
   }
 

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { generateRing } from "../public/js/ring-generator.js";
 import { generateArch } from "../public/js/arch-generator.js";
 import { validateAll } from "../public/js/brush-validation.js";
-import { roundToGrid } from "../public/js/grid.js";
+import { hammerRound, roundToGrid } from "../public/js/grid.js";
 import {
   applySelection,
   connectedFaceIds,
@@ -105,6 +105,49 @@ assert.ok(
   "Cylinder perimeter follows Source 2017 integer rounding",
 );
 assert.equal(validateAll(sdkCylinder).length, 0, "small SDK Cylinder is valid");
+const halfTieCylinder = generateCylinder({
+    radius: 4.5,
+    height: 8,
+    segments: 4,
+    grid: 1,
+  })[0],
+  halfTieCylinderX = halfTieCylinder.vertices.map((vertex) => vertex.x),
+  halfTieCylinderY = halfTieCylinder.vertices.map((vertex) => vertex.y);
+assert.deepEqual(
+  [
+    Math.min(...halfTieCylinderX),
+    Math.max(...halfTieCylinderX),
+    Math.min(...halfTieCylinderY),
+    Math.max(...halfTieCylinderY),
+  ],
+  [-5, 5, -5, 5],
+  "Cylinder V_rint rounding remains symmetric across negative half ties",
+);
+const halfTieArch = generateArch({
+    width: 9,
+    height: 9,
+    depth: 8,
+    wallWidth: 1,
+    sides: 4,
+    arc: 360,
+    grid: 1,
+  }),
+  halfTieArchX = halfTieArch.flatMap((brush) =>
+    brush.vertices.map((vertex) => vertex.x),
+  ),
+  halfTieArchY = halfTieArch.flatMap((brush) =>
+    brush.vertices.map((vertex) => vertex.y),
+  );
+assert.deepEqual(
+  [
+    Math.min(...halfTieArchX),
+    Math.max(...halfTieArchX),
+    Math.min(...halfTieArchY),
+    Math.max(...halfTieArchY),
+  ],
+  [-5, 5, -5, 5],
+  "Arch V_rint rounding remains symmetric across negative half ties",
+);
 const stagedBounds = {
     start: { x: -128, z: -128 },
     end: { x: 128, z: 128 },
@@ -573,6 +616,16 @@ assert.equal(
   roundToGrid(1.1, 0.125),
   1.125,
   "grid rounding must use the shared Hammer rule",
+);
+assert.equal(
+  hammerRound(-1.5),
+  -2,
+  "V_rint rounds negative halves away from zero",
+);
+assert.equal(
+  roundToGrid(-8, 16),
+  -16,
+  "grid rounding uses Source V_rint for negative half-grid ties",
 );
 assert.equal(
   selectByShape(

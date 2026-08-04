@@ -1,6 +1,7 @@
 import { generateRing } from "./ring-generator.js";
+import { hammerRound, roundToGrid } from "./grid.js";
 
-const snap = (value, grid) => Math.round(value / grid) * grid;
+const snap = (value, grid) => roundToGrid(value, grid);
 const polar = (radius, degrees) => {
   const radians = (degrees * Math.PI) / 180;
   return { x: radius * Math.cos(radians), y: radius * Math.sin(radians) };
@@ -45,6 +46,7 @@ export function generateCylinder({
   segments = 16,
   addHeight = 0,
   grid = 16,
+  roundCoordinates = true,
 } = {}) {
   const count = Math.max(3, Math.min(32, Math.floor(segments))),
     z0 = snap(addHeight, grid),
@@ -52,8 +54,12 @@ export function generateCylinder({
     points = Array.from({ length: count }, (_, index) => {
       const angle = (index * Math.PI * 2) / count;
       return {
-        x: Math.round(Math.sin(angle) * radiusX),
-        y: Math.round(Math.cos(angle) * radiusY),
+        x: roundCoordinates
+          ? hammerRound(Math.sin(angle) * radiusX)
+          : Math.sin(angle) * radiusX,
+        y: roundCoordinates
+          ? hammerRound(Math.cos(angle) * radiusY)
+          : Math.cos(angle) * radiusY,
       };
     }),
     vertices = [
