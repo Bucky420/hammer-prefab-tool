@@ -33,6 +33,7 @@ import {
   availableForwardSegmentLength,
 } from "./rail-acquisition.js";
 import { assertBrushesGeometry } from "./geometry-runtime.js";
+import { normalizePath, PATH_VERSION } from "./path-spline.js";
 
 /**
  * @typedef {import("./face-extrusion.js").ResolvedExtrusion} ResolvedExtrusion
@@ -95,6 +96,8 @@ export class Viewport {
     onBrushPreview = () => {},
     onPathPreview = () => ({ brushes: [], errors: [] }),
     onPathCommit = () => {},
+    onPathSource = () => null,
+    onPathEndSnap = () => null,
   ) {
     this.canvas = canvas;
     this.canvas.tabIndex = 0;
@@ -106,6 +109,8 @@ export class Viewport {
     this.onBrushPreview = onBrushPreview;
     this.onPathPreview = onPathPreview;
     this.onPathCommit = onPathCommit;
+    this.onPathSource = onPathSource;
+    this.onPathEndSnap = onPathEndSnap;
     this.ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
     this.rect = canvas.getBoundingClientRect();
     this.scale = 1;
@@ -114,7 +119,22 @@ export class Viewport {
     this.creationBox = null;
     this.creationPreviewBrushes = [];
     this.pathPoints = [];
+    this.pathModel = {
+      version: PATH_VERSION,
+      nodes: this.pathPoints,
+      segmentModes: [],
+      closed: false,
+      detail: { maxAngleDegrees: 10, maxSegmentLength: 64, chordError: 1 },
+    };
     this.pathAssemblyId = null;
+    this.pathSourceBrushIds = [];
+    this.pathSourceAttachment = null;
+    this.pathSourceCandidate = null;
+    this.pathEndAttachment = null;
+    this.pathEndCandidate = null;
+    this.pathStations = [];
+    this.selectedPathNode = null;
+    this.selectedPathSegment = null;
     this.pathPreviewBrushes = [];
     this.pathPreviewErrors = [];
     this.previewBrushes = [];
@@ -172,14 +192,29 @@ export class Viewport {
       this.state.selection = this.drag.originalSelection;
     if (this.drag?.type === "face-extrude")
       this.state.faceSelection = this.drag.originalSelection;
-    if (this.drag?.type === "path-node")
+    if (this.drag?.type?.startsWith("path-") && this.drag.originalPath)
       this.pathPoints = this.drag.originalPath;
     this.drag = null;
     this.creationBox = null;
     this.previewBrushes = [];
     this.creationPreviewBrushes = [];
     this.pathPoints = [];
+    this.pathModel = {
+      version: PATH_VERSION,
+      nodes: this.pathPoints,
+      segmentModes: [],
+      closed: false,
+      detail: { maxAngleDegrees: 10, maxSegmentLength: 64, chordError: 1 },
+    };
     this.pathAssemblyId = null;
+    this.pathSourceBrushIds = [];
+    this.pathSourceAttachment = null;
+    this.pathSourceCandidate = null;
+    this.pathEndAttachment = null;
+    this.pathEndCandidate = null;
+    this.pathStations = [];
+    this.selectedPathNode = null;
+    this.selectedPathSegment = null;
     this.pathPreviewBrushes = [];
     this.pathPreviewErrors = [];
     this.previewErrors = [];
@@ -199,25 +234,89 @@ export class Viewport {
     this.requestDraw();
     return true;
   }
-  setPath(path, assemblyId) {
-    this.pathPoints = (path || []).map((point) => ({ ...point }));
+  setPath(path, assemblyId, options = {}) {
+    const fallbackWidth =
+      Number(this.state.pathSettings?.interiorWidth || 128) +
+      2 * Number(this.state.pathSettings?.wallThickness || 16);
+    const fallbackHeight = Number(this.state.pathSettings?.interiorHeight || 128);
+    if (Array.isArray(path) && path.length >= 2) {
+      this.pathModel = normalizePath(path, {
+        defaults: { width: fallbackWidth, height: fallbackHeight },
+      });
+    } else if (path?.nodes?.length >= (path.closed ? 3 : 2)) {
+      this.pathModel = normalizePath(path, {
+        defaults: { width: fallbackWidth, height: fallbackHeight },
+      });
+    } else {
+      this.pathModel = {
+        version: PATH_VERSION,
+        nodes: [],
+        segmentModes: [],
+        closed: false,
+        detail: {
+          maxAngleDegrees:
+            Number(this.state.pathSettings?.maxAngleDegrees) || 10,
+          maxSegmentLength:
+            Number(this.state.pathSettings?.maxSegmentLength) || 64,
+          chordError: Number(this.state.pathSettings?.chordError) || 1,
+        },
+      };
+    }
+    this.pathPoints = this.pathModel.nodes;
     this.pathAssemblyId = assemblyId || null;
+    this.pathSourceBrushIds = [...(options.sourceBrushIds || [])];
+    this.pathSourceAttachment = options.sourceAttachment
+      ? structuredClone(options.sourceAttachment)
+      : null;
+    this.pathSourceCandidate = null;
+    this.pathEndAttachment = options.endAttachment
+      ? structuredClone(options.endAttachment)
+      : null;
+    this.pathEndCandidate = null;
+    this.selectedPathNode = this.pathPoints.length ? 0 : null;
+    this.selectedPathSegment = null;
     this.refreshPathPreview();
     this.requestDraw();
+  }
+  pathData() {
+    return {
+      ...this.pathModel,
+      nodes: this.pathPoints.map((point) => ({ ...point })),
+      segmentModes: [...this.pathModel.segmentModes],
+      detail: { ...this.pathModel.detail },
+      sourceAttachment: this.pathSourceAttachment
+        ? structuredClone(this.pathSourceAttachment)
+        : undefined,
+      endAttachment: this.pathEndAttachment
+        ? structuredClone(this.pathEndAttachment)
+        : undefined,
+    };
   }
   refreshPathPreview() {
     if (this.pathPoints.length < 2) {
       this.pathPreviewBrushes = [];
       this.pathPreviewErrors = [];
+      this.pathStations = [];
       this.requestDraw();
       return { brushes: [], errors: [] };
     }
-    const result = this.onPathPreview(this.pathPoints, this.pathAssemblyId) || {
+    const result =
+      this.onPathPreview(
+        this.pathData(),
+        this.pathAssemblyId,
+        this.pathSourceAttachment,
+        this.pathEndAttachment,
+      ) || {
       brushes: [],
       errors: ["Path preview failed"],
     };
     this.pathPreviewBrushes = result.brushes || [];
     this.pathPreviewErrors = result.errors || [];
+    this.pathStations = result.stations || [];
+    if (result.path?.nodes) {
+      this.pathModel = result.path;
+      this.pathPoints = this.pathModel.nodes;
+    }
     this.requestDraw();
     return result;
   }
@@ -226,25 +325,193 @@ export class Viewport {
     const result = this.refreshPathPreview();
     if (result.errors.length || !result.brushes.length) return false;
     this.onPathCommit({
-      path: this.pathPoints.map((point) => ({ ...point })),
+      path: this.pathData(),
       assemblyId: this.pathAssemblyId,
       brushes: result.brushes,
+      sourceAttachment: this.pathSourceAttachment,
+      endAttachment: this.pathEndAttachment,
     });
     return true;
   }
   removeLastPathPoint() {
     if (!this.pathPoints.length) return false;
     this.pathPoints.pop();
+    this.pathModel.nodes = this.pathPoints;
+    this.pathModel.closed = false;
+    this.pathModel.segmentModes.length = Math.max(
+      0,
+      this.pathPoints.length - 1,
+    );
+    this.pathEndAttachment = null;
+    this.selectedPathNode = this.pathPoints.length - 1;
+    this.refreshPathPreview();
+    return true;
+  }
+  togglePathClosed() {
+    if (this.pathPoints.length < 3) return false;
+    this.pathModel.closed = !this.pathModel.closed;
+    const segmentCount = this.pathModel.closed
+      ? this.pathPoints.length
+      : this.pathPoints.length - 1;
+    while (this.pathModel.segmentModes.length < segmentCount)
+      this.pathModel.segmentModes.push(
+        this.state.pathSettings?.segmentMode || "spline",
+      );
+    this.pathModel.segmentModes.length = segmentCount;
+    if (this.pathModel.closed) {
+      this.pathSourceAttachment = null;
+      this.pathSourceBrushIds = [];
+      this.pathEndAttachment = null;
+    }
+    this.refreshPathPreview();
+    return true;
+  }
+  setSelectedPathSegmentMode(mode) {
+    if (!Number.isInteger(this.selectedPathSegment)) return false;
+    if (!["spline", "straight"].includes(mode)) return false;
+    this.pathModel.segmentModes[this.selectedPathSegment] = mode;
+    this.refreshPathPreview();
+    return true;
+  }
+  setSelectedPathNodeMode(mode) {
+    if (!Number.isInteger(this.selectedPathNode)) return false;
+    if (!["auto", "smooth", "corner"].includes(mode)) return false;
+    this.pathPoints[this.selectedPathNode].tangentMode = mode;
+    if (mode === "auto") {
+      delete this.pathPoints[this.selectedPathNode].tangentIn;
+      delete this.pathPoints[this.selectedPathNode].tangentOut;
+    }
     this.refreshPathPreview();
     return true;
   }
   pathNodeAt(x, y) {
     let best = null;
-    for (const [index, point] of this.pathPoints.entries()) {
+    const entries = [...this.pathPoints.entries()].sort(([first], [second]) =>
+      first === this.selectedPathNode
+        ? -1
+        : second === this.selectedPathNode
+          ? 1
+          : 0,
+    );
+    for (const [index, point] of entries) {
       const screen = this.screen(point);
       const distance = Math.hypot(x - screen.x, y - screen.y);
       if (distance <= 9 && (!best || distance < best.distance))
         best = { index, distance };
+    }
+    return best;
+  }
+  pathNodeDirection(index) {
+    const node = this.pathPoints[index];
+    if (!node) return { x: 1, y: 0, z: 0 };
+    const supplied = node.tangentOut || node.tangentIn;
+    let direction = supplied ? { ...supplied } : null;
+    if (!direction) {
+      const previous =
+        this.pathPoints[
+          (index - 1 + this.pathPoints.length) % this.pathPoints.length
+        ];
+      const next = this.pathPoints[(index + 1) % this.pathPoints.length];
+      if (!this.pathModel.closed && index === 0 && next)
+        direction = {
+          x: next.x - node.x,
+          y: next.y - node.y,
+          z: next.z - node.z,
+        };
+      else if (!this.pathModel.closed && index === this.pathPoints.length - 1)
+        direction = {
+          x: node.x - previous.x,
+          y: node.y - previous.y,
+          z: node.z - previous.z,
+        };
+      else if (previous && next)
+        direction = {
+          x: (next.x - previous.x) / 2,
+          y: (next.y - previous.y) / 2,
+          z: (next.z - previous.z) / 2,
+        };
+    }
+    direction ||= { x: 1, y: 0, z: 0 };
+    const length = Math.hypot(direction.x, direction.y, direction.z) || 1;
+    return {
+      x: direction.x / length,
+      y: direction.y / length,
+      z: direction.z / length,
+    };
+  }
+  pathControlHandles() {
+    if (!Number.isInteger(this.selectedPathNode)) return [];
+    const index = this.selectedPathNode;
+    const node = this.pathPoints[index];
+    if (!node) return [];
+    const handles = [];
+    if (this.kind === "top") {
+      const direction = this.pathNodeDirection(index);
+      const normal = { x: -direction.y, y: direction.x };
+      for (const side of [-1, 1]) {
+        const point = {
+          ...node,
+          x: node.x + normal.x * (node.width / 2) * side,
+          y: node.y + normal.y * (node.width / 2) * side,
+        };
+        handles.push({ type: "path-width", index, side, point });
+      }
+      const tangentLength = Math.max(
+        this.state.grid * 2,
+        Math.min(
+          128,
+          Math.hypot(
+            node.tangentOut?.x || 0,
+            node.tangentOut?.y || 0,
+          ) / 3 || 48,
+        ),
+      );
+      for (const side of [-1, 1]) {
+        handles.push({
+          type: "path-tangent",
+          index,
+          side,
+          point: {
+            ...node,
+            x: node.x + direction.x * tangentLength * side,
+            y: node.y + direction.y * tangentLength * side,
+          },
+        });
+      }
+    } else {
+      handles.push({
+        type: "path-height",
+        index,
+        point: { ...node, z: node.z + node.height },
+      });
+    }
+    return handles;
+  }
+  pathControlAt(x, y) {
+    return this.pathControlHandles().find((handle) => {
+      const screen = this.screen(handle.point);
+      return Math.hypot(x - screen.x, y - screen.y) <= 9;
+    });
+  }
+  pathSegmentAt(x, y) {
+    const stations = this.pathStations.length
+      ? this.pathStations
+      : this.pathPoints.map((point, index) => ({
+          ...point,
+          sourceSegment: Math.max(0, index - 1),
+        }));
+    const count = this.pathModel.closed ? stations.length : stations.length - 1;
+    let best = null;
+    for (let index = 0; index < count; index++) {
+      const start = this.screen(stations[index]);
+      const end = this.screen(stations[(index + 1) % stations.length]);
+      const distance = distanceToSegment({ x, y }, start, end);
+      if (distance <= 7 && (!best || distance < best.distance))
+        best = {
+          index:
+            stations[index].sourceSegment ?? Math.min(index, this.pathPoints.length - 2),
+          distance,
+        };
     }
     return best;
   }
@@ -2998,14 +3265,50 @@ export class Viewport {
       }
       if (event.button !== 0) return;
       if (this.state.mode === "path") {
+        const control = this.pathControlAt(event.offsetX, event.offsetY);
+        if (control) {
+          this.canvas.setPointerCapture(event.pointerId);
+          this.drag = {
+            ...control,
+            start: { x: event.offsetX, y: event.offsetY },
+            originalPath: this.pathPoints.map((point) => structuredClone(point)),
+          };
+          return;
+        }
         const node = this.pathNodeAt(event.offsetX, event.offsetY);
         if (node) {
+          if (
+            node.index === 0 &&
+            this.pathPoints.length >= 3 &&
+            this.selectedPathNode === this.pathPoints.length - 1 &&
+            !this.pathModel.closed
+          ) {
+            this.togglePathClosed();
+            this.onChange("path-preview");
+            return;
+          }
+          this.selectedPathNode = node.index;
+          this.selectedPathSegment = null;
           this.canvas.setPointerCapture(event.pointerId);
           this.drag = {
             type: "path-node",
             index: node.index,
-            originalPath: this.pathPoints.map((point) => ({ ...point })),
+            originalPath: this.pathPoints.map((point) => structuredClone(point)),
           };
+          this.onChange("path-control-selected");
+          return;
+        }
+        const segment = this.pathSegmentAt(event.offsetX, event.offsetY);
+        if (segment) {
+          this.selectedPathNode = null;
+          this.selectedPathSegment = segment.index;
+          this.canvas.setPointerCapture(event.pointerId);
+          this.drag = {
+            type: "path-move",
+            start: { x: event.offsetX, y: event.offsetY },
+            originalPath: this.pathPoints.map((point) => structuredClone(point)),
+          };
+          this.onChange("path-control-selected");
           return;
         }
         if (this.kind !== "top") {
@@ -3013,14 +3316,149 @@ export class Viewport {
           return;
         }
         const world = this.world({ x: event.offsetX, y: event.offsetY });
-        this.pathPoints.push({
+        const snapped = {
           x: roundToGrid(world.x, this.state.grid),
           y: roundToGrid(world.y, this.state.grid),
-          z: roundToGrid(
-            Number(this.state.pathSettings?.baseElevation) || 0,
-            this.state.grid,
-          ),
-        });
+        };
+        const defaultWidth =
+          Number(this.state.pathSettings?.interiorWidth || 128) +
+          2 * Number(this.state.pathSettings?.wallThickness || 16);
+        const defaultHeight = Number(
+          this.state.pathSettings?.interiorHeight || 128,
+        );
+        if (!this.pathPoints.length && this.pathSourceBrushIds.length) {
+          const source = this.onPathSource(
+            { x: world.x, y: world.y },
+            this.pathSourceBrushIds,
+          );
+          if (!source || source.errors?.length) {
+            this.onChange(
+              `path-source-invalid:${source?.errors?.[0] || "No usable selected floor boundary"}`,
+            );
+            return;
+          }
+          const plane = source.floorPlane;
+          const elevationAt = (point) =>
+            plane?.normal?.z
+              ? (plane.distance -
+                  plane.normal.x * point.x -
+                  plane.normal.y * point.y) /
+                plane.normal.z
+              : source.elevation;
+          const distance = Math.max(
+            this.state.grid * 2,
+            Math.hypot(
+              snapped.x - source.center.x,
+              snapped.y - source.center.y,
+            ),
+          );
+          const sourceSlope = source.floorPlane?.normal?.z
+            ? -(
+                source.floorPlane.normal.x * source.direction.x +
+                source.floorPlane.normal.y * source.direction.y
+              ) / source.floorPlane.normal.z
+            : 0;
+          this.pathSourceAttachment = {
+            ...structuredClone(source),
+            flare: Number(this.state.pathSettings?.flare) || 0,
+            blendLength:
+              Number(this.state.pathSettings?.blendLength) || distance,
+          };
+          this.pathPoints.push(
+            {
+              ...source.center,
+              width: source.outsideWidth,
+              height: defaultHeight,
+              tangentMode: "smooth",
+              tangentOut: {
+                x: source.direction.x * distance,
+                y: source.direction.y * distance,
+                z: sourceSlope * distance,
+              },
+            },
+            {
+              ...snapped,
+              z: roundToGrid(elevationAt(snapped), this.state.grid),
+              width: source.outsideWidth,
+              height: defaultHeight,
+              tangentMode: "auto",
+            },
+          );
+          this.pathModel.nodes = this.pathPoints;
+          this.pathModel.segmentModes.push(
+            this.state.pathSettings?.segmentMode || "spline",
+          );
+          this.selectedPathNode = 1;
+          this.onChange("path-source-acquired");
+        } else {
+          let attachment = null;
+          if (
+            this.pathPoints.length &&
+            this.state.pathSettings?.snapEnds !== false
+          )
+            attachment = this.onPathEndSnap(
+              { x: world.x, y: world.y },
+              this.pathSourceBrushIds,
+              this.pathAssemblyId,
+            );
+          const target = attachment?.errors?.length ? null : attachment;
+          const previous = this.pathPoints.at(-1);
+          const targetDistance = target?.center
+            ? Math.max(
+                this.state.grid * 2,
+                Math.hypot(
+                  target.center.x - previous.x,
+                  target.center.y - previous.y,
+                ),
+              )
+            : 0;
+          const endDirection = target
+            ? { x: -target.direction.x, y: -target.direction.y }
+            : null;
+          const endSlope = target?.floorPlane?.normal?.z
+            ? -(
+                target.floorPlane.normal.x * endDirection.x +
+                target.floorPlane.normal.y * endDirection.y
+              ) / target.floorPlane.normal.z
+            : 0;
+          this.pathPoints.push({
+            x: target?.center?.x ?? snapped.x,
+            y: target?.center?.y ?? snapped.y,
+            z: roundToGrid(
+              target?.elevation ??
+                Number(this.state.pathSettings?.baseElevation) ??
+                0,
+              this.state.grid,
+            ),
+            width: target?.outsideWidth || defaultWidth,
+            height: defaultHeight,
+            tangentMode: target ? "smooth" : "auto",
+            ...(target
+              ? {
+                  tangentIn: {
+                    x: -target.direction.x * targetDistance,
+                    y: -target.direction.y * targetDistance,
+                    z: endSlope * targetDistance,
+                  },
+                }
+              : {}),
+          });
+          this.pathModel.nodes = this.pathPoints;
+          if (this.pathPoints.length > 1)
+            this.pathModel.segmentModes.push(
+              this.state.pathSettings?.segmentMode || "spline",
+            );
+          this.pathEndAttachment = target
+            ? {
+                ...structuredClone(target),
+                flare: Number(this.state.pathSettings?.flare) || 0,
+                blendLength:
+                  Number(this.state.pathSettings?.blendLength) || 128,
+              }
+            : null;
+          this.pathEndCandidate = null;
+          this.selectedPathNode = this.pathPoints.length - 1;
+        }
         this.refreshPathPreview();
         this.onChange("path-preview");
         return;
@@ -3188,6 +3626,38 @@ export class Viewport {
     });
     this.canvas.addEventListener("pointermove", (event) => {
       if (!this.drag) {
+        if (
+          this.state.mode === "path" &&
+          this.kind === "top" &&
+          !this.pathPoints.length &&
+          this.pathSourceBrushIds.length
+        ) {
+          const world = this.world({ x: event.offsetX, y: event.offsetY });
+          this.pathSourceCandidate = this.onPathSource(
+            { x: world.x, y: world.y },
+            this.pathSourceBrushIds,
+          );
+          if (this.pathSourceCandidate?.errors?.length)
+            this.pathSourceCandidate = null;
+          this.requestDraw();
+          return;
+        }
+        if (
+          this.state.mode === "path" &&
+          this.kind === "top" &&
+          this.pathPoints.length &&
+          !this.pathModel.closed &&
+          this.state.pathSettings?.snapEnds !== false
+        ) {
+          const world = this.world({ x: event.offsetX, y: event.offsetY });
+          this.pathEndCandidate = this.onPathEndSnap(
+            { x: world.x, y: world.y },
+            this.pathSourceBrushIds,
+            this.pathAssemblyId,
+          );
+          this.requestDraw();
+          return;
+        }
         const operation = this.selectionOperation(event);
         const fillLoop =
           this.state.mode === "face" && this.state.faceToolMode === "fill"
@@ -3211,12 +3681,86 @@ export class Viewport {
         this.requestDraw();
         return;
       }
+      if (this.drag.type === "path-width") {
+        const current = this.world({ x: event.offsetX, y: event.offsetY });
+        const node = this.pathPoints[this.drag.index];
+        const width = roundToGrid(
+          2 * Math.hypot(current.x - node.x, current.y - node.y),
+          this.state.grid,
+        );
+        node.width = Math.max(
+          2 * Number(this.state.pathSettings?.wallThickness || 16) +
+            this.state.grid,
+          width,
+        );
+        this.refreshPathPreview();
+        return;
+      }
+      if (this.drag.type === "path-height") {
+        const current = this.world({ x: event.offsetX, y: event.offsetY });
+        const node = this.pathPoints[this.drag.index];
+        node.height = Math.max(
+          this.state.grid,
+          roundToGrid(current.z - node.z, this.state.grid),
+        );
+        this.refreshPathPreview();
+        return;
+      }
+      if (this.drag.type === "path-tangent") {
+        const current = this.world({ x: event.offsetX, y: event.offsetY });
+        const node = this.pathPoints[this.drag.index];
+        const sign = this.drag.side > 0 ? 1 : -1;
+        const tangent = {
+          x: (current.x - node.x) * 3 * sign,
+          y: (current.y - node.y) * 3 * sign,
+          z:
+            (this.drag.side > 0
+              ? node.tangentOut?.z
+              : node.tangentIn?.z) || 0,
+        };
+        node.tangentMode = node.tangentMode === "corner" ? "corner" : "smooth";
+        if (this.drag.side > 0) node.tangentOut = tangent;
+        else node.tangentIn = tangent;
+        if (node.tangentMode === "smooth") {
+          node.tangentIn = { ...tangent };
+          node.tangentOut = { ...tangent };
+        }
+        this.refreshPathPreview();
+        return;
+      }
+      if (this.drag.type === "path-move") {
+        const before = this.world(this.drag.start);
+        const current = this.world({ x: event.offsetX, y: event.offsetY });
+        const axes = this.axes();
+        const delta = {
+          [axes[0]]: roundToGrid(
+            current[axes[0]] - before[axes[0]],
+            this.state.grid,
+          ),
+          [axes[1]]: roundToGrid(
+            current[axes[1]] - before[axes[1]],
+            this.state.grid,
+          ),
+        };
+        this.pathPoints.forEach((point, index) => {
+          const original = this.drag.originalPath[index];
+          if (index === 0 && this.pathSourceAttachment) return;
+          point[axes[0]] = original[axes[0]] + delta[axes[0]];
+          point[axes[1]] = original[axes[1]] + delta[axes[1]];
+        });
+        this.pathEndAttachment = null;
+        this.refreshPathPreview();
+        return;
+      }
       if (this.drag.type === "path-node") {
         const current = this.world({ x: event.offsetX, y: event.offsetY });
         const [horizontal, vertical] = this.axes();
         const point = this.pathPoints[this.drag.index];
+        if (this.drag.index === 0 && this.pathSourceAttachment) return;
         point[horizontal] = roundToGrid(current[horizontal], this.state.grid);
         point[vertical] = roundToGrid(current[vertical], this.state.grid);
+        if (this.drag.index === this.pathPoints.length - 1)
+          this.pathEndAttachment = null;
         this.refreshPathPreview();
         return;
       }
@@ -3445,7 +3989,7 @@ export class Viewport {
     });
     this.canvas.addEventListener("pointerup", () => {
       if (!this.drag) return;
-      if (this.drag.type === "path-node") {
+      if (this.drag.type.startsWith("path-")) {
         this.drag = null;
         this.onChange("path-preview");
         this.requestDraw();
@@ -3895,22 +4439,88 @@ export class Viewport {
         context.lineWidth = 1;
         context.stroke();
       }
+    if (
+      this.state.mode === "path" &&
+      !this.pathPoints.length &&
+      this.pathSourceCandidate?.boundary?.length
+    ) {
+      context.strokeStyle = COLORS.faceHover;
+      context.lineWidth = 4;
+      context.beginPath();
+      this.pathSourceCandidate.boundary.forEach((point, index) => {
+        const screen = this.screen(point);
+        if (index) context.lineTo(screen.x, screen.y);
+        else context.moveTo(screen.x, screen.y);
+      });
+      context.stroke();
+      const center = this.screen(this.pathSourceCandidate.center);
+      context.fillStyle = COLORS.faceHover;
+      context.fillRect(center.x - 5, center.y - 5, 10, 10);
+      context.lineWidth = 1;
+    }
     if (this.state.mode === "path" && this.pathPoints.length) {
       context.strokeStyle = this.pathPreviewErrors.length
         ? COLORS.invalid
         : COLORS.active;
       context.lineWidth = 2;
       context.beginPath();
-      this.pathPoints.forEach((point, index) => {
+      const centerline = this.pathStations.length
+        ? this.pathStations
+        : this.pathPoints;
+      centerline.forEach((point, index) => {
         const screen = this.screen(point);
         if (index) context.lineTo(screen.x, screen.y);
         else context.moveTo(screen.x, screen.y);
       });
+      if (this.pathModel.closed && centerline.length > 2) context.closePath();
       context.stroke();
+      if (this.pathSourceAttachment?.boundary?.length) {
+        context.strokeStyle = COLORS.faceHover;
+        context.lineWidth = 4;
+        context.beginPath();
+        this.pathSourceAttachment.boundary.forEach((point, index) => {
+          const screen = this.screen(point);
+          if (index) context.lineTo(screen.x, screen.y);
+          else context.moveTo(screen.x, screen.y);
+        });
+        context.stroke();
+      }
+      if (this.pathEndCandidate?.boundary?.length) {
+        context.strokeStyle = "#66dde3";
+        context.lineWidth = 4;
+        context.beginPath();
+        this.pathEndCandidate.boundary.forEach((point, index) => {
+          const screen = this.screen(point);
+          if (index) context.lineTo(screen.x, screen.y);
+          else context.moveTo(screen.x, screen.y);
+        });
+        context.stroke();
+      }
       for (const [index, point] of this.pathPoints.entries()) {
         const screen = this.screen(point);
-        context.fillStyle = index === 0 ? COLORS.faceHover : COLORS.selected;
-        context.fillRect(screen.x - 4, screen.y - 4, 8, 8);
+        context.fillStyle =
+          index === this.selectedPathNode
+            ? COLORS.faceHover
+            : index === 0
+              ? COLORS.active
+              : COLORS.selected;
+        context.fillRect(screen.x - 5, screen.y - 5, 10, 10);
+      }
+      for (const handle of this.pathControlHandles()) {
+        const node = this.pathPoints[handle.index];
+        const start = this.screen(node);
+        const end = this.screen(handle.point);
+        context.strokeStyle =
+          handle.type === "path-tangent" ? "#7cc7ff" : "#66dde3";
+        context.lineWidth = 1;
+        context.beginPath();
+        context.moveTo(start.x, start.y);
+        context.lineTo(end.x, end.y);
+        context.stroke();
+        context.fillStyle = context.strokeStyle;
+        context.beginPath();
+        context.arc(end.x, end.y, 4, 0, Math.PI * 2);
+        context.fill();
       }
       context.lineWidth = 1;
     }

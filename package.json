@@ -14,7 +14,7 @@
     "test:browser": "node tests/browser-smoke.test.mjs",
     "test:static-build": "npm run build && node tests/static-build.test.mjs",
     "typecheck": "tsc --project jsconfig.json",
-    "check": "npm run typecheck && node tests/static-contracts.test.mjs && node tests/geometry-runtime.test.mjs && node tests/milestone.test.mjs && node tests/hallway-generator.test.mjs && node tests/extrusion-mode-state.test.mjs && node tests/face-panel-startup.test.mjs && node tests/path-panel-startup.test.mjs && node tests/test-setup.mjs && node tests/extrusion-fixtures.test.mjs && node tests/single-face-extrusion-fixtures.test.mjs && node tests/single-face-snap-regressions.test.mjs && npm run test:persistence && npm run test:vmf && npm run test:static-build && npm run test:browser"
+    "check": "npm run typecheck && node tests/static-contracts.test.mjs && node tests/geometry-runtime.test.mjs && node tests/milestone.test.mjs && node tests/hallway-generator.test.mjs && node tests/path-spline.test.mjs && node tests/path-source-acquisition.test.mjs && node tests/extrusion-mode-state.test.mjs && node tests/face-panel-startup.test.mjs && node tests/path-panel-startup.test.mjs && node tests/test-setup.mjs && node tests/extrusion-fixtures.test.mjs && node tests/single-face-extrusion-fixtures.test.mjs && node tests/single-face-snap-regressions.test.mjs && npm run test:persistence && npm run test:vmf && npm run test:static-build && npm run test:browser"
   },
   "engines": {
     "node": ">=20.19.0"

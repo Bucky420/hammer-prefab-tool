@@ -14,6 +14,10 @@ import {
   generateTorus,
 } from "./primitive-generator.js";
 import { generateHallway } from "./hallway-generator.js";
+import {
+  acquireNearestPathSource,
+  acquirePathSource,
+} from "./path-source-acquisition.js";
 import { validateAll } from "./brush-validation.js";
 import { History } from "./history.js";
 import { Viewport } from "./viewport.js";
@@ -83,6 +87,13 @@ state.pathSettings = {
   floorThickness: 16,
   ceilingThickness: 16,
   baseElevation: 0,
+  segmentMode: "spline",
+  maxAngleDegrees: 10,
+  maxSegmentLength: 64,
+  chordError: 1,
+  snapEnds: true,
+  flare: 0,
+  blendLength: 128,
   materials: {
     floor: "dev/dev_measuregeneric01b",
     wall: "dev/dev_measurewall01a",
@@ -224,6 +235,23 @@ const view = new Viewport(
         "Add hallway points in Top view; use Front or Side to edit elevations",
         true,
       );
+    } else if (changeType === "path-source-acquired") {
+      state.pathSettings.interiorWidth =
+        view.pathSourceAttachment.interiorWidth;
+      state.pathSettings.baseElevation = view.pathSourceAttachment.elevation;
+      updatePathControls();
+      redraw();
+      setStatus(
+        `Hallway start matched to ${view.pathSourceBrushIds.length} selected floor brush${view.pathSourceBrushIds.length === 1 ? "" : "es"}`,
+      );
+    } else if (
+      typeof changeType === "string" &&
+      changeType.startsWith("path-source-invalid:")
+    ) {
+      setStatus(changeType.slice("path-source-invalid:".length), true);
+    } else if (changeType === "path-control-selected") {
+      updatePathControls();
+      redraw();
     } else if (changeType === "face-incompatible") {
       redraw();
       setStatus(
@@ -259,14 +287,39 @@ const view = new Viewport(
     view.creationPreviewBrushes = buildBrushesFromBounds(bounds) || [];
     view.requestDraw();
   },
-  (path, assemblyId) =>
+  (path, assemblyId, sourceAttachment, endAttachment) =>
     generateHallway({
       path,
       assemblyId,
+      sourceAttachment,
+      endAttachment,
       ...state.pathSettings,
       grid: state.grid,
     }),
   ({ assemblyId, brushes }) => commitHallway(assemblyId, brushes),
+  (pointer, sourceBrushIds) =>
+    acquirePathSource(
+      state.brushes.filter((brush) => sourceBrushIds.includes(brush.id)),
+      pointer,
+      Number(state.pathSettings.wallThickness),
+      0.01,
+    ),
+  (pointer, sourceBrushIds, assemblyId) => {
+    const radius = Math.max(state.grid, 14 / Math.max(view.scale, 0.0001));
+    return acquireNearestPathSource(
+      state.brushes.filter(
+        (brush) =>
+          !sourceBrushIds.includes(brush.id) &&
+          brush.assemblyId !== assemblyId &&
+          brush.generator?.type !== "hallway" &&
+          !state.hiddenBrushes.has(brush.id),
+      ),
+      pointer,
+      Number(state.pathSettings.wallThickness),
+      radius,
+      0.01,
+    );
+  },
 );
 /*
   Brush creation is intentionally staged: Hammer lets the user resize the
@@ -395,17 +448,60 @@ toolRail.querySelectorAll("[data-tool-mode]").forEach(
           state.pathSettings = {
             ...state.pathSettings,
             ...clone(selectedHallway.generator.settings || {}),
-            baseElevation: selectedHallway.generator.path?.[0]?.z || 0,
+            baseElevation:
+              selectedHallway.generator.path?.nodes?.[0]?.z ??
+              selectedHallway.generator.path?.[0]?.z ??
+              0,
           };
-          updatePathControls();
+          const attachmentExists = (attachment) =>
+            attachment?.sourceBrushIds?.length &&
+            attachment.sourceBrushIds.every((id) =>
+              state.brushes.some((brush) => brush.id === id),
+            );
+          const sourceAttachment = attachmentExists(
+            selectedHallway.generator.sourceAttachment,
+          )
+            ? selectedHallway.generator.sourceAttachment
+            : null;
+          const endAttachment = attachmentExists(
+            selectedHallway.generator.endAttachment,
+          )
+            ? selectedHallway.generator.endAttachment
+            : null;
+          const persistedAttachment = sourceAttachment || endAttachment;
+          if (persistedAttachment) {
+            state.pathSettings.flare = Number(persistedAttachment.flare) || 0;
+            state.pathSettings.blendLength =
+              Number(persistedAttachment.blendLength) ||
+              state.pathSettings.blendLength;
+          }
           view.setPath(
             selectedHallway.generator.path,
             selectedHallway.assemblyId || selectedHallway.generator.assemblyId,
+            {
+              sourceBrushIds:
+                sourceAttachment?.sourceBrushIds || [],
+              sourceAttachment,
+              endAttachment,
+            },
           );
+          updatePathControls();
           setStatus("Editing hallway path; Enter applies changes");
         } else {
-          view.setPath([], `hallway-assembly-${crypto.randomUUID()}`);
-          setStatus("Click points in Top view to draw a hallway centerline");
+          const sourceBrushIds = [...state.brushSelection].filter((id) =>
+            state.brushes.some(
+              (brush) => brush.id === id && brush.generator?.type !== "hallway",
+            ),
+          );
+          view.setPath([], `hallway-assembly-${crypto.randomUUID()}`, {
+            sourceBrushIds,
+          });
+          setStatus(
+            sourceBrushIds.length
+              ? "Move toward the exit side to preview the selected floor mouth; click to start"
+              : "Click points in Top view to draw a spline hallway centerline",
+            sourceBrushIds.length > 2,
+          );
         }
       } else {
         state.mode = "vertex";
@@ -689,7 +785,7 @@ function fillSelectedLoopAction() {
 const pathPanel = document.createElement("aside");
 pathPanel.className = "brush-panel path-panel";
 pathPanel.hidden = true;
-pathPanel.innerHTML = `<header><strong>PATH TOOLS</strong></header><label>Type <select data-path-type><option value="hallway">Hallway</option></select></label><label>Width <input type="number" data-path-setting="interiorWidth" min="1" max="8192" step="${state.grid}"></label><label>Height <input type="number" data-path-setting="interiorHeight" min="1" max="8192" step="${state.grid}"></label><label>Wall <input type="number" data-path-setting="wallThickness" min="1" max="1024" step="${state.grid}"></label><label>Floor <input type="number" data-path-setting="floorThickness" min="1" max="1024" step="${state.grid}"></label><label>Ceiling <input type="number" data-path-setting="ceilingThickness" min="1" max="1024" step="${state.grid}"></label><label>Elevation <input type="number" data-path-setting="baseElevation" min="-32768" max="32768" step="${state.grid}"></label><section class="path-materials"><strong>MATERIALS</strong><label>Floor <input type="text" data-path-material="floor"></label><label>Walls <input type="text" data-path-material="wall"></label><label>Ceiling <input type="text" data-path-material="ceiling"></label></section><p class="panel-note">Open ends. Add points in Top; edit slopes in Front or Side. Enter commits.</p>`;
+pathPanel.innerHTML = `<header><strong>PATH TOOLS</strong></header><label>Type <select data-path-type><option value="hallway">Hallway</option></select></label><label>Next <select data-path-segment-mode><option value="spline">Spline</option><option value="straight">Straight</option></select></label><label>Node <select data-path-node-mode><option value="auto">Auto</option><option value="smooth">Smooth</option><option value="corner">Corner</option></select></label><div class="path-actions"><button type="button" data-path-close>Close Path</button><button type="button" data-path-detach>Detach Start</button></div><label>Inside width <input type="number" data-path-setting="interiorWidth" min="1" max="8192" step="${state.grid}"></label><label>Height <input type="number" data-path-setting="interiorHeight" min="1" max="8192" step="${state.grid}"></label><label>Wall <input type="number" data-path-setting="wallThickness" min="1" max="1024" step="${state.grid}"></label><label>Floor <input type="number" data-path-setting="floorThickness" min="1" max="1024" step="${state.grid}"></label><label>Ceiling <input type="number" data-path-setting="ceilingThickness" min="1" max="1024" step="${state.grid}"></label><label>Elevation <input type="number" data-path-setting="baseElevation" min="-32768" max="32768" step="${state.grid}"></label><label>Max angle <input type="number" data-path-setting="maxAngleDegrees" min="1" max="90" step="1"></label><label>Max length <input type="number" data-path-setting="maxSegmentLength" min="1" max="1024" step="${state.grid}"></label><label>Curve error <input type="number" data-path-setting="chordError" min="0.125" max="64" step="0.125"></label><label>Flare <input type="number" data-path-setting="flare" min="0" max="4096" step="${state.grid}"></label><label>Blend length <input type="number" data-path-setting="blendLength" min="1" max="8192" step="${state.grid}"></label><label class="check-row"><input type="checkbox" data-path-snap> Snap ends</label><section class="path-materials"><strong>MATERIALS</strong><label>Floor <input type="text" data-path-material="floor"></label><label>Walls <input type="text" data-path-material="wall"></label><label>Ceiling <input type="text" data-path-material="ceiling"></label></section><p class="panel-note">Select one or two floor solids before Path to match the starting mouth. Drag cyan handles to edit width, height, and tangents. Enter commits.</p>`;
 const pathInputs = new Map(
   [...pathPanel.querySelectorAll("[data-path-setting]")].map((input) => [
     input.dataset.pathSetting,
@@ -703,10 +799,30 @@ const pathMaterialInputs = new Map(
   ]),
 );
 function updatePathControls() {
-  for (const [name, input] of pathInputs)
-    input.value = String(state.pathSettings[name]);
+  const selectedNode = view.pathPoints[view.selectedPathNode];
+  for (const [name, input] of pathInputs) {
+    let value = state.pathSettings[name];
+    if (selectedNode && name === "interiorWidth")
+      value = selectedNode.width - 2 * state.pathSettings.wallThickness;
+    if (selectedNode && name === "interiorHeight") value = selectedNode.height;
+    if (selectedNode && name === "baseElevation") value = selectedNode.z;
+    input.value = String(value);
+  }
   for (const [name, input] of pathMaterialInputs)
     input.value = state.pathSettings.materials[name];
+  pathPanel.querySelector("[data-path-segment-mode]").value =
+    Number.isInteger(view.selectedPathSegment)
+      ? view.pathModel.segmentModes[view.selectedPathSegment]
+      : state.pathSettings.segmentMode;
+  pathPanel.querySelector("[data-path-node-mode]").value =
+    selectedNode?.tangentMode || "auto";
+  pathPanel.querySelector("[data-path-close]").textContent = view.pathModel.closed
+    ? "Open Path"
+    : "Close Path";
+  pathPanel.querySelector("[data-path-detach]").disabled =
+    !view.pathSourceAttachment;
+  pathPanel.querySelector("[data-path-snap]").checked =
+    state.pathSettings.snapEnds !== false;
 }
 for (const [name, input] of pathInputs) {
   input.onchange = () => {
@@ -715,11 +831,36 @@ for (const [name, input] of pathInputs) {
       updatePathControls();
       return;
     }
-    if (name === "baseElevation" && view.pathPoints.length) {
+    const selectedNode = view.pathPoints[view.selectedPathNode];
+    if (selectedNode && name === "interiorWidth")
+      selectedNode.width =
+        value + 2 * Number(state.pathSettings.wallThickness);
+    else if (selectedNode && name === "interiorHeight")
+      selectedNode.height = value;
+    else if (selectedNode && name === "baseElevation") selectedNode.z = value;
+    else if (name === "baseElevation" && view.pathPoints.length) {
       const delta = value - state.pathSettings.baseElevation;
       view.pathPoints.forEach((point) => {
         point.z = roundToGrid(point.z + delta, state.grid);
       });
+    } else if (name === "interiorWidth" && view.pathPoints.length)
+      view.pathPoints.forEach((point) => {
+        point.width = value + 2 * Number(state.pathSettings.wallThickness);
+      });
+    else if (name === "interiorHeight" && view.pathPoints.length)
+      view.pathPoints.forEach((point) => {
+        point.height = value;
+      });
+    if (["maxAngleDegrees", "maxSegmentLength", "chordError"].includes(name))
+      view.pathModel.detail[name] = value;
+    if (name === "flare") {
+      if (view.pathSourceAttachment) view.pathSourceAttachment.flare = value;
+      if (view.pathEndAttachment) view.pathEndAttachment.flare = value;
+    }
+    if (name === "blendLength") {
+      if (view.pathSourceAttachment)
+        view.pathSourceAttachment.blendLength = value;
+      if (view.pathEndAttachment) view.pathEndAttachment.blendLength = value;
     }
     state.pathSettings[name] = value;
     updatePathControls();
@@ -729,6 +870,36 @@ for (const [name, input] of pathInputs) {
     }
   };
 }
+pathPanel.querySelector("[data-path-segment-mode]").onchange = (event) => {
+  state.pathSettings.segmentMode = event.target.value;
+  view.setSelectedPathSegmentMode(event.target.value);
+  updatePathControls();
+  redraw();
+};
+pathPanel.querySelector("[data-path-node-mode]").onchange = (event) => {
+  view.setSelectedPathNodeMode(event.target.value);
+  updatePathControls();
+  redraw();
+};
+pathPanel.querySelector("[data-path-close]").onclick = () => {
+  if (!view.togglePathClosed())
+    return setStatus("Closing a path requires at least three nodes", true);
+  updatePathControls();
+  redraw();
+  setStatus(view.pathModel.closed ? "Hallway path closed" : "Hallway path opened");
+};
+pathPanel.querySelector("[data-path-detach]").onclick = () => {
+  view.pathSourceAttachment = null;
+  view.pathSourceBrushIds = [];
+  view.refreshPathPreview();
+  updatePathControls();
+  setStatus("Hallway start detached from source floor");
+};
+pathPanel.querySelector("[data-path-snap]").onchange = (event) => {
+  state.pathSettings.snapEnds = event.target.checked;
+  if (!event.target.checked) view.pathEndAttachment = null;
+  view.refreshPathPreview();
+};
 for (const [name, input] of pathMaterialInputs) {
   input.onchange = () => {
     state.pathSettings.materials[name] = input.value.trim();

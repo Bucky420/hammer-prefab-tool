@@ -189,9 +189,9 @@ try {
     await page.keyboard.press("Enter");
     await page
       .locator("#status")
-      .filter({ hasText: "Created hallway: 4 convex brushes" })
+      .filter({ hasText: "Created hallway: 8 convex brushes" })
       .waitFor();
-    await page.locator("#stats").filter({ hasText: "6 brushes" }).waitFor();
+    await page.locator("#stats").filter({ hasText: "10 brushes" }).waitFor();
     await page.locator('[data-tool-mode="selection"]').click();
     await page.locator('[data-tool-mode="path"]').click();
     await page.locator("#stats").filter({ hasText: "2 path nodes" }).waitFor();
@@ -207,9 +207,9 @@ try {
     await page.keyboard.press("Enter");
     await page
       .locator("#status")
-      .filter({ hasText: "Updated hallway: 4 convex brushes" })
+      .filter({ hasText: "Updated hallway: 8 convex brushes" })
       .waitFor();
-    await page.locator("#stats").filter({ hasText: "6 brushes" }).waitFor();
+    await page.locator("#stats").filter({ hasText: "10 brushes" }).waitFor();
     assert.deepEqual(pageErrors, []);
 
     assert.ok(requests.some((request) => /\/assets\/.*\.js/.test(request)));
@@ -222,6 +222,117 @@ try {
       requests.some((request) => request.includes("/_deps/")),
       false,
     );
+
+    const pathPage = await browser.newPage();
+    const pathErrors = [];
+    pathPage.on("pageerror", (error) => pathErrors.push(error));
+    await pathPage.goto(`http://127.0.0.1:${port}${prefix}`, {
+      waitUntil: "networkidle",
+    });
+    const sourceFloor = writeVMF([
+      box({ x: -32, y: -32, z: -8 }, { x: 32, y: 32, z: 0 }),
+    ]);
+    await pathPage.locator("#vmf-file-input").setInputFiles({
+      name: "hallway-source.vmf",
+      mimeType: "text/plain",
+      buffer: Buffer.from(sourceFloor),
+    });
+    await pathPage
+      .locator("#status")
+      .filter({ hasText: "Opened hallway-source.vmf" })
+      .waitFor();
+    const pathBounds = await pathPage.locator("#editor").boundingBox();
+    assert.ok(pathBounds);
+    const pathCenter = {
+      x: pathBounds.x + pathBounds.width / 2,
+      y: pathBounds.y + pathBounds.height / 2,
+    };
+    await pathPage.mouse.click(pathCenter.x, pathCenter.y);
+    await pathPage
+      .locator("#stats")
+      .filter({ hasText: "1 selected objects" })
+      .waitFor();
+    await pathPage.locator('[data-tool-mode="path"]').click();
+    const expandedPathBounds = await pathPage.locator("#editor").boundingBox();
+    assert.ok(expandedPathBounds);
+    pathCenter.x = expandedPathBounds.x + expandedPathBounds.width / 2;
+    pathCenter.y = expandedPathBounds.y + expandedPathBounds.height / 2;
+    for (const [x, y] of [
+      [expandedPathBounds.x + expandedPathBounds.width - 40, pathCenter.y],
+      [expandedPathBounds.x + 260, pathCenter.y],
+      [pathCenter.x, expandedPathBounds.y + 40],
+      [pathCenter.x, expandedPathBounds.y + expandedPathBounds.height - 40],
+    ]) {
+      await pathPage.mouse.move(x, y);
+      await pathPage.mouse.click(x, y);
+      if ((await pathPage.locator("#stats").textContent()).includes("2 path nodes"))
+        break;
+    }
+    await pathPage.locator("#stats").filter({ hasText: "2 path nodes" }).waitFor();
+    assert.equal(
+      await pathPage.locator('[data-path-setting="interiorWidth"]').inputValue(),
+      "32",
+      "selected floor outside width defines the clear hallway width",
+    );
+    await pathPage.keyboard.press("Enter");
+    await pathPage
+      .locator("#status")
+      .filter({ hasText: /Created hallway: \d+ convex brushes/ })
+      .waitFor();
+    assert.deepEqual(pathErrors, []);
+    await pathPage.close();
+
+    const closedPathPage = await browser.newPage();
+    const closedPathErrors = [];
+    closedPathPage.on("pageerror", (error) => closedPathErrors.push(error));
+    await closedPathPage.goto(`http://127.0.0.1:${port}${prefix}`, {
+      waitUntil: "networkidle",
+    });
+    await closedPathPage.locator('[data-tool-mode="path"]').click();
+    await closedPathPage
+      .locator('[data-path-setting="interiorWidth"]')
+      .fill("32");
+    await closedPathPage
+      .locator('[data-path-setting="interiorWidth"]')
+      .dispatchEvent("change");
+    const closedBounds = await closedPathPage.locator("#editor").boundingBox();
+    assert.ok(closedBounds);
+    const closedCenter = {
+      x: closedBounds.x + closedBounds.width / 2,
+      y: closedBounds.y + closedBounds.height / 2,
+    };
+    for (const [x, y] of [
+      [-192, -192],
+      [192, -192],
+      [192, 192],
+      [-192, 192],
+    ])
+      await closedPathPage.mouse.click(closedCenter.x + x, closedCenter.y + y);
+    await closedPathPage.evaluate(() =>
+      document.querySelector("[data-path-close]").click(),
+    );
+    await closedPathPage
+      .locator("#status")
+      .filter({ hasText: "Hallway path closed" })
+      .waitFor();
+    await closedPathPage.keyboard.press("Backspace");
+    await closedPathPage.locator("#stats").filter({ hasText: "3 path nodes" }).waitFor();
+    await closedPathPage.mouse.click(closedCenter.x - 192, closedCenter.y + 192);
+    await closedPathPage.locator("#stats").filter({ hasText: "4 path nodes" }).waitFor();
+    await closedPathPage.evaluate(() =>
+      document.querySelector("[data-path-close]").click(),
+    );
+    await closedPathPage
+      .locator("#status")
+      .filter({ hasText: "Hallway path closed" })
+      .waitFor();
+    await closedPathPage.keyboard.press("Enter");
+    await closedPathPage
+      .locator("#status")
+      .filter({ hasText: /Created hallway: \d+ convex brushes/ })
+      .waitFor();
+    assert.deepEqual(closedPathErrors, []);
+    await closedPathPage.close();
 
     const handlePage = await browser.newPage();
     const linkedPrefab = writeRingPrefabVMF([

@@ -321,6 +321,16 @@ header {
   padding-top: 8px;
   border-top: 1px solid #354a63;
 }
+.path-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+  margin: 6px 0;
+}
+.path-actions button {
+  min-width: 0;
+  padding: 4px;
+}
 .path-materials > strong {
   color: #66dde3;
   font-size: 10px;

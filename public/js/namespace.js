@@ -16,6 +16,13 @@ const state = {
     floorThickness: 16,
     ceilingThickness: 16,
     baseElevation: 0,
+    segmentMode: "spline",
+    maxAngleDegrees: 10,
+    maxSegmentLength: 64,
+    chordError: 1,
+    snapEnds: true,
+    flare: 0,
+    blendLength: 128,
     materials: {
       floor: "dev/dev_measuregeneric01b",
       wall: "dev/dev_measurewall01a",

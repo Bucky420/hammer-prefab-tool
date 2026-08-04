@@ -24,6 +24,14 @@ const verticesAtXY = (brushes, x, y) =>
         Math.abs(vertex.x - x) < 0.000001 && Math.abs(vertex.y - y) < 0.000001,
     ),
   );
+const assertValidResult = (result, message) => {
+  assert.deepEqual(result.errors, [], message);
+  assert.ok(result.brushes.length > 0, `${message}: expected brushes`);
+  assert.ok(
+    result.brushes.every((brush) => validateBrush(brush).length === 0),
+    `${message}: every brush must be valid`,
+  );
+};
 
 {
   const result = generateHallway({
@@ -220,6 +228,332 @@ for (const options of [
   });
   assert.equal(result.brushes.length, 0);
   assert.ok(result.errors.some((error) => error.includes("intersect")));
+}
+
+{
+  const nodes = [
+    { x: 0, y: 0, z: 0 },
+    { x: 128, y: 0, z: 0 },
+    { x: 192, y: 96, z: 0 },
+  ];
+  const legacy = generateHallway({ ...settings, path: nodes });
+  const spline = generateHallway({ ...settings, path: { nodes } });
+  assertValidResult(spline, "default spline");
+  assert.ok(spline.stations.length > nodes.length);
+  assert.ok(spline.brushes.length > legacy.brushes.length);
+  assert.equal(spline.path.segmentModes[0], "spline");
+  assert.ok(spline.brushes.every((brush) => brush.vertices.length === 6));
+  assert.ok(spline.brushes.every((brush) => brush.faces.length === 5));
+}
+
+{
+  const result = generateHallway({
+    ...settings,
+    path: {
+      nodes: [
+        { x: 0, y: 0, z: 0, width: 48 },
+        { x: 128, y: 0, z: 0, width: 48 },
+        { x: 256, y: 64, z: 0, width: 48 },
+      ],
+      segmentModes: ["straight", "spline"],
+      detail: { maxAngleDegrees: 8, maxSegmentLength: 256, chordError: 0.5 },
+    },
+  });
+  assertValidResult(result, "mixed segment modes");
+  assert.deepEqual(result.path.segmentModes, ["straight", "spline"]);
+  assert.equal(
+    result.stations.filter((station) => station.sourceSegment === 0).length,
+    2,
+    "the long-detail straight segment remains one sampled span",
+  );
+  assert.ok(
+    result.stations.filter((station) => station.sourceSegment === 1).length > 1,
+  );
+}
+
+{
+  const nodes = [
+    { x: -160, y: -160, z: 0, tangentMode: "corner" },
+    { x: 160, y: -160, z: 32, tangentMode: "corner" },
+    { x: 160, y: 160, z: 64, tangentMode: "corner" },
+    { x: -160, y: 160, z: 32, tangentMode: "corner" },
+  ];
+  const generateClosed = (orderedNodes) =>
+    generateHallway({
+      ...settings,
+      wallThickness: 6,
+      path: {
+        closed: true,
+        nodes: orderedNodes,
+        segmentModes: ["straight", "straight", "straight", "straight"],
+        detail: { maxAngleDegrees: 10, maxSegmentLength: 512, chordError: 1 },
+      },
+    });
+  const result = generateClosed(nodes);
+  assertValidResult(result, "closed hallway");
+  assert.equal(result.path.closed, true);
+  const seamSegment = result.stations.length - 1;
+  assert.ok(
+    result.brushes.some((brush) => brush.generator.segment === seamSegment),
+    "closed hallway includes the final-to-first seam",
+  );
+  const reversed = generateClosed(nodes.toReversed());
+  assertValidResult(reversed, "reversed closed hallway");
+  assert.equal(
+    reversed.brushes.length,
+    result.brushes.length,
+    "clockwise and counter-clockwise paths produce equivalent brush counts",
+  );
+}
+
+{
+  const result = generateHallway({
+    ...settings,
+    path: {
+      nodes: [
+        { x: 0, y: 0, z: 0, width: 80, height: 72 },
+        { x: 128, y: 16, z: 24, width: 112, height: 104 },
+        { x: 224, y: 96, z: 64, width: 144, height: 136 },
+      ],
+      detail: { maxAngleDegrees: 8, maxSegmentLength: 48, chordError: 0.5 },
+    },
+  });
+  assertValidResult(result, "variable sloped spline");
+  near(result.stations[0].width, 80, "first outside width");
+  near(result.stations.at(-1).width, 144, "last outside width");
+  near(result.stations[0].height, 72, "first clear height");
+  near(result.stations.at(-1).height, 136, "last clear height");
+  assert.ok(
+    result.brushes.every(
+      (brush) => brush.generator.path.nodes[0].width === 80,
+    ),
+  );
+}
+
+{
+  const sourceAttachment = {
+    boundary: [
+      { x: 0, y: -40, z: 0 },
+      { x: -8, y: -20, z: 0 },
+      { x: -12, y: 0, z: 0 },
+      { x: -8, y: 20, z: 0 },
+      { x: 0, y: 40, z: 0 },
+    ],
+    left: { id: "left-edge" },
+    right: { id: "right-edge" },
+    center: { x: -12, y: 0, z: 0 },
+    direction: { x: 1, y: 0, z: 0 },
+    floorPlane: { normal: { x: 0, y: 0, z: 1 }, distance: 0 },
+    outsideWidth: 80,
+    sourceBrushIds: ["source-a", "source-b"],
+    blendLength: 64,
+    flare: 0.25,
+  };
+  const original = structuredClone(sourceAttachment);
+  const result = generateHallway({
+    ...settings,
+    sourceAttachment,
+    path: {
+      nodes: [
+        { x: 0, y: 0, z: 0, width: 80, height: 96 },
+        { x: 96, y: 0, z: 0, width: 80, height: 96 },
+      ],
+      segmentModes: ["straight"],
+      detail: { maxAngleDegrees: 10, maxSegmentLength: 128, chordError: 1 },
+    },
+  });
+  assertValidResult(result, "curved source boundary");
+  assert.deepEqual(sourceAttachment, original, "source attachment remains immutable");
+  assert.deepEqual(
+    result.brushes[0].generator.sourceAttachment,
+    sourceAttachment,
+    "source attachment is retained as generator metadata",
+  );
+  const restored = normalizeProject(
+    JSON.parse(JSON.stringify(createProject({ brushes: result.brushes }))),
+  );
+  assert.equal(restored.brushes[0].generator.path.version, 1);
+  assert.deepEqual(
+    restored.brushes[0].generator.sourceAttachment,
+    sourceAttachment,
+    "portable projects preserve editable source attachments",
+  );
+  const firstFloor = result.brushes.filter(
+    (brush) =>
+      brush.generator.segment === 0 && brush.generator.role === "floor",
+  );
+  assert.equal(firstFloor.length, 8, "four curved-boundary cells replace the chord span");
+  assert.ok(
+    firstFloor.every(
+      (brush) =>
+        !(
+          brush.vertices.some((vertex) => vertex.x === 0 && vertex.y === -40) &&
+          brush.vertices.some((vertex) => vertex.x === 0 && vertex.y === 40)
+        ),
+    ),
+    "no floor brush bridges the curved source boundary with one chord",
+  );
+}
+
+{
+  const endAttachment = {
+    boundary: [
+      { x: 256, y: 40, z: 16 },
+      { x: 264, y: 20, z: 16 },
+      { x: 268, y: 0, z: 16 },
+      { x: 264, y: -20, z: 16 },
+      { x: 256, y: -40, z: 16 },
+    ],
+    outsideWidth: 80,
+    blendLength: 64,
+    flare: 0,
+  };
+  const original = structuredClone(endAttachment);
+  const result = generateHallway({
+    ...settings,
+    path: {
+      nodes: [
+        { x: 0, y: 0, z: 16, width: 80, height: 96 },
+        { x: 128, y: 0, z: 16, width: 80, height: 96 },
+        { x: 256, y: 0, z: 16, width: 80, height: 96 },
+      ],
+      segmentModes: ["straight", "straight"],
+      detail: { maxAngleDegrees: 10, maxSegmentLength: 128, chordError: 1 },
+      endAttachment,
+    },
+  });
+  assertValidResult(result, "curved end boundary");
+  assert.deepEqual(endAttachment, original, "end attachment remains immutable");
+  const finalSegment = result.stations.length - 2;
+  const finalFloor = result.brushes.filter(
+    (brush) =>
+      brush.generator.segment === finalSegment && brush.generator.role === "floor",
+  );
+  assert.equal(finalFloor.length, 8, "four end-boundary cells replace the final span");
+  assert.ok(
+    finalFloor.some((brush) =>
+      brush.vertices.some((vertex) => vertex.x === 268 && vertex.y === 0),
+    ),
+    "the reverse adapter reaches the curved target boundary",
+  );
+  assert.ok(
+    finalFloor.every(
+      (brush) =>
+        !(
+          brush.vertices.some((vertex) => vertex.x === 256 && vertex.y === -40) &&
+          brush.vertices.some((vertex) => vertex.x === 256 && vertex.y === 40)
+        ),
+    ),
+    "no final floor brush bridges the target boundary with one chord",
+  );
+}
+
+{
+  const boundary = [
+    { x: 0, y: -40, z: 0 },
+    { x: -8, y: 0, z: 0 },
+    { x: 0, y: 40, z: 0 },
+  ];
+  const generate = (flare) =>
+    generateHallway({
+      ...settings,
+      sourceAttachment: { boundary, outsideWidth: 80, blendLength: 96, flare },
+      path: {
+        nodes: [
+          { x: 0, y: 0, z: 0, width: 80, height: 96 },
+          { x: 192, y: 0, z: 0, width: 80, height: 96 },
+        ],
+        segmentModes: ["straight"],
+        detail: { maxAngleDegrees: 10, maxSegmentLength: 256, chordError: 1 },
+      },
+    });
+  const fitted = generate(0);
+  const flared = generate(16);
+  assertValidResult(fitted, "zero-flare source fit");
+  assertValidResult(flared, "flared source approach");
+  near(fitted.stations[0].width, 80, "zero flare fits the boundary width");
+  near(flared.stations[0].width, 112, "flare expands both boundary sides");
+  assert.ok(
+    flared.stations[1].width > fitted.stations[1].width,
+    "flare widens the deterministic blend transition",
+  );
+  assert.deepEqual(
+    flared.brushes[0].generator.sourceAttachment.boundary,
+    boundary,
+    "flare does not move the fixed source boundary",
+  );
+}
+
+{
+  const sourceAttachment = {
+    boundary: [
+      { x: 0, y: 40, z: 0 },
+      { x: -6, y: 0, z: 0 },
+      { x: 0, y: -40, z: 0 },
+    ],
+    blendLength: 48,
+    flare: 0,
+    sourceBrushIds: ["source"],
+  };
+  const endAttachment = {
+    boundary: [
+      { x: 320, y: 40, z: 0 },
+      { x: 326, y: 0, z: 0 },
+      { x: 320, y: -40, z: 0 },
+    ],
+    blendLength: 48,
+    flare: 8,
+    sourceBrushIds: ["target"],
+  };
+  const sourceOriginal = structuredClone(sourceAttachment);
+  const endOriginal = structuredClone(endAttachment);
+  const result = generateHallway({
+    ...settings,
+    settings: { ...settings, sourceAttachment },
+    path: {
+      nodes: [
+        { x: 0, y: 0, z: 0, width: 80, height: 96 },
+        { x: 160, y: 0, z: 0, width: 80, height: 96 },
+        { x: 320, y: 0, z: 0, width: 80, height: 96 },
+      ],
+      segmentModes: ["straight", "straight"],
+      detail: { maxAngleDegrees: 10, maxSegmentLength: 160, chordError: 1 },
+      metadata: { endAttachment },
+    },
+  });
+  assertValidResult(result, "source and end metadata");
+  assert.deepEqual(sourceAttachment, sourceOriginal);
+  assert.deepEqual(endAttachment, endOriginal);
+  for (const brush of result.brushes) {
+    assert.deepEqual(brush.generator.sourceAttachment, sourceAttachment);
+    assert.deepEqual(brush.generator.endAttachment, endAttachment);
+  }
+}
+
+for (const path of [
+  {
+    nodes: [
+      { x: 0, y: 0, z: 0, width: 16 },
+      { x: 128, y: 0, z: 0, width: 16 },
+    ],
+    segmentModes: ["straight"],
+  },
+  {
+    closed: true,
+    nodes: [
+      { x: 0, y: 0, z: 0 },
+      { x: 128, y: 128, z: 0 },
+      { x: 0, y: 128, z: 0 },
+      { x: 128, y: 0, z: 0 },
+    ],
+    segmentModes: ["straight", "straight", "straight", "straight"],
+  },
+]) {
+  const result = generateHallway({ ...settings, path });
+  assert.equal(result.brushes.length, 0);
+  assert.ok(result.errors.length > 0);
+  assert.ok(result.path, "invalid object paths still return their normalized path");
+  assert.ok(result.stations.length > 0);
 }
 
 console.log("hallway generator checks passed");
