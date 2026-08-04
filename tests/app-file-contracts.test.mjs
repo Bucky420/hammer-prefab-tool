@@ -11,6 +11,10 @@ const html = readFileSync(
   new URL("../public/index.html", import.meta.url),
   "utf8",
 );
+const documentChrome = readFileSync(
+  new URL("../public/js/document-chrome.js", import.meta.url),
+  "utf8",
+);
 
 assert.match(
   app,
@@ -103,9 +107,9 @@ assert.match(app, /saveVmfFile\(\{ contents: text, filename \}, window\)/);
 assert.match(app, /event\.key === "F5"[\s\S]*reloadWithAutosave\(\)/);
 assert.match(app, /options\.handle \|\| matching\?\.fileHandle \|\| null/);
 assert.match(app, /handle: candidate\.fileHandle \|\| null/);
-assert.match(app, /navigator\.brave\?\.isBrave/);
-assert.match(app, /brave:\/\/flags\/#file-system-access-api/);
-assert.match(app, /window\.self !== window\.top[\s\S]*fileSystem\.supported/);
+assert.match(documentChrome, /navigator\.brave\?\.isBrave/);
+assert.match(documentChrome, /brave:\/\/flags\/#file-system-access-api/);
+assert.match(documentChrome, /window\.self !== window\.top[\s\S]*supported/);
 assert.match(html, /id="file-access-warning"[\s\S]*id="file-access-help"/);
 assert.match(app, /serverPath: result\.path[\s\S]*directSaveAllowed: true/);
 assert.match(

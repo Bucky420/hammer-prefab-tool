@@ -10,6 +10,7 @@ import { generateRing } from "./ring-generator.js";
 import { buildStagedBrushes } from "./brush-tool.js";
 import { bindBrushPanel, createBrushPanel } from "./brush-panel.js";
 import { bindContextMenu } from "./context-menu.js";
+import { createDocumentChrome } from "./document-chrome.js";
 import { bindFacePanel, createFacePanel } from "./face-panel.js";
 import { bindFileBrowser } from "./file-browser.js";
 import { bindFileDrop } from "./file-drop.js";
@@ -125,7 +126,6 @@ state.projectSettings.prefab ||= {
 };
 state.vmf ||= {};
 const history = state.history || (state.history = new History());
-const status = $("status");
 document.querySelector(".live-indicator")?.remove();
 let hmrIndicator = null;
 if (import.meta.hot) {
@@ -140,42 +140,17 @@ const storageMode =
     ? "server"
     : "browser";
 const fileSystem = createFileSystemAccessAdapter(window);
-const fileAccessWarning = $("file-access-warning");
-const fileAccessWarningText = $("file-access-warning-text");
-const fileAccessHelp = $("file-access-help");
-const braveFileAccessUrl = "brave://flags/#file-system-access-api";
-async function updateFileAccessWarning() {
-  if (
-    window.self !== window.top ||
-    fileSystem.supported ||
-    storageMode === "server"
-  )
-    return;
-  let isBrave = false;
-  try {
-    isBrave = (await navigator.brave?.isBrave?.()) === true;
-  } catch {
-    // Browser detection is advisory only.
-  }
-  fileAccessWarningText.textContent = isBrave
-    ? "Brave has its File System Access API disabled. Click the address, paste it into the address bar, enable the flag, and relaunch Brave."
-    : "This browser cannot overwrite opened files. Use Chrome or Edge for direct Ctrl+S saving.";
-  fileAccessHelp.hidden = !isBrave;
-  fileAccessWarning.hidden = false;
-  document.body.classList.add("file-access-warning-visible");
-}
-fileAccessHelp.onclick = async () => {
-  try {
-    await navigator.clipboard.writeText(braveFileAccessUrl);
-    setStatus("Brave File System Access flag address copied");
-  } catch {
-    window.prompt("Copy this address into Brave", braveFileAccessUrl);
-  }
-};
-void updateFileAccessWarning();
 const serverFiles =
   storageMode === "server" ? createLocalServerFileAdapter(api) : null;
 const dirtyState = createDirtyStateService();
+const documentChrome = createDocumentChrome({
+  state,
+  isDirty: () => dirtyState.isDirty(),
+});
+void documentChrome.showFileAccessWarning({
+  supported: fileSystem.supported,
+  storageMode,
+});
 let cleanProject = null;
 let vmfHandle = null;
 let documentKind = "prefab";
@@ -200,13 +175,12 @@ window.addEventListener("error", (event) => {
     : "";
   const details = describeUIError(event.error, event.message);
   console.error(`[UI error]${location}`, event.error || event.message);
-  if (status)
-    setTimeout(() => setStatus(`UI error${location}: ${details}`, true), 0);
+  setTimeout(() => setStatus(`UI error${location}: ${details}`, true), 0);
 });
 window.addEventListener("unhandledrejection", (event) => {
   const details = describeUIError(event.reason);
   console.error("[UI unhandled rejection]", event.reason);
-  if (status) setTimeout(() => setStatus(`UI error: ${details}`, true), 0);
+  setTimeout(() => setStatus(`UI error: ${details}`, true), 0);
 });
 let activeView = state.view || "top";
 let brushPanelController = null;
@@ -745,18 +719,7 @@ async function captureGridScreenshot() {
 }
 
 function updateDocumentStatus() {
-  const dirty = dirtyState.isDirty();
-  const title = state.projectName || "Untitled";
-  $("document-title").textContent = title;
-  $("footer-filename").textContent = state.vmfFilename;
-  $("footer-filename").title = state.vmfFilename;
-  $("footer-grid").textContent = `Grid: ${state.grid}`;
-  $("dirty-indicator").textContent = dirty ? "Unsaved" : "Saved";
-  $("dirty-indicator").dataset.dirty = String(dirty);
-  $("dirty-indicator").title = dirty
-    ? "Document has unsaved changes"
-    : "Document matches the saved checkpoint";
-  document.title = `${dirty ? "* " : ""}${title} - Hammer Prefab Tool`;
+  documentChrome.syncDocument();
 }
 function updateDirtyState() {
   dirtyState.update(currentProject());
@@ -777,8 +740,7 @@ function changed(kind = "document", recordHistory = true) {
   redraw();
 }
 function setStatus(text, error = false) {
-  status.textContent = text;
-  status.style.color = error ? "#ff8290" : "";
+  documentChrome.setStatus(text, error);
 }
 function ensureArchExtrusionMetadata(brushes) {
   const byId = new Map(brushes.map((brush) => [brush.id, brush]));
@@ -1154,8 +1116,7 @@ async function openLocalFile() {
 }
 function syncFilenameControls() {
   localStorage.setItem("hammer-vmf-filename", state.vmfFilename);
-  $("footer-filename").textContent = state.vmfFilename;
-  $("footer-filename").title = state.vmfFilename;
+  documentChrome.syncFilename();
 }
 function removeGroupOwnership(brush) {
   const copy = clone(brush);
@@ -1383,9 +1344,7 @@ async function loadSelected(file) {
   return replaced;
 }
 function renderAutosaveState(message, error = false) {
-  const element = $("autosave-status");
-  element.textContent = message;
-  element.style.color = error ? "#ff8290" : "";
+  documentChrome.setAutosave(message, error);
 }
 async function refreshAutosaves() {
   if (!autosaveStore) return;

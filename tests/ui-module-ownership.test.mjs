@@ -14,6 +14,7 @@ for (const [file, pattern] of [
   ["context-menu.js", /contextmenu/],
   ["file-browser.js", /browser-list/],
   ["file-drop.js", /dragenter/],
+  ["document-chrome.js", /dirty-indicator/],
 ])
   assert.match(source(file), pattern, `${file} owns its UI behavior`);
 
@@ -26,6 +27,7 @@ for (const pattern of [
   /addEventListener\("contextmenu"/,
   /browser-list|file-search/,
   /addEventListener\("dragenter"/,
+  /document-title|dirty-indicator|file-access-warning|autosave-status/,
 ])
   assert.doesNotMatch(app, pattern, `app composition excludes ${pattern}`);
 
