@@ -44,6 +44,7 @@ export function applyViewportCreation(VP) {
     this.pathPreviewErrors = [];
     this.pathGhostLine = null;
     this.pathGhostSource = null;
+    this._pendingDragTarget = null;
     this.previewErrors = [];
     this.extrusionCandidate = null;
     this.extrusionMatchDebug = [];

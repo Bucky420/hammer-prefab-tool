@@ -13,13 +13,26 @@ export function applyViewportPath(VP) {
     });
   }
 
-  VP.prototype.schedulePathReroute = function() {
+  VP.prototype.schedulePathReroute = function(targetPosition) {
     if (
       this.state.pathSettings?.avoidShapes === false ||
       this.pathModel.closed
     )
       return;
-    if (this.pathRerouteTimer) return;
+    if (this.pathRerouteTimer) {
+      if (targetPosition) this._pendingDragTarget = targetPosition;
+      return;
+    }
+    const pos = targetPosition || this._pendingDragTarget;
+    this._pendingDragTarget = null;
+    if (pos && this.drag?.type === "path-node") {
+      const point = this.pathPoints[this.drag.index];
+      if (point) {
+        const [h, v] = this.axes();
+        if (pos[h] != null) point[h] = pos[h];
+        if (pos[v] != null) point[v] = pos[v];
+      }
+    }
     const draggedIndex = this.drag?.type === "path-node"
       ? this.drag.index
       : null;

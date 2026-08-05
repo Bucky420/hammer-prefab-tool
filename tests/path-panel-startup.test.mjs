@@ -36,7 +36,7 @@ assert.match(app, /state\.mode === "path"[\s\S]*view\.commitPath\(\)/);
 assert.doesNotMatch(app, /<strong>PATH TOOLS<\/strong>|data-path-setting/);
 assert.match(viewport, /this\.kind !== "top"/);
 assert.match(viewport, /type: "path-node"/);
-assert.match(viewport, /point\[vertical\] = roundToGrid/);
+assert.match(viewport, /\[vertical\]: roundToGrid\(current\[vertical\]/);
 assert.match(panel, /data-path-segment-mode/);
 assert.match(panel, /data-path-node-mode/);
 assert.match(panel, /data-path-close/);

@@ -116,6 +116,7 @@ export class Viewport {
     this.pathPreviewErrors = [];
     this.pathGhostLine = null;
     this.pathGhostSource = null;
+    this._pendingDragTarget = null;
     this.previewBrushes = [];
     this.previewErrors = [];
     this.extrusionCandidate = null;

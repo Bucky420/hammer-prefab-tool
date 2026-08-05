@@ -318,8 +318,14 @@ export function applyViewportInteraction(VP) {
               Math.max(...perpDots) - Math.min(...perpDots),
             );
             const node = {
-              x: faceCenter.x + direction.x * faceWidth * 0.5,
-              y: faceCenter.y + direction.y * faceWidth * 0.5,
+              x:
+                normLen > 0.001
+                  ? faceCenter.x + direction.x * faceWidth * 0.5
+                  : faceCenter.x,
+              y:
+                normLen > 0.001
+                  ? faceCenter.y + direction.y * faceWidth * 0.5
+                  : faceCenter.y,
               z: faceCenter.z,
               width: faceWidth,
               height: faceHeight,
@@ -803,10 +809,12 @@ export function applyViewportInteraction(VP) {
           fillLoop
             ? fillLoop.faceIds
             : face
-              ? this.compatibleFaceIds(
-                  this.faceTargets(face.id, operation),
-                  operation,
-                )
+              ? this.state.mode === "path"
+                ? [face.id]
+                : this.compatibleFaceIds(
+                    this.faceTargets(face.id, operation),
+                    operation,
+                  )
               : [],
         );
         this.requestDraw();
@@ -892,7 +900,6 @@ export function applyViewportInteraction(VP) {
       if (this.drag.type === "path-node") {
         const current = this.world({ x: event.offsetX, y: event.offsetY });
         const [horizontal, vertical] = this.axes();
-        const point = this.pathPoints[this.drag.index];
         if (this.drag.index === 0 && this.pathSourceAttachment) return;
         if (
           this.snapMovedPathEnd(this.drag.index, {
@@ -903,11 +910,15 @@ export function applyViewportInteraction(VP) {
           this.schedulePathReroute();
           return;
         }
-        point[horizontal] = roundToGrid(current[horizontal], this.state.grid);
-        point[vertical] = roundToGrid(current[vertical], this.state.grid);
         if (this.drag.index === this.pathPoints.length - 1)
           this.pathEndAttachment = null;
-        this.schedulePathReroute();
+        this.schedulePathReroute({
+          [horizontal]: roundToGrid(
+            current[horizontal],
+            this.state.grid,
+          ),
+          [vertical]: roundToGrid(current[vertical], this.state.grid),
+        });
         return;
       }
       if (this.drag.type === "face-paint") {
