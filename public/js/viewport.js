@@ -33,7 +33,8 @@ import {
   availableForwardSegmentLength,
 } from "./rail-acquisition.js";
 import { assertBrushesGeometry } from "./geometry-runtime.js";
-import { normalizePath, PATH_VERSION } from "./path-spline.js";
+import { normalizePath, PATH_VERSION, samplePath } from "./path-spline.js";
+import { pathClearsObstacles } from "./path-routing.js";
 import {
   applyStagedBrushHandle,
   stagedBrushHandles,
@@ -458,38 +459,181 @@ export class Viewport {
         );
       return false;
     }
+    let routePoints = routed.points;
+    let routedSegmentMode = "straight";
+    let routedSegmentModes = null;
+    let routedNodes = null;
+    if (routed.points.length > 2) {
+      const smoothingPadding = Math.max(
+        this.state.grid * 2,
+        Math.max(startNode.width, endNode.width) * 0.4,
+      );
+      const smoothedRoute = this.routePathPoints(
+        startNode,
+        endNode,
+        Math.max(startNode.width, endNode.width) + 2 * smoothingPadding,
+        Math.max(startNode.height, endNode.height),
+        [...new Set([...excludeBrushIds, ...currentBrushIds])],
+      );
+      if (!smoothedRoute.errors?.length && smoothedRoute.points.length > 2) {
+        const smoothLengths = [0];
+        for (let index = 1; index < smoothedRoute.points.length; index++)
+          smoothLengths.push(
+            smoothLengths[index - 1] +
+              Math.hypot(
+                smoothedRoute.points[index].x -
+                  smoothedRoute.points[index - 1].x,
+                smoothedRoute.points[index].y -
+                  smoothedRoute.points[index - 1].y,
+              ),
+          );
+        const smoothTotal = smoothLengths.at(-1) || 1;
+        const smoothNodes = smoothedRoute.points.map((point, index) => {
+          const amount = smoothLengths[index] / smoothTotal;
+          if (index === 0) return { ...startNode, ...point };
+          if (index === smoothedRoute.points.length - 1)
+            return { ...endNode, ...point };
+          return {
+            ...point,
+            z: startNode.z + (endNode.z - startNode.z) * amount,
+            width:
+              startNode.width + (endNode.width - startNode.width) * amount,
+            height:
+              startNode.height + (endNode.height - startNode.height) * amount,
+            tangentMode: "smooth",
+            routeGenerated: true,
+          };
+        });
+        for (let index = 0; index < smoothNodes.length; index++) {
+          const node = smoothNodes[index];
+          const previous = smoothNodes[index - 1];
+          const next = smoothNodes[index + 1];
+          if (previous && next) {
+            const previousLength = Math.hypot(
+              node.x - previous.x,
+              node.y - previous.y,
+              node.z - previous.z,
+            );
+            const nextLength = Math.hypot(
+              next.x - node.x,
+              next.y - node.y,
+              next.z - node.z,
+            );
+            const direction = {
+              x: next.x - previous.x,
+              y: next.y - previous.y,
+              z: next.z - previous.z,
+            };
+            const directionLength =
+              Math.hypot(direction.x, direction.y, direction.z) || 1;
+            const tangentLength =
+              Math.min(previousLength, nextLength) * 0.5;
+            const tangent = {
+              x: (direction.x / directionLength) * tangentLength,
+              y: (direction.y / directionLength) * tangentLength,
+              z: (direction.z / directionLength) * tangentLength,
+            };
+            node.tangentIn = tangent;
+            node.tangentOut = { ...tangent };
+          } else if (next) {
+            const adjacent = {
+              x: next.x - node.x,
+              y: next.y - node.y,
+              z: next.z - node.z,
+            };
+            const supplied = node.tangentOut || adjacent;
+            const suppliedLength =
+              Math.hypot(supplied.x, supplied.y, supplied.z) || 1;
+            const tangentLength = Math.min(
+              suppliedLength,
+              Math.hypot(adjacent.x, adjacent.y, adjacent.z) * 0.5,
+            );
+            node.tangentOut = {
+              x: (supplied.x / suppliedLength) * tangentLength,
+              y: (supplied.y / suppliedLength) * tangentLength,
+              z: (supplied.z / suppliedLength) * tangentLength,
+            };
+          } else if (previous) {
+            const adjacent = {
+              x: node.x - previous.x,
+              y: node.y - previous.y,
+              z: node.z - previous.z,
+            };
+            const supplied = node.tangentIn || adjacent;
+            const suppliedLength =
+              Math.hypot(supplied.x, supplied.y, supplied.z) || 1;
+            const tangentLength = Math.min(
+              suppliedLength,
+              Math.hypot(adjacent.x, adjacent.y, adjacent.z) * 0.5,
+            );
+            node.tangentIn = {
+              x: (supplied.x / suppliedLength) * tangentLength,
+              y: (supplied.y / suppliedLength) * tangentLength,
+              z: (supplied.z / suppliedLength) * tangentLength,
+            };
+          }
+        }
+        try {
+          const smoothModes = Array(smoothNodes.length - 1).fill("spline");
+          if (
+            this.pathSourceAttachment &&
+            this.pathPoints.length === 1 &&
+            this.pathPoints[0] === startNode
+          )
+            smoothModes[0] = "straight";
+          const sampled = samplePath({
+            version: PATH_VERSION,
+            nodes: smoothNodes,
+            segmentModes: smoothModes,
+            closed: false,
+            detail: this.pathModel.detail,
+          });
+          if (pathClearsObstacles(sampled.stations, routed.obstacles)) {
+            routePoints = smoothedRoute.points;
+            routedSegmentMode = "spline";
+            routedSegmentModes = smoothModes;
+            routedNodes = smoothNodes;
+          }
+        } catch {
+          // Keep the validated polygonal route when spline sampling fails.
+        }
+      }
+    }
     const lengths = [0];
-    for (let index = 1; index < routed.points.length; index++)
+    for (let index = 1; index < routePoints.length; index++)
       lengths.push(
         lengths[index - 1] +
           Math.hypot(
-            routed.points[index].x - routed.points[index - 1].x,
-            routed.points[index].y - routed.points[index - 1].y,
+            routePoints[index].x - routePoints[index - 1].x,
+            routePoints[index].y - routePoints[index - 1].y,
           ),
       );
     const total = lengths.at(-1) || 1;
-    const routedAroundShape = routed.points.length > 2;
-    for (let index = 1; index < routed.points.length; index++) {
+    const routedAroundShape = routePoints.length > 2;
+    for (let index = 1; index < routePoints.length; index++) {
       const amount = lengths[index] / total;
-      const final = index === routed.points.length - 1;
+      const final = index === routePoints.length - 1;
       this.pathPoints.push(
-        final
-          ? { ...endNode, ...routed.points[index] }
+        routedNodes
+          ? { ...routedNodes[index] }
+          : final
+          ? { ...endNode, ...routePoints[index] }
           : {
-              ...routed.points[index],
+              ...routePoints[index],
               z: startNode.z + (endNode.z - startNode.z) * amount,
               width:
                 startNode.width + (endNode.width - startNode.width) * amount,
               height:
                 startNode.height +
                 (endNode.height - startNode.height) * amount,
-              tangentMode: "corner",
+              tangentMode:
+                routedSegmentMode === "spline" ? "smooth" : "corner",
               routeGenerated: true,
             },
       );
       this.pathModel.segmentModes.push(
         routedAroundShape
-          ? "straight"
+          ? routedSegmentModes?.[index - 1] || routedSegmentMode
           : this.state.pathSettings?.segmentMode || "spline",
       );
     }

@@ -1607,4 +1607,53 @@ assert.equal(
   assert.equal(pathViewport.pathPoints[1].height, 192);
 }
 
+// Obstacle routes use validated spline spans after an attached straight lead.
+{
+  const pathViewport = Object.create(Viewport.prototype);
+  const start = {
+    x: 0,
+    y: 0,
+    z: 0,
+    width: 128,
+    height: 128,
+    tangentMode: "smooth",
+    tangentOut: { x: 32, y: 0, z: 0 },
+  };
+  const end = {
+    x: 128,
+    y: 64,
+    z: 0,
+    width: 128,
+    height: 128,
+    tangentMode: "auto",
+  };
+  pathViewport.state = {
+    grid: 16,
+    brushes: [],
+    pathSettings: { avoidShapes: true, segmentMode: "spline" },
+  };
+  pathViewport.pathPoints = [start];
+  pathViewport.pathModel = {
+    nodes: pathViewport.pathPoints,
+    segmentModes: [],
+    closed: false,
+    detail: { maxAngleDegrees: 10, maxSegmentLength: 32, chordError: 1 },
+  };
+  pathViewport.pathAssemblyId = null;
+  pathViewport.pathSourceAttachment = { sourceBrushIds: ["source"] };
+  pathViewport.onPathRoute = () => ({
+    points: [
+      { x: 0, y: 0 },
+      { x: 64, y: 64 },
+      { x: 128, y: 64 },
+    ],
+    obstacles: [],
+    errors: [],
+  });
+  pathViewport.onChange = () => {};
+  assert.equal(pathViewport.appendRoutedPathNodes(start, end), true);
+  assert.deepEqual(pathViewport.pathModel.segmentModes, ["straight", "spline"]);
+  assert.equal(pathViewport.pathPoints[1].tangentMode, "smooth");
+}
+
 console.log("milestone tests passed");
