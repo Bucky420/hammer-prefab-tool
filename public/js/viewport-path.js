@@ -51,9 +51,16 @@ export function applyViewportPath(VP) {
         if (newIndex >= 0) this.drag.index = newIndex;
       }
     } else {
-      this.pathPoints = snapshot;
-      this.pathModel.nodes = snapshot;
-      this.pathModel.segmentModes = snapshotModes;
+      const anchors = snapshot.filter((p) => !p.routeGenerated);
+      this.pathPoints = anchors;
+      this.pathModel.nodes = anchors;
+      this.pathModel.segmentModes = this.pathModel.segmentModes.slice(
+        0,
+        Math.max(0, anchors.length - 1),
+      );
+      if (this.drag?.type === "path-node") {
+        this.drag.index = anchors.length - 1;
+      }
     }
     this.refreshPathPreview();
     this.pathRerouteTimer = requestAnimationFrame(() => {
