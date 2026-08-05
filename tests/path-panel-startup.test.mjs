@@ -5,10 +5,15 @@ const app = readFileSync(
   new URL("../public/js/app.js", import.meta.url),
   "utf8",
 );
-const viewport = readFileSync(
-  new URL("../public/js/viewport.js", import.meta.url),
+const vpInteraction = readFileSync(
+  new URL("../public/js/viewport-interaction.js", import.meta.url),
   "utf8",
 );
+const vpPath = readFileSync(
+  new URL("../public/js/viewport-path.js", import.meta.url),
+  "utf8",
+);
+const viewport = vpInteraction + vpPath;
 const panel = readFileSync(
   new URL("../public/js/path-panel.js", import.meta.url),
   "utf8",

@@ -215,7 +215,7 @@ assert.ok(
 );
 
 const viewportSource = fs.readFileSync(
-  path.join(publicJs, "viewport.js"),
+  path.join(publicJs, "viewport-interaction.js"),
   "utf8",
 );
 const previewStart = viewportSource.indexOf(
