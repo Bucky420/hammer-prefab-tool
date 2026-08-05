@@ -247,17 +247,21 @@ export function applyViewportInteraction(VP) {
           event.offsetX,
           event.offsetY,
         );
-        if (hitBrush) {
-          let bestFi = -1;
-          let bestNz = -Infinity;
-          for (let fi = 0; fi < hitBrush.faces.length; fi++) {
-            const fn = this.faceNormal(hitBrush, hitBrush.faces[fi]);
-            const fnLen = Math.hypot(fn.x, fn.y, fn.z);
-            if (fnLen && fn.z / fnLen > bestNz) {
-              bestNz = fn.z / fnLen;
-              bestFi = fi;
+          if (hitBrush) {
+            const depth = this.axes()[2];
+            let bestFi = -1;
+            let bestNz = -Infinity;
+            for (let fi = 0; fi < hitBrush.faces.length; fi++) {
+              const fn = this.faceNormal(hitBrush, hitBrush.faces[fi]);
+              const fnLen = Math.hypot(fn.x, fn.y, fn.z);
+              if (!fnLen) continue;
+              const nDepth = fn[depth] / fnLen;
+              if (nDepth <= 0.001) continue;
+              if (nDepth > bestNz) {
+                bestNz = nDepth;
+                bestFi = fi;
+              }
             }
-          }
           if (bestFi >= 0 && !this.isNoDrawFace(hitBrush, bestFi))
             clickedFace = {
               id: `${hitBrush.id}:f:${bestFi}`,
