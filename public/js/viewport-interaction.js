@@ -291,6 +291,22 @@ export function applyViewportInteraction(VP) {
               normLen > 0.001
                 ? { x: normal2D.x / normLen, y: normal2D.y / normLen }
                 : (() => {
+                    const bcx =
+                      brush.vertices.reduce((s, v) => s + v.x, 0) /
+                      brush.vertices.length;
+                    const bcy =
+                      brush.vertices.reduce((s, v) => s + v.y, 0) /
+                      brush.vertices.length;
+                    const fromCenter = {
+                      x: faceCenter.x - bcx,
+                      y: faceCenter.y - bcy,
+                    };
+                    const fcLen = Math.hypot(fromCenter.x, fromCenter.y);
+                    if (fcLen > 1)
+                      return {
+                        x: fromCenter.x / fcLen,
+                        y: fromCenter.y / fcLen,
+                      };
                     const toMouse = {
                       x: mouseWorld.x - faceCenter.x,
                       y: mouseWorld.y - faceCenter.y,
@@ -317,15 +333,18 @@ export function applyViewportInteraction(VP) {
               this.state.grid * 2,
               Math.max(...perpDots) - Math.min(...perpDots),
             );
+            let edgeDist = 0;
+            for (const p of points) {
+              const proj =
+                direction.x * (p.x - faceCenter.x) +
+                direction.y * (p.y - faceCenter.y);
+              if (proj > edgeDist) edgeDist = proj;
+            }
+            if (edgeDist < this.state.grid)
+              edgeDist = faceWidth * 0.5;
             const node = {
-              x:
-                normLen > 0.001
-                  ? faceCenter.x + direction.x * faceWidth * 0.5
-                  : faceCenter.x,
-              y:
-                normLen > 0.001
-                  ? faceCenter.y + direction.y * faceWidth * 0.5
-                  : faceCenter.y,
+              x: faceCenter.x + direction.x * edgeDist,
+              y: faceCenter.y + direction.y * edgeDist,
               z: faceCenter.z,
               width: faceWidth,
               height: faceHeight,
