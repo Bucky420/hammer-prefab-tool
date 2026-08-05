@@ -20,34 +20,32 @@ export function applyViewportPath(VP) {
     )
       return;
     if (this.pathRerouteTimer) return;
+    const draggedIndex = this.drag?.type === "path-node"
+      ? this.drag.index
+      : null;
+    const draggedPoint = draggedIndex != null
+      ? this.pathPoints[draggedIndex]
+      : null;
+    const snapshot = this.pathPoints.map((p) => structuredClone(p));
+    const snapshotModes = this.pathModel.segmentModes.slice();
+    if (this.reroutePathAroundShapes()) {
+      if (draggedPoint && this.drag?.type === "path-node") {
+        const newIndex = this.pathPoints.findIndex(
+          (p) =>
+            Math.abs(p.x - draggedPoint.x) < 1e-4 &&
+            Math.abs(p.y - draggedPoint.y) < 1e-4,
+        );
+        if (newIndex >= 0) this.drag.index = newIndex;
+      }
+    } else {
+      this.pathPoints = snapshot;
+      this.pathModel.nodes = snapshot;
+      this.pathModel.segmentModes = snapshotModes;
+    }
+    this.refreshPathPreview();
     this.pathRerouteTimer = requestAnimationFrame(() => {
       this.pathRerouteTimer = null;
-      if (!this.canvas.isConnected) return;
-      const draggedIndex = this.drag?.type === "path-node"
-        ? this.drag.index
-        : null;
-      const draggedPoint = draggedIndex != null
-        ? this.pathPoints[draggedIndex]
-        : null;
-      const snapshot = this.pathPoints.map((p) => structuredClone(p));
-      const snapshotModes = this.pathModel.segmentModes.slice();
-      if (this.reroutePathAroundShapes()) {
-        if (draggedPoint && this.drag?.type === "path-node") {
-          const newIndex = this.pathPoints.findIndex(
-            (p) =>
-              Math.abs(p.x - draggedPoint.x) < 1e-4 &&
-              Math.abs(p.y - draggedPoint.y) < 1e-4,
-          );
-          if (newIndex >= 0) this.drag.index = newIndex;
-        }
-        this.refreshPathPreview();
-        this.requestDraw();
-      } else {
-        this.pathPoints = snapshot;
-        this.pathModel.nodes = snapshot;
-        this.pathModel.segmentModes = snapshotModes;
-        this.refreshPathPreview();
-      }
+      if (this.canvas.isConnected) this.draw();
     });
   }
 
