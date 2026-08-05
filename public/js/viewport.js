@@ -194,6 +194,28 @@ export class Viewport {
       if (this.canvas.isConnected) this.refreshPathPreview();
     });
   }
+  schedulePathReroute() {
+    if (
+      this.state.pathSettings?.avoidShapes === false ||
+      this.pathModel.closed
+    )
+      return;
+    if (this.pathRerouteTimer) clearTimeout(this.pathRerouteTimer);
+    this.pathRerouteTimer = setTimeout(() => {
+      this.pathRerouteTimer = null;
+      const snapshot = this.pathPoints.map((p) => structuredClone(p));
+      const snapshotModes = this.pathModel.segmentModes.slice();
+      if (this.reroutePathAroundShapes()) {
+        this.refreshPathPreview();
+        this.requestDraw();
+      } else {
+        this.pathPoints = snapshot;
+        this.pathModel.nodes = snapshot;
+        this.pathModel.segmentModes = snapshotModes;
+        this.refreshPathPreview();
+      }
+    }, 100);
+  }
   interpolateGeneratedPathValue(name) {
     if (this.pathModel.closed) return;
     const anchors = this.pathPoints
@@ -4075,6 +4097,7 @@ export class Viewport {
         delete node.routeGenerated;
         this.interpolateGeneratedPathValue("width");
         this.requestPathPreview();
+        this.schedulePathReroute();
         return;
       }
       if (this.drag.type === "path-height") {
@@ -4087,6 +4110,7 @@ export class Viewport {
         delete node.routeGenerated;
         this.interpolateGeneratedPathValue("height");
         this.requestPathPreview();
+        this.schedulePathReroute();
         return;
       }
       if (this.drag.type === "path-tangent") {
@@ -4148,6 +4172,7 @@ export class Viewport {
           })
         ) {
           this.refreshPathPreview();
+          this.schedulePathReroute();
           return;
         }
         point[horizontal] = roundToGrid(current[horizontal], this.state.grid);
@@ -4155,6 +4180,7 @@ export class Viewport {
         if (this.drag.index === this.pathPoints.length - 1)
           this.pathEndAttachment = null;
         this.refreshPathPreview();
+        this.schedulePathReroute();
         return;
       }
       if (this.drag.type === "face-paint") {
@@ -4404,6 +4430,10 @@ export class Viewport {
         if (this.pathPreviewFrame) {
           cancelAnimationFrame(this.pathPreviewFrame);
           this.pathPreviewFrame = 0;
+        }
+        if (this.pathRerouteTimer) {
+          clearTimeout(this.pathRerouteTimer);
+          this.pathRerouteTimer = null;
         }
         const shouldReroute =
           ["path-node", "path-move", "path-width", "path-height"].includes(
