@@ -242,10 +242,8 @@ export function applyViewportInteraction(VP) {
           this.onChange("path-top-view-required");
           return;
         }
-        let clickedFace =
-          !this.pathPoints.length &&
-          this.faceAt(event.offsetX, event.offsetY, "replace");
-        if (!clickedFace && !this.pathPoints.length) {
+        let clickedFace = null;
+        if (!this.pathPoints.length) {
           const hitBrush = this.brushAt(
             event.offsetX,
             event.offsetY,
