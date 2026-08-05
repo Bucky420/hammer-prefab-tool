@@ -247,6 +247,26 @@ export function applyViewportPath(VP) {
     return true;
   }
 
+  VP.prototype.removeSelectedPathNode = function() {
+    const index = this.selectedPathNode;
+    if (
+      !Number.isInteger(index) ||
+      this.pathPoints.length < 3 ||
+      index === 0 ||
+      index === this.pathPoints.length - 1
+    )
+      return this.removeLastPathPoint();
+    this.pathPoints.splice(index, 1);
+    this.pathModel.nodes = this.pathPoints;
+    if (this.pathModel.segmentModes.length > index - 1)
+      this.pathModel.segmentModes.splice(index - 1, 1);
+    else if (this.pathModel.segmentModes.length)
+      this.pathModel.segmentModes.pop();
+    this.selectedPathNode = Math.min(index, this.pathPoints.length - 1);
+    this.reroutePathAroundShapes();
+    return true;
+  }
+
   VP.prototype.togglePathClosed = function() {
     if (this.pathPoints.length < 3) return false;
     this.pathModel.closed = !this.pathModel.closed;
@@ -508,10 +528,13 @@ export function applyViewportPath(VP) {
 
   VP.prototype.reroutePathAroundShapes = function() {
     if (this.pathModel.closed) return false;
-    const anchors = this.pathPoints
-      .filter((point) => !point.routeGenerated)
-      .map((point) => structuredClone(point));
-    if (anchors.length < 2) return true;
+    const first = this.pathPoints[0];
+    const last = this.pathPoints[this.pathPoints.length - 1];
+    if (!first || !last) return false;
+    const anchors = [
+      structuredClone(first),
+      structuredClone(last),
+    ];
     const originalPoints = this.pathPoints;
     const originalModes = this.pathModel.segmentModes.slice();
     this.pathPoints = [anchors[0]];
@@ -521,20 +544,18 @@ export function applyViewportPath(VP) {
       ...this.pathSourceBrushIds,
       ...(this.pathEndAttachment?.sourceBrushIds || []),
     ];
-    for (let index = 1; index < anchors.length; index++) {
-      if (
-        !this.appendRoutedPathNodes(
-          this.pathPoints.at(-1),
-          anchors[index],
-          excluded,
-        )
-      ) {
-        this.pathPoints = originalPoints;
-        this.pathModel.nodes = originalPoints;
-        this.pathModel.segmentModes = originalModes;
-        this.refreshPathPreview();
-        return false;
-      }
+    if (
+      !this.appendRoutedPathNodes(
+        this.pathPoints.at(-1),
+        anchors[1],
+        excluded,
+      )
+    ) {
+      this.pathPoints = originalPoints;
+      this.pathModel.nodes = originalPoints;
+      this.pathModel.segmentModes = originalModes;
+      this.refreshPathPreview();
+      return false;
     }
     this.selectedPathNode = this.pathPoints.length - 1;
     this.selectedPathSegment = null;

@@ -1708,6 +1708,11 @@ window.addEventListener("keydown", (event) => {
   const key = event.key.toLowerCase();
   if (event.key === "Delete") {
     event.preventDefault();
+    if (state.mode === "path" && view.removeSelectedPathNode()) {
+      redraw();
+      setStatus("Removed selected hallway path point");
+      return;
+    }
     run("delete");
     return;
   }
@@ -1727,9 +1732,9 @@ window.addEventListener("keydown", (event) => {
   }
   if (event.key === "Backspace" && state.mode === "path") {
     event.preventDefault();
-    if (view.removeLastPathPoint()) {
+    if (view.removeSelectedPathNode()) {
       redraw();
-      setStatus("Removed last hallway path point");
+      setStatus("Removed selected hallway path point");
     }
     return;
   }

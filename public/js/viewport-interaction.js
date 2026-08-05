@@ -4,6 +4,7 @@ import { roundToGrid } from "./grid.js";
 import { resolveExtrusion } from "./face-extrusion.js";
 import { applyStagedBrushHandle } from "./brush-tool.js";
 import { INFLUENCE_ACQUIRE_PX, INFLUENCE_RELEASE_PX } from "./viewport-constants.js";
+import { distanceToSegment } from "./math.js";
 
 /** @param {import("./viewport.js").Viewport} VP */
 export function applyViewportInteraction(VP) {
@@ -106,6 +107,87 @@ export function applyViewportInteraction(VP) {
           offsetX: this.offset.x,
           offsetY: this.offset.y,
         };
+        return;
+      }
+      if (
+        event.button === 2 &&
+        this.state.mode === "path" &&
+        this.pathPoints.length >= 2 &&
+        this.kind === "top"
+      ) {
+        event.preventDefault();
+        const world = this.world({ x: event.offsetX, y: event.offsetY });
+        const snapped = {
+          x: roundToGrid(world.x, this.state.grid),
+          y: roundToGrid(world.y, this.state.grid),
+        };
+        let nearestSegment = 0;
+        let nearestDistance = Infinity;
+        for (let i = 0; i < this.pathPoints.length - 1; i++) {
+          const d = distanceToSegment(
+            snapped,
+            this.pathPoints[i],
+            this.pathPoints[i + 1],
+          );
+          if (d < nearestDistance) {
+            nearestDistance = d;
+            nearestSegment = i;
+          }
+        }
+        let anchorBefore = nearestSegment;
+        let anchorAfter = nearestSegment + 1;
+        while (
+          anchorBefore > 0 &&
+          this.pathPoints[anchorBefore].routeGenerated
+        )
+          anchorBefore--;
+        while (
+          anchorAfter < this.pathPoints.length - 1 &&
+          this.pathPoints[anchorAfter].routeGenerated
+        )
+          anchorAfter++;
+        const beforeNode = this.pathPoints[anchorBefore];
+        const afterNode = this.pathPoints[anchorAfter];
+        this.pathPoints.splice(
+          anchorBefore + 1,
+          anchorAfter - anchorBefore - 1,
+        );
+        this.pathModel.segmentModes.splice(
+          anchorBefore + 1,
+          Math.max(0, anchorAfter - anchorBefore - 1),
+        );
+        const newNode = {
+          ...snapped,
+          z: roundToGrid(
+            beforeNode.z +
+              (afterNode.z - beforeNode.z) *
+                (nearestSegment - anchorBefore + 1) /
+                Math.max(1, anchorAfter - anchorBefore),
+            this.state.grid,
+          ),
+          width: beforeNode.width + (afterNode.width - beforeNode.width) * 0.5,
+          height: beforeNode.height + (afterNode.height - beforeNode.height) * 0.5,
+          tangentMode: "smooth",
+        };
+        this.pathModel.nodes = this.pathPoints;
+        this.pathPoints.splice(anchorBefore + 1, 0, newNode);
+        this.appendRoutedPathNodes(beforeNode, newNode, [
+          ...this.pathSourceBrushIds,
+        ]);
+        let newNodeIndex = this.pathPoints.findIndex(
+          (p) =>
+            Math.abs(p.x - newNode.x) < 1e-4 &&
+            Math.abs(p.y - newNode.y) < 1e-4,
+        );
+        if (newNodeIndex < 0) newNodeIndex = anchorBefore + 1;
+        this.appendRoutedPathNodes(
+          this.pathPoints[newNodeIndex],
+          afterNode,
+          [...this.pathSourceBrushIds],
+        );
+        this.selectedPathNode = newNodeIndex;
+        this.refreshPathPreview();
+        this.onChange("path-preview");
         return;
       }
       if (event.button !== 0) return;
@@ -620,6 +702,12 @@ export function applyViewportInteraction(VP) {
             this.pathAssemblyId,
           );
         }
+        if (
+          this.state.mode === "path" &&
+          this.pathPoints.length &&
+          this.pathGhostLine
+        )
+          this.pathGhostLine = null;
         const operation = this.selectionOperation(event);
         const fillLoop =
           (this.state.mode === "face" || this.state.mode === "path") &&
@@ -718,7 +806,6 @@ export function applyViewportInteraction(VP) {
           point[axes[1]] = original[axes[1]] + delta[axes[1]];
         });
         this.pathEndAttachment = null;
-        this.refreshPathPreview();
         this.schedulePathReroute();
         return;
       }
@@ -727,14 +814,12 @@ export function applyViewportInteraction(VP) {
         const [horizontal, vertical] = this.axes();
         const point = this.pathPoints[this.drag.index];
         if (this.drag.index === 0 && this.pathSourceAttachment) return;
-        delete point.routeGenerated;
         if (
           this.snapMovedPathEnd(this.drag.index, {
             x: current[horizontal],
             y: current[vertical],
           })
         ) {
-          this.refreshPathPreview();
           this.schedulePathReroute();
           return;
         }
@@ -742,7 +827,6 @@ export function applyViewportInteraction(VP) {
         point[vertical] = roundToGrid(current[vertical], this.state.grid);
         if (this.drag.index === this.pathPoints.length - 1)
           this.pathEndAttachment = null;
-        this.refreshPathPreview();
         this.schedulePathReroute();
         return;
       }

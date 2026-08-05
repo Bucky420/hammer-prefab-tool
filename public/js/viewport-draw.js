@@ -537,7 +537,10 @@ export function applyViewportDraw(VP) {
         }
       }
     }
-    if (this.state.mode === "face")
+    if (
+      this.state.mode === "face" ||
+      this.state.mode === "path"
+    )
       for (const edge of this.exposedEdges()) {
         const hovered = [...edge.faceIds].some((id) =>
             this.hoverFaceIds.has(id),
@@ -556,7 +559,11 @@ export function applyViewportDraw(VP) {
         context.lineTo(edge.endScreen.x, edge.endScreen.y);
         context.stroke();
       }
-    if (this.state.mode === "face" && this.state.faceSelection.size) {
+    if (
+      (this.state.mode === "face" ||
+        this.state.mode === "path") &&
+      this.state.faceSelection.size
+    ) {
       context.strokeStyle = COLORS.selected;
       context.lineWidth = 4;
       const drawn = new Set();
