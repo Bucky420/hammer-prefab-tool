@@ -365,7 +365,10 @@ export function applyViewportInteraction(VP) {
             const node = {
               x: faceCenter.x + direction.x * edgeDist,
               y: faceCenter.y + direction.y * edgeDist,
-              z: faceCenter.z,
+              z: roundToGrid(
+                Number(this.state.pathSettings?.baseElevation || 0),
+                this.state.grid,
+              ),
               width: faceWidth,
               height: faceHeight,
               tangentMode: "smooth",
