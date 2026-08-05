@@ -389,6 +389,7 @@ export function applyViewportInteraction(VP) {
               ) {
                 this.pathPoints.pop();
                 this.pathModel.nodes = this.pathPoints;
+                this.onChange("path-route-invalid:Route blocked; click further away");
                 return;
               }
               this.pathGhostSource = null;
@@ -408,6 +409,7 @@ export function applyViewportInteraction(VP) {
                 !this.appendRoutedPathNodes(startNode, node, excludeIds)
               ) {
                 this.pathSourceBrushIds = savedSourceIds;
+                this.onChange("path-route-invalid:Route blocked; click further away");
                 return;
               }
               this.selectedPathNode = this.pathPoints.length - 1;

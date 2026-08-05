@@ -133,8 +133,10 @@ export function applyViewportPath(VP) {
         Math.max(sourceNode.height || defaultHeight, endNode.height),
         brushIds,
       );
-      if (routed.errors?.length || routed.points.length < 2) return;
-      this.pathGhostLine = routed.points;
+      this.pathGhostLine =
+        routed.points.length >= 2
+          ? routed.points
+          : [sourceNode, endNode];
     }
   }
 
