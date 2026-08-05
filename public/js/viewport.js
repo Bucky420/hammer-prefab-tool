@@ -203,9 +203,24 @@ export class Viewport {
     if (this.pathRerouteTimer) clearTimeout(this.pathRerouteTimer);
     this.pathRerouteTimer = setTimeout(() => {
       this.pathRerouteTimer = null;
+      if (!this.canvas.isConnected || !this.drag) return;
+      const draggedIndex = this.drag.type === "path-node"
+        ? this.drag.index
+        : null;
+      const draggedPoint = draggedIndex != null
+        ? this.pathPoints[draggedIndex]
+        : null;
       const snapshot = this.pathPoints.map((p) => structuredClone(p));
       const snapshotModes = this.pathModel.segmentModes.slice();
       if (this.reroutePathAroundShapes()) {
+        if (draggedPoint && this.drag?.type === "path-node") {
+          const newIndex = this.pathPoints.findIndex(
+            (p) =>
+              Math.abs(p.x - draggedPoint.x) < 1e-4 &&
+              Math.abs(p.y - draggedPoint.y) < 1e-4,
+          );
+          if (newIndex >= 0) this.drag.index = newIndex;
+        }
         this.refreshPathPreview();
         this.requestDraw();
       } else {
@@ -214,7 +229,7 @@ export class Viewport {
         this.pathModel.segmentModes = snapshotModes;
         this.refreshPathPreview();
       }
-    }, 100);
+    }, 50);
   }
   interpolateGeneratedPathValue(name) {
     if (this.pathModel.closed) return;
@@ -4442,9 +4457,14 @@ export class Viewport {
           this.state.pathSettings?.avoidShapes !== false &&
           !this.pathModel.closed;
         if (shouldReroute) {
+          const releaseSnapshot = this.pathPoints.map((p) =>
+            structuredClone(p),
+          );
+          const releaseModes = this.pathModel.segmentModes.slice();
           if (!this.reroutePathAroundShapes()) {
-            this.pathPoints = pathDrag.originalPath;
+            this.pathPoints = releaseSnapshot;
             this.pathModel.nodes = this.pathPoints;
+            this.pathModel.segmentModes = releaseModes;
             this.refreshPathPreview();
           }
         } else if (["path-width", "path-height"].includes(pathDrag.type)) {
