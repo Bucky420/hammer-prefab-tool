@@ -42,6 +42,8 @@ export function applyViewportCreation(VP) {
     this.selectedPathSegment = null;
     this.pathPreviewBrushes = [];
     this.pathPreviewErrors = [];
+    this.pathGhostLine = null;
+    this.pathGhostSource = null;
     this.previewErrors = [];
     this.extrusionCandidate = null;
     this.extrusionMatchDebug = [];

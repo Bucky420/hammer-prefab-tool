@@ -1,9 +1,17 @@
 import { distanceToSegment, pointInPolygon } from "./math.js";
 import { connectedFaceIds, faceRole } from "./selection.js";
 import { insideRect, segmentsIntersect } from "./viewport-constants.js";
+import { isNoDrawMaterial } from "./rail-acquisition.js";
 
 /** @param {import("./viewport.js").Viewport} VP */
 export function applyViewportFace(VP) {
+  VP.prototype.isNoDrawFace = function(brush, faceIndex) {
+    const face = brush?.faces?.[faceIndex];
+    if (!face) return false;
+    return isNoDrawMaterial(
+      brush.faceMaterials?.[faceIndex] || brush.material,
+    );
+  }
   VP.prototype.faceNormal = function(brush, face) {
     const a = brush.vertices[face[0]],
       b = brush.vertices[face[1]],

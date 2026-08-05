@@ -114,6 +114,8 @@ export class Viewport {
     this.selectedPathSegment = null;
     this.pathPreviewBrushes = [];
     this.pathPreviewErrors = [];
+    this.pathGhostLine = null;
+    this.pathGhostSource = null;
     this.previewBrushes = [];
     this.previewErrors = [];
     this.extrusionCandidate = null;

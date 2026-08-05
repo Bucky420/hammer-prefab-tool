@@ -19,11 +19,11 @@ export function applyViewportPath(VP) {
       this.pathModel.closed
     )
       return;
-    if (this.pathRerouteTimer) clearTimeout(this.pathRerouteTimer);
-    this.pathRerouteTimer = setTimeout(() => {
+    if (this.pathRerouteTimer) return;
+    this.pathRerouteTimer = requestAnimationFrame(() => {
       this.pathRerouteTimer = null;
-      if (!this.canvas.isConnected || !this.drag) return;
-      const draggedIndex = this.drag.type === "path-node"
+      if (!this.canvas.isConnected) return;
+      const draggedIndex = this.drag?.type === "path-node"
         ? this.drag.index
         : null;
       const draggedPoint = draggedIndex != null
@@ -48,7 +48,7 @@ export function applyViewportPath(VP) {
         this.pathModel.segmentModes = snapshotModes;
         this.refreshPathPreview();
       }
-    }, 50);
+    });
   }
 
   VP.prototype.interpolateGeneratedPathValue = function(name) {
@@ -74,6 +74,56 @@ export function applyViewportPath(VP) {
           this.pathPoints[start][name] * (1 - alpha) +
           this.pathPoints[end][name] * alpha;
       }
+    }
+  }
+
+  VP.prototype.computeGhostRoute = function(mouseWorld) {
+    this.pathGhostLine = null;
+    if (this.kind !== "top") return;
+    if (!mouseWorld || !Number.isFinite(mouseWorld.x) || !Number.isFinite(mouseWorld.y))
+      return;
+    if (this.pathPoints.length) return;
+    if (
+      !this.pathSourceAttachment &&
+      !this.pathSourceBrushIds.length &&
+      !this.pathGhostSource
+    )
+      return;
+    const sourceNode = this.pathGhostSource?.node;
+    if (!sourceNode && !this.pathSourceBrushIds.length) return;
+    if (sourceNode) {
+      const defaultWidth =
+        Number(this.state.pathSettings?.interiorWidth || 128) +
+        2 * Number(this.state.pathSettings?.wallThickness || 16);
+      const defaultHeight = Number(
+        this.state.pathSettings?.interiorHeight || 128,
+      );
+      const snapped = {
+        x: roundToGrid(mouseWorld.x, this.state.grid),
+        y: roundToGrid(mouseWorld.y, this.state.grid),
+      };
+      const endNode = {
+        ...snapped,
+        z: sourceNode.z || 0,
+        width: sourceNode.width || defaultWidth,
+        height: sourceNode.height || defaultHeight,
+        tangentMode: "auto",
+      };
+      const distance = Math.max(
+        this.state.grid * 2,
+        Math.hypot(snapped.x - sourceNode.x, snapped.y - sourceNode.y),
+      );
+      if (distance < this.state.grid * 2) return;
+      const brushIds = this.pathGhostSource.brushIds || [];
+      const routed = this.routePathPoints(
+        sourceNode,
+        endNode,
+        Math.max(sourceNode.width || defaultWidth, endNode.width),
+        Math.max(sourceNode.height || defaultHeight, endNode.height),
+        brushIds,
+      );
+      if (routed.errors?.length || routed.points.length < 2) return;
+      this.pathGhostLine = routed.points;
     }
   }
 
@@ -107,10 +157,12 @@ export function applyViewportPath(VP) {
     }
     this.pathPoints = this.pathModel.nodes;
     this.pathAssemblyId = assemblyId || null;
+    this.pathGhostLine = null;
     this.pathSourceBrushIds = [...(options.sourceBrushIds || [])];
     this.pathSourceAttachment = options.sourceAttachment
       ? structuredClone(options.sourceAttachment)
       : null;
+    this.pathGhostSource = null;
     this.pathSourceCandidate = null;
     this.pathEndAttachment = options.endAttachment
       ? structuredClone(options.endAttachment)
@@ -209,6 +261,7 @@ export function applyViewportPath(VP) {
     if (this.pathModel.closed) {
       this.pathSourceAttachment = null;
       this.pathSourceBrushIds = [];
+      this.pathGhostSource = null;
       this.pathEndAttachment = null;
     }
     this.refreshPathPreview();

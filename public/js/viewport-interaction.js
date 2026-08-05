@@ -160,6 +160,69 @@ export function applyViewportInteraction(VP) {
           this.onChange("path-top-view-required");
           return;
         }
+        const ctrlFace =
+          (event.ctrlKey || event.metaKey) &&
+          !this.pathPoints.length &&
+          this.faceAt(
+            event.offsetX,
+            event.offsetY,
+            "replace",
+          );
+        if (ctrlFace) {
+          const match = ctrlFace.id.match(/^(.*):f:(\d+)$/);
+          const brush = match && this.state.brushes.find((b) => b.id === match[1]);
+          const face = brush?.faces[Number(match?.[2])];
+          if (brush && face && !this.isNoDrawFace(brush, Number(match?.[2]))) {
+            const normal = this.faceNormal(brush, face);
+            const points = face.map((i) => brush.vertices[i]);
+            const faceCenter = {
+              x: points.reduce((s, p) => s + p.x, 0) / points.length,
+              y: points.reduce((s, p) => s + p.y, 0) / points.length,
+              z: points.reduce((s, p) => s + p.z, 0) / points.length,
+            };
+            const normal2D = { x: normal.x, y: normal.y };
+            const normLen = Math.hypot(normal2D.x, normal2D.y);
+            const direction =
+              normLen > 0.001
+                ? { x: normal2D.x / normLen, y: normal2D.y / normLen }
+                : { x: 1, y: 0 };
+            const defaultWidth =
+              Number(this.state.pathSettings?.interiorWidth || 128) +
+              2 * Number(this.state.pathSettings?.wallThickness || 16);
+            const xs = points.map((p) => p.x);
+            const ys = points.map((p) => p.y);
+            const faceWidth = Math.max(
+              this.state.grid * 2,
+              Math.max(...xs) - Math.min(...xs),
+              Math.max(...ys) - Math.min(...ys),
+            );
+            const node = {
+              x: faceCenter.x + direction.x * faceWidth * 0.5,
+              y: faceCenter.y + direction.y * faceWidth * 0.5,
+              z: faceCenter.z,
+              width: faceWidth,
+              height: Number(this.state.pathSettings?.interiorHeight || 128),
+              tangentMode: "smooth",
+              tangentOut: {
+                x: direction.x * faceWidth,
+                y: direction.y * faceWidth,
+                z: 0,
+              },
+            };
+            this.pathGhostSource = { node, brushIds: [brush.id] };
+            this.pathSourceCandidate = null;
+            const ghostMouseWorld = this.world({
+              x: event.offsetX,
+              y: event.offsetY,
+            });
+            this.computeGhostRoute({
+              x: ghostMouseWorld.x,
+              y: ghostMouseWorld.y,
+            });
+            this.onChange("path-source-acquired");
+          }
+          return;
+        }
         const world = this.world({ x: event.offsetX, y: event.offsetY });
         const snapped = {
           x: roundToGrid(world.x, this.state.grid),
@@ -241,6 +304,40 @@ export function applyViewportInteraction(VP) {
             this.onChange("path-source-acquired");
             return;
           }
+          this.selectedPathNode = this.pathPoints.length - 1;
+          this.onChange("path-source-acquired");
+        } else if (
+          this.pathGhostSource &&
+          !this.pathPoints.length
+        ) {
+          const ghostNode = this.pathGhostSource.node;
+          const ghostBrushIds = this.pathGhostSource.brushIds || [];
+          const snapped = {
+            x: roundToGrid(world.x, this.state.grid),
+            y: roundToGrid(world.y, this.state.grid),
+          };
+          const defaultWidth =
+            Number(this.state.pathSettings?.interiorWidth || 128) +
+            2 * Number(this.state.pathSettings?.wallThickness || 16);
+          const defaultHeight = Number(
+            this.state.pathSettings?.interiorHeight || 128,
+          );
+          const endNode = {
+            ...snapped,
+            z: ghostNode.z || 0,
+            width: ghostNode.width || defaultWidth,
+            height: ghostNode.height || defaultHeight,
+            tangentMode: "auto",
+          };
+          this.pathPoints.push(ghostNode);
+          this.pathModel.nodes = this.pathPoints;
+          if (
+            !this.appendRoutedPathNodes(ghostNode, endNode, ghostBrushIds)
+          )
+            return;
+          this.pathSourceBrushIds = ghostBrushIds;
+          this.pathGhostSource = null;
+          this.pathGhostLine = null;
           this.selectedPathNode = this.pathPoints.length - 1;
           this.onChange("path-source-acquired");
         } else {
@@ -500,10 +597,16 @@ export function applyViewportInteraction(VP) {
           );
           if (this.pathSourceCandidate?.errors?.length)
             this.pathSourceCandidate = null;
-          this.requestDraw();
-          return;
-        }
-        if (
+          this.computeGhostRoute({ x: world.x, y: world.y });
+        } else if (
+          this.state.mode === "path" &&
+          this.kind === "top" &&
+          !this.pathPoints.length &&
+          this.pathGhostSource
+        ) {
+          const world = this.world({ x: event.offsetX, y: event.offsetY });
+          this.computeGhostRoute({ x: world.x, y: world.y });
+        } else if (
           this.state.mode === "path" &&
           this.kind === "top" &&
           this.pathPoints.length &&
@@ -516,16 +619,15 @@ export function applyViewportInteraction(VP) {
             this.pathSourceBrushIds,
             this.pathAssemblyId,
           );
-          this.requestDraw();
-          return;
         }
         const operation = this.selectionOperation(event);
         const fillLoop =
-          this.state.mode === "face" && this.state.faceToolMode === "fill"
+          (this.state.mode === "face" || this.state.mode === "path") &&
+          this.state.faceToolMode === "fill"
             ? this.faceLoopAt(event.offsetX, event.offsetY)
             : null;
         const face =
-          this.state.mode === "face"
+          this.state.mode === "face" || this.state.mode === "path"
             ? this.faceAt(event.offsetX, event.offsetY, operation)
             : null;
         this.hoverFillPolygon = fillLoop?.polygon || null;
@@ -617,6 +719,7 @@ export function applyViewportInteraction(VP) {
         });
         this.pathEndAttachment = null;
         this.refreshPathPreview();
+        this.schedulePathReroute();
         return;
       }
       if (this.drag.type === "path-node") {
@@ -892,7 +995,7 @@ export function applyViewportInteraction(VP) {
           this.pathPreviewFrame = 0;
         }
         if (this.pathRerouteTimer) {
-          clearTimeout(this.pathRerouteTimer);
+          cancelAnimationFrame(this.pathRerouteTimer);
           this.pathRerouteTimer = null;
         }
         const shouldReroute =

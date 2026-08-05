@@ -240,6 +240,31 @@ export function applyViewportDraw(VP) {
       context.fillRect(center.x - 5, center.y - 5, 10, 10);
       context.lineWidth = 1;
     }
+    if (
+      this.state.mode === "path" &&
+      !this.pathPoints.length &&
+      this.pathGhostLine?.length >= 2
+    ) {
+      context.strokeStyle = "#66dde3";
+      context.lineWidth = 2;
+      context.setLineDash([8, 6]);
+      context.beginPath();
+      this.pathGhostLine.forEach((point, index) => {
+        const screen = this.screen(point);
+        if (index) context.lineTo(screen.x, screen.y);
+        else context.moveTo(screen.x, screen.y);
+      });
+      context.stroke();
+      context.setLineDash([]);
+      for (const point of this.pathGhostLine) {
+        const screen = this.screen(point);
+        context.fillStyle = "#66dde3";
+        context.beginPath();
+        context.arc(screen.x, screen.y, 3, 0, Math.PI * 2);
+        context.fill();
+      }
+      context.lineWidth = 1;
+    }
     if (this.state.mode === "path" && this.pathPoints.length) {
       context.strokeStyle = this.pathPreviewErrors.length
         ? COLORS.invalid
