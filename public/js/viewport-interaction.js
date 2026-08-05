@@ -242,16 +242,12 @@ export function applyViewportInteraction(VP) {
           this.onChange("path-top-view-required");
           return;
         }
-        const ctrlFace =
+        const clickedFace =
           (event.ctrlKey || event.metaKey) &&
           !this.pathPoints.length &&
-          this.faceAt(
-            event.offsetX,
-            event.offsetY,
-            "replace",
-          );
-        if (ctrlFace) {
-          const match = ctrlFace.id.match(/^(.*):f:(\d+)$/);
+          this.faceAt(event.offsetX, event.offsetY, "replace");
+        if (clickedFace) {
+          const match = clickedFace.id.match(/^(.*):f:(\d+)$/);
           const brush = match && this.state.brushes.find((b) => b.id === match[1]);
           const face = brush?.faces[Number(match?.[2])];
           if (brush && face && !this.isNoDrawFace(brush, Number(match?.[2]))) {
@@ -271,6 +267,9 @@ export function applyViewportInteraction(VP) {
             const defaultWidth =
               Number(this.state.pathSettings?.interiorWidth || 128) +
               2 * Number(this.state.pathSettings?.wallThickness || 16);
+            const faceHeight = Number(
+              this.state.pathSettings?.interiorHeight || 128,
+            );
             const xs = points.map((p) => p.x);
             const ys = points.map((p) => p.y);
             const faceWidth = Math.max(
@@ -283,7 +282,7 @@ export function applyViewportInteraction(VP) {
               y: faceCenter.y + direction.y * faceWidth * 0.5,
               z: faceCenter.z,
               width: faceWidth,
-              height: Number(this.state.pathSettings?.interiorHeight || 128),
+              height: faceHeight,
               tangentMode: "smooth",
               tangentOut: {
                 x: direction.x * faceWidth,
@@ -291,17 +290,35 @@ export function applyViewportInteraction(VP) {
                 z: 0,
               },
             };
-            this.pathGhostSource = { node, brushIds: [brush.id] };
-            this.pathSourceCandidate = null;
-            const ghostMouseWorld = this.world({
-              x: event.offsetX,
-              y: event.offsetY,
-            });
-            this.computeGhostRoute({
-              x: ghostMouseWorld.x,
-              y: ghostMouseWorld.y,
-            });
-            this.onChange("path-source-acquired");
+            if (this.pathGhostSource) {
+              const ghostNode = this.pathGhostSource.node;
+              const ghostBrushIds = this.pathGhostSource.brushIds || [];
+              const allBrushIds = [
+                ...new Set([...ghostBrushIds, brush.id]),
+              ];
+              this.pathPoints.push(ghostNode);
+              this.pathModel.nodes = this.pathPoints;
+              this.pathSourceBrushIds = allBrushIds;
+              this.pathGhostSource = null;
+              this.pathGhostLine = null;
+              if (!this.appendRoutedPathNodes(ghostNode, node, allBrushIds))
+                return;
+              this.selectedPathNode = this.pathPoints.length - 1;
+              this.refreshPathPreview();
+              this.onChange("path-preview");
+            } else {
+              this.pathGhostSource = { node, brushIds: [brush.id] };
+              this.pathSourceCandidate = null;
+              const ghostMouseWorld = this.world({
+                x: event.offsetX,
+                y: event.offsetY,
+              });
+              this.computeGhostRoute({
+                x: ghostMouseWorld.x,
+                y: ghostMouseWorld.y,
+              });
+              this.onChange("path-source-acquired");
+            }
           }
           return;
         }
@@ -475,6 +492,7 @@ export function applyViewportInteraction(VP) {
               : {}),
           };
           if (previous) {
+            if (this.pathPoints.length >= 4) return;
             if (
               !this.appendRoutedPathNodes(previous, endNode, [
                 ...this.pathSourceBrushIds,
