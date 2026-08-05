@@ -616,6 +616,7 @@ export function applyViewportPath(VP) {
           : 0,
     );
     for (const [index, point] of entries) {
+      if (point.routeGenerated) continue;
       const screen = this.screen(point);
       const distance = Math.hypot(x - screen.x, y - screen.y);
       if (distance <= 9 && (!best || distance < best.distance))

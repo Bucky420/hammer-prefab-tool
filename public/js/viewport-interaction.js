@@ -306,12 +306,16 @@ export function applyViewportInteraction(VP) {
             const faceHeight = Number(
               this.state.pathSettings?.interiorHeight || 128,
             );
-            const xs = points.map((p) => p.x);
-            const ys = points.map((p) => p.y);
+            const perpDir = {
+              x: -direction.y,
+              y: direction.x,
+            };
+            const perpDots = points.map(
+              (p) => perpDir.x * p.x + perpDir.y * p.y,
+            );
             const faceWidth = Math.max(
               this.state.grid * 2,
-              Math.max(...xs) - Math.min(...xs),
-              Math.max(...ys) - Math.min(...ys),
+              Math.max(...perpDots) - Math.min(...perpDots),
             );
             const node = {
               x: faceCenter.x + direction.x * faceWidth * 0.5,
