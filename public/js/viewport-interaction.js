@@ -279,10 +279,23 @@ export function applyViewportInteraction(VP) {
             };
             const normal2D = { x: normal.x, y: normal.y };
             const normLen = Math.hypot(normal2D.x, normal2D.y);
+            const mouseWorld = this.world({
+              x: event.offsetX,
+              y: event.offsetY,
+            });
             const direction =
               normLen > 0.001
                 ? { x: normal2D.x / normLen, y: normal2D.y / normLen }
-                : { x: 1, y: 0 };
+                : (() => {
+                    const toMouse = {
+                      x: mouseWorld.x - faceCenter.x,
+                      y: mouseWorld.y - faceCenter.y,
+                    };
+                    const mlen = Math.hypot(toMouse.x, toMouse.y);
+                    return mlen > 0.001
+                      ? { x: toMouse.x / mlen, y: toMouse.y / mlen }
+                      : { x: 1, y: 0 };
+                  })();
             const defaultWidth =
               Number(this.state.pathSettings?.interiorWidth || 128) +
               2 * Number(this.state.pathSettings?.wallThickness || 16);
@@ -318,10 +331,15 @@ export function applyViewportInteraction(VP) {
               this.pathPoints.push(ghostNode);
               this.pathModel.nodes = this.pathPoints;
               this.pathSourceBrushIds = allBrushIds;
+              if (
+                !this.appendRoutedPathNodes(ghostNode, node, allBrushIds)
+              ) {
+                this.pathPoints.pop();
+                this.pathModel.nodes = this.pathPoints;
+                return;
+              }
               this.pathGhostSource = null;
               this.pathGhostLine = null;
-              if (!this.appendRoutedPathNodes(ghostNode, node, allBrushIds))
-                return;
               this.selectedPathNode = this.pathPoints.length - 1;
               this.refreshPathPreview();
               this.onChange("path-preview");
@@ -331,11 +349,14 @@ export function applyViewportInteraction(VP) {
                 ...this.pathSourceBrushIds,
                 brush.id,
               ];
+              const savedSourceIds = this.pathSourceBrushIds;
               this.pathSourceBrushIds = excludeIds;
               if (
                 !this.appendRoutedPathNodes(startNode, node, excludeIds)
-              )
+              ) {
+                this.pathSourceBrushIds = savedSourceIds;
                 return;
+              }
               this.selectedPathNode = this.pathPoints.length - 1;
               this.refreshPathPreview();
               this.onChange("path-preview");
@@ -857,15 +878,6 @@ export function applyViewportInteraction(VP) {
           point[axes[1]] = original[axes[1]] + delta[axes[1]];
         });
         this.pathEndAttachment = null;
-        const anchorNodes = this.pathPoints.filter(
-          (p) => !p.routeGenerated,
-        );
-        this.pathPoints = anchorNodes;
-        this.pathModel.nodes = anchorNodes;
-        this.pathModel.segmentModes = this.pathModel.segmentModes.slice(
-          0,
-          anchorNodes.length - 1,
-        );
         this.schedulePathReroute();
         return;
       }
@@ -880,15 +892,6 @@ export function applyViewportInteraction(VP) {
             y: current[vertical],
           })
         ) {
-          const snapAnchors = this.pathPoints.filter(
-            (p) => !p.routeGenerated,
-          );
-          this.pathPoints = snapAnchors;
-          this.pathModel.nodes = snapAnchors;
-          this.pathModel.segmentModes = this.pathModel.segmentModes.slice(
-            0,
-            snapAnchors.length - 1,
-          );
           this.schedulePathReroute();
           return;
         }
@@ -896,15 +899,6 @@ export function applyViewportInteraction(VP) {
         point[vertical] = roundToGrid(current[vertical], this.state.grid);
         if (this.drag.index === this.pathPoints.length - 1)
           this.pathEndAttachment = null;
-        const moveAnchors = this.pathPoints.filter(
-          (p) => !p.routeGenerated,
-        );
-        this.pathPoints = moveAnchors;
-        this.pathModel.nodes = moveAnchors;
-        this.pathModel.segmentModes = this.pathModel.segmentModes.slice(
-          0,
-          moveAnchors.length - 1,
-        );
         this.schedulePathReroute();
         return;
       }
