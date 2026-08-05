@@ -222,10 +222,12 @@ const view = new Viewport(
         true,
       );
     } else if (changeType === "path-source-acquired") {
-      state.pathSettings.interiorWidth =
-        view.pathSourceAttachment.interiorWidth;
-      state.pathSettings.baseElevation = view.pathSourceAttachment.elevation;
-      pathPanelController?.updateControls();
+      if (view.pathSourceAttachment) {
+        state.pathSettings.interiorWidth =
+          view.pathSourceAttachment.interiorWidth;
+        state.pathSettings.baseElevation = view.pathSourceAttachment.elevation;
+        pathPanelController?.updateControls();
+      }
       redraw();
       setStatus(
         `Hallway start matched to ${view.pathSourceBrushIds.length} selected floor brush${view.pathSourceBrushIds.length === 1 ? "" : "es"}`,

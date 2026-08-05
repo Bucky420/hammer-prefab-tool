@@ -243,7 +243,6 @@ export function applyViewportInteraction(VP) {
           return;
         }
         const clickedFace =
-          (event.ctrlKey || event.metaKey) &&
           !this.pathPoints.length &&
           this.faceAt(event.offsetX, event.offsetY, "replace");
         if (clickedFace) {
@@ -317,7 +316,7 @@ export function applyViewportInteraction(VP) {
                 x: ghostMouseWorld.x,
                 y: ghostMouseWorld.y,
               });
-              this.onChange("path-source-acquired");
+              this.onChange("path-preview");
             }
           }
           return;
