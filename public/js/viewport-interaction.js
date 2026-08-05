@@ -243,29 +243,27 @@ export function applyViewportInteraction(VP) {
           return;
         }
         let clickedFace = null;
-        if (!this.pathPoints.length) {
-          const hitBrush = this.brushAt(
-            event.offsetX,
-            event.offsetY,
-          );
-          if (hitBrush) {
-            let bestFi = -1;
-            let bestNz = -Infinity;
-            for (let fi = 0; fi < hitBrush.faces.length; fi++) {
-              const fn = this.faceNormal(hitBrush, hitBrush.faces[fi]);
-              const fnLen = Math.hypot(fn.x, fn.y, fn.z);
-              if (fnLen && fn.z / fnLen > bestNz) {
-                bestNz = fn.z / fnLen;
-                bestFi = fi;
-              }
+        const hitBrush = this.brushAt(
+          event.offsetX,
+          event.offsetY,
+        );
+        if (hitBrush) {
+          let bestFi = -1;
+          let bestNz = -Infinity;
+          for (let fi = 0; fi < hitBrush.faces.length; fi++) {
+            const fn = this.faceNormal(hitBrush, hitBrush.faces[fi]);
+            const fnLen = Math.hypot(fn.x, fn.y, fn.z);
+            if (fnLen && fn.z / fnLen > bestNz) {
+              bestNz = fn.z / fnLen;
+              bestFi = fi;
             }
-            if (bestFi >= 0 && !this.isNoDrawFace(hitBrush, bestFi))
-              clickedFace = {
-                id: `${hitBrush.id}:f:${bestFi}`,
-                brush: hitBrush,
-                faceIndex: bestFi,
-              };
           }
+          if (bestFi >= 0 && !this.isNoDrawFace(hitBrush, bestFi))
+            clickedFace = {
+              id: `${hitBrush.id}:f:${bestFi}`,
+              brush: hitBrush,
+              faceIndex: bestFi,
+            };
         }
         if (clickedFace) {
           const match = clickedFace.id.match(/^(.*):f:(\d+)$/);
@@ -327,7 +325,21 @@ export function applyViewportInteraction(VP) {
               this.selectedPathNode = this.pathPoints.length - 1;
               this.refreshPathPreview();
               this.onChange("path-preview");
-            } else {
+            } else if (this.pathPoints.length === 1) {
+              const startNode = this.pathPoints[0];
+              const excludeIds = [
+                ...this.pathSourceBrushIds,
+                brush.id,
+              ];
+              this.pathSourceBrushIds = excludeIds;
+              if (
+                !this.appendRoutedPathNodes(startNode, node, excludeIds)
+              )
+                return;
+              this.selectedPathNode = this.pathPoints.length - 1;
+              this.refreshPathPreview();
+              this.onChange("path-preview");
+            } else if (!this.pathPoints.length) {
               this.pathGhostSource = { node, brushIds: [brush.id] };
               this.pathSourceCandidate = null;
               const ghostMouseWorld = this.world({
