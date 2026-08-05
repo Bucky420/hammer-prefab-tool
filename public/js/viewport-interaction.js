@@ -242,9 +242,33 @@ export function applyViewportInteraction(VP) {
           this.onChange("path-top-view-required");
           return;
         }
-        const clickedFace =
+        let clickedFace =
           !this.pathPoints.length &&
           this.faceAt(event.offsetX, event.offsetY, "replace");
+        if (!clickedFace && !this.pathPoints.length) {
+          const hitBrush = this.brushAt(
+            event.offsetX,
+            event.offsetY,
+          );
+          if (hitBrush) {
+            let bestFi = -1;
+            let bestNz = -Infinity;
+            for (let fi = 0; fi < hitBrush.faces.length; fi++) {
+              const fn = this.faceNormal(hitBrush, hitBrush.faces[fi]);
+              const fnLen = Math.hypot(fn.x, fn.y, fn.z);
+              if (fnLen && fn.z / fnLen > bestNz) {
+                bestNz = fn.z / fnLen;
+                bestFi = fi;
+              }
+            }
+            if (bestFi >= 0 && !this.isNoDrawFace(hitBrush, bestFi))
+              clickedFace = {
+                id: `${hitBrush.id}:f:${bestFi}`,
+                brush: hitBrush,
+                faceIndex: bestFi,
+              };
+          }
+        }
         if (clickedFace) {
           const match = clickedFace.id.match(/^(.*):f:(\d+)$/);
           const brush = match && this.state.brushes.find((b) => b.id === match[1]);
