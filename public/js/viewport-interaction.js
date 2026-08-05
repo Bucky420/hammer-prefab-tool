@@ -246,8 +246,28 @@ export function applyViewportInteraction(VP) {
         const hitBrush = this.brushAt(
           event.offsetX,
           event.offsetY,
-        );
-          if (hitBrush) {
+        ) || (() => {
+          const world = this.world({ x: event.offsetX, y: event.offsetY });
+          const point = { x: world.x, y: world.y };
+          const [h, v] = this.axes();
+          for (const brush of [...this.visibleBrushes()].reverse()) {
+            const min = { x: Infinity, y: Infinity };
+            const max = { x: -Infinity, y: -Infinity };
+            for (const vt of brush.vertices) {
+              min.x = Math.min(min.x, vt[h]);
+              min.y = Math.min(min.y, vt[v]);
+              max.x = Math.max(max.x, vt[h]);
+              max.y = Math.max(max.y, vt[v]);
+            }
+            if (
+              point.x >= min.x && point.x <= max.x &&
+              point.y >= min.y && point.y <= max.y
+            )
+              return brush;
+          }
+          return null;
+        })();
+        if (hitBrush) {
             const depth = this.axes()[2];
             let bestFi = -1;
             let bestNz = -Infinity;
